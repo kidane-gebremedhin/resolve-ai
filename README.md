@@ -1,36 +1,108 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Customer Service Chatbot
 
-## Getting Started
+A **multi-tenant AI customer-support SaaS**. Any business can embed a chat widget on its
+website, backed by an AI agent grounded in that organization's own knowledge base, and
+managed through an operator dashboard with a real-time inbox, analytics, and billing.
 
-First, run the development server:
+Knowledge is scoped per **(organization, agent)** — each agent maps to one website and
+only ever sees its own knowledge base. See [E2E_FLOW.md](E2E_FLOW.md) for how a visitor's
+message becomes a knowledge-grounded answer (parse → chunk → embed → retrieve → generate).
+
+---
+
+## Architecture
+
+A [pnpm](https://pnpm.io) + [Turborepo](https://turborepo.com) monorepo — **4 apps** and
+**3 shared packages**, with Docker-backed infrastructure (MongoDB, Redis, MinIO, MailHog).
+
+### Apps
+
+| App | Package | Port | Description |
+|-----|---------|------|-------------|
+| Web dashboard | [`@csb/web`](apps/web) | 3000 | Next.js operator dashboard + marketing site (`/app/*`, `/admin/*`). |
+| Customer widget | [`@csb/widget`](apps/widget) | 3001 | Next.js chat widget rendered inside the embedded iframe. |
+| Embed loader | [`@csb/embed`](apps/embed) | 3002 | Vite `widget.js` — the `<script>` tag that injects the widget iframe onto a host site. |
+| API + Socket.io | [`@csb/api`](apps/api) | 4000 | Express + Mongoose backend, REST + real-time, AI/RAG pipeline. |
+
+### Shared packages
+
+| Package | Description |
+|---------|-------------|
+| [`@csb/ui`](packages/ui) | shadcn/ui primitives + design tokens + `cn()` helper. |
+| [`@csb/shared-types`](packages/shared-types) | Cross-app TypeScript model/contract types. |
+| [`@csb/config`](packages/config) | Shared tooling config (TS, lint, etc.). |
+
+### Tech stack
+
+- **Frontend** — Next.js 16 (App Router), React 19, Tailwind CSS v4, shadcn/ui
+- **Backend** — Express + TypeScript, MongoDB (Mongoose), Socket.io, Redis
+- **AI / RAG** — OpenAI-compatible embeddings (`text-embedding-3-small`, 1536-dim), Pinecone vector DB, OpenRouter LLM, Firecrawl website ingestion
+- **Auth** — NextAuth (Google OAuth + email/password), JWT
+- **Billing** — Paddle
+- **Storage / email** — MinIO (S3-compatible) · MailHog (dev SMTP)
+- **Infra / CI** — Docker Compose (local), Turborepo, GitHub Actions, Coolify (deploy)
+
+---
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+cp .env.example .env      # then fill in secrets — see __specs/13-env-variables.md
+pnpm dev:infra            # MongoDB, Redis, MailHog, MinIO via Docker
+pnpm db:migrate           # sync Mongoose indexes (DB starts empty — no seed data)
+pnpm dev                  # run all 4 apps via Turborepo
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then open the dashboard at [http://localhost:3000](http://localhost:3000) and register an
+account (there is no demo seed data — onboard via the sign-up flow).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> **Full setup, ports, verification, production build, and troubleshooting:** [RUNBOOK.md](RUNBOOK.md).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Common commands
 
-## Learn More
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Run all apps (hot reload) |
+| `pnpm --filter @csb/<app> dev` | Run a single app (`web` / `widget` / `embed` / `api`) |
+| `pnpm build` | Production build (all workspaces) |
+| `pnpm test` · `pnpm lint` · `pnpm type-check` | Test / lint / typecheck across the monorepo |
+| `pnpm db:migrate` | Sync MongoDB indexes |
+| `pnpm verify:env` · `pnpm verify:assets` | Validate env vars / landing-page assets |
 
-To learn more about Next.js, take a look at the following resources:
+---
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Documentation
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+| Doc | What it covers |
+|-----|----------------|
+| [RUNBOOK.md](RUNBOOK.md) | **Running the project** — prerequisites, infra, env, build, ops, troubleshooting. |
+| [__specs/](__specs/) | **Design specs** — the *why*. Start at the [table of contents](__specs/00-table-of-contents.md); see also [data model](__specs/03-data-model.md), [API](__specs/07-api-specification.md), [env variables](__specs/13-env-variables.md). |
+| [__plans/](__plans/) | **Implementation plans** — the *what & in what order*. Start at the [overview](__plans/00-overview.md). |
+| [__skills/](__skills/) | **Reusable procedures** (Anthropic Skill format) invoked by the plans. |
+| [SKILLS_GALLERY.md](SKILLS_GALLERY.md) | **Skills catalog** — purpose, provenance (custom-written vs downloaded), and phase for every skill. |
+| [E2E_FLOW.md](E2E_FLOW.md) | **RAG flow** — indexing → retrieval → generation, end to end. |
+| [IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md) | Spec-by-spec implementation status. |
+| [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | Conventions for AI coding agents working in this repo. |
+| `CHANGELOGS_*.md` | Per-session change logs (latest: [CHANGELOGS_17.md](CHANGELOGS_17.md)). |
 
-## Deploy on Vercel
+---
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Repository layout
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+apps/
+  web/            # @csb/web    — dashboard + marketing (Next.js, :3000)
+  widget/         # @csb/widget — chat widget iframe (Next.js, :3001)
+  embed/          # @csb/embed  — widget.js loader (Vite, :3002)
+  api/            # @csb/api    — Express + Mongoose + Socket.io (:4000)
+packages/
+  ui/             # @csb/ui     — shadcn primitives + tokens
+  shared-types/   # @csb/shared-types — cross-app types
+  config/         # @csb/config — shared tooling config
+__specs/          # design specs (the why)
+__plans/          # phased implementation plans (the what)
+__skills/         # reusable procedures (see SKILLS_GALLERY.md)
+scripts/          # repo utilities (verify-env, verify-assets, mongo-init)
+coolify/          # deployment config
+```

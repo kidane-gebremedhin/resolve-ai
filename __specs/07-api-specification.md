@@ -1,0 +1,628 @@
+# 07 — API Specification
+
+## Base Configuration
+
+| Setting | Value |
+|---------|-------|
+| Base URL | `http://localhost:4000/api/v1` (dev) |
+| Content-Type | `application/json` |
+| Auth header | `Authorization: Bearer <JWT>` |
+| Rate limit (dashboard) | 100 req/min per user |
+| Rate limit (widget) | 30 req/min per session |
+
+---
+
+## Authentication Routes
+
+### `POST /api/v1/auth/register`
+Create a new user account (email/password).
+
+| Field | Value |
+|-------|-------|
+| Auth | None |
+| Body | `{ email, password, name }` |
+| Validation | email: valid email; password: min 8 chars, 1 upper, 1 number; name: 2–100 chars |
+| Response `201` | `{ user: { id, email, name }, token }` |
+| Errors | `400` validation, `409` email exists |
+| Side effects | Creates user + organization + membership (owner) |
+
+### `POST /api/v1/auth/login`
+Authenticate with email/password.
+
+| Field | Value |
+|-------|-------|
+| Auth | None |
+| Body | `{ email, password }` |
+| Response `200` | `{ user: { id, email, name, organizationId }, token, expiresAt }` |
+| Errors | `400` validation, `401` invalid credentials |
+
+### `POST /api/v1/auth/google`
+Authenticate with Google OAuth token (from NextAuth callback).
+
+| Field | Value |
+|-------|-------|
+| Auth | None |
+| Body | `{ googleToken, name, email, avatarUrl }` |
+| Response `200` | `{ user, token, isNewUser }` |
+| Side effects | Creates user + org if new |
+
+### `POST /api/v1/auth/refresh`
+Exchange a (7d) refresh token for a fresh (15m) access token.
+
+| Field | Value |
+|-------|-------|
+| Auth | None (refresh token in body) |
+| Body | `{ refreshToken }` |
+| Response `200` | `{ accessToken, expiresIn }` (`expiresIn` in seconds, 900) |
+| Errors | `401` missing/expired/invalid refresh token |
+
+`POST /auth/login` and `POST /auth/google` both return `{ ..., accessToken, refreshToken, expiresIn }`.
+The web dashboard's NextAuth `jwt` callback stores the refresh token and silently
+rotates the access token ~1 min before expiry (see `apps/web/src/lib/auth.ts`), so
+the 7d session no longer outlives the 15m access token. Only when the refresh
+token itself expires does the session fall back to client auto-logout (§12, 2.9b).
+
+---
+
+## Organization Routes
+
+### `GET /api/v1/orgs/current`
+Get current user's active organization.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ organization: { id, name, slug, plan, settings } }` |
+
+### `PATCH /api/v1/orgs/current`
+Update organization settings.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin only) |
+| Body | `{ name?, settings? }` |
+| Response `200` | `{ organization }` |
+| Errors | `403` insufficient role |
+
+### `GET /api/v1/orgs/current/members`
+List organization members.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ members: [{ userId, name, email, role, status }] }` |
+
+### `POST /api/v1/orgs/current/members/invite`
+Invite a user to the organization.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ email, role }` |
+| Response `201` | `{ membership }` |
+| Side effects | Send invitation email via Nodemailer |
+| Errors | `409` already a member |
+
+### `PATCH /api/v1/orgs/current/members/:userId`
+Update member role or status.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ role?, status? }` |
+| Response `200` | `{ membership }` |
+
+### `DELETE /api/v1/orgs/current/members/:userId`
+Remove a member from the organization.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner only) |
+| Response `204` | No content |
+| Errors | `403` cannot remove self if sole owner |
+
+---
+
+## Website Routes
+
+### `GET /api/v1/websites`
+List websites for current organization.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ websites: [{ id, name, domain, allowedOrigins, isActive }] }` |
+| RLS | `organizationId` from JWT |
+
+### `POST /api/v1/websites`
+Create a new website.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ name, domain, allowedOrigins }` |
+| Response `201` | `{ website }` |
+| Errors | `409` domain already exists for this org |
+
+### `PATCH /api/v1/websites/:websiteId`
+Update website settings.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ name?, domain?, allowedOrigins?, isActive? }` |
+| Response `200` | `{ website }` |
+
+### `DELETE /api/v1/websites/:websiteId`
+Delete a website and its associated conversations.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner only) |
+| Response `204` | No content |
+| Side effects | Cascade: deactivate widget, archive conversations |
+
+---
+
+## Agent Routes
+
+### `GET /api/v1/agents`
+List agents for current organization.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ agents: [Agent] }` |
+
+### `POST /api/v1/agents`
+Create a new agent.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ name, description?, welcomeMessage?, suggestedQuestions?, systemPromptOverride?, model?, temperature?, confidenceThreshold? }` |
+| Response `201` | `{ agent }` |
+
+### `PATCH /api/v1/agents/:agentId`
+Update agent configuration.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | Partial agent fields |
+| Response `200` | `{ agent }` |
+
+### `DELETE /api/v1/agents/:agentId`
+Delete an agent.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner only) |
+| Response `204` | No content |
+
+---
+
+## Conversation Routes (Dashboard — Private)
+
+### `GET /api/v1/conversations`
+List conversations for inbox.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?status=active,escalated&websiteId=xxx&assignedTo=me&page=1&limit=20&sort=lastMessageAt` |
+| Response `200` | `{ conversations: [{ id, threadId, status, lastMessageAt, lastMessagePreview, contact: { name, email }, messageCount }], pagination }` |
+| RLS | `organizationId` from JWT; optional `websiteId` filter |
+
+### `GET /api/v1/conversations/:conversationId`
+Get conversation detail with contact info.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ conversation, contact: { name, email, phone }, website: { name, domain } }` |
+
+### `PATCH /api/v1/conversations/:conversationId/status`
+Update conversation status (resolve/reopen/escalate).
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ status: 'resolved' | 'active' | 'escalated', assignedOperatorId? }` |
+| Response `200` | `{ conversation }` |
+| Side effects | Socket.io emit `conversation:status`; system message |
+
+### `PATCH /api/v1/conversations/:conversationId/assign`
+Assign conversation to an operator.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ operatorId }` |
+| Response `200` | `{ conversation }` |
+
+---
+
+## Message Routes (Dashboard — Private)
+
+### `GET /api/v1/conversations/:conversationId/messages`
+Get messages in a conversation thread.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?page=1&limit=50&before=<timestamp>` |
+| Response `200` | `{ messages: [Message], pagination }` |
+| RLS | Conversation must belong to operator's org |
+
+### `POST /api/v1/conversations/:conversationId/messages`
+Send an operator message.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ content, attachments?, isEnhanced?, originalContent? }` |
+| Response `201` | `{ message }` |
+| Side effects | Socket.io emit `message:new` to conversation room; update `lastMessageAt` |
+
+### `POST /api/v1/messages/enhance`
+Enhance operator draft message (see [§06](./06-operator-enhancement-llm.md)).
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ conversationId, draftText, tone? }` |
+| Response `200` | `{ enhancedText, originalText, changes }` |
+
+---
+
+## Knowledge Base Routes (Dashboard — Private)
+
+### `GET /api/v1/knowledge`
+List KB sources.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?type=pdf,text&status=synced&page=1&limit=20` |
+| Response `200` | `{ sources: [KnowledgeSource], pagination }` |
+| RLS | `organizationId` from JWT |
+
+### `POST /api/v1/knowledge`
+Create a KB source (text).
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ title, content, type: 'text' }` |
+| Response `201` | `{ source }` |
+| Side effects | Compute contentHash → dedup check → chunk → embed → Pinecone |
+| Errors | `409` duplicate contentHash |
+
+### `POST /api/v1/knowledge/upload`
+Upload a file (PDF, DOCX, Excel, CSV, Image, HTML).
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `multipart/form-data` with `file` + `title` |
+| Allowed MIME | `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`, `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, `text/csv`, `image/png`, `image/jpeg`, `image/webp`, `text/html` |
+| Max size | Plan-dependent (5–50 MB) |
+| Response `201` | `{ source }` (embeddingStatus: 'pending') |
+| Side effects | Extract text → hash → dedup → async embed |
+
+### `POST /api/v1/knowledge/website`
+Ingest a website via Firecrawl.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ url, title?, maxPages? }` |
+| Response `202` | `{ jobId, source }` (processing async) |
+| Side effects | Firecrawl crawl → per-page chunk → embed |
+
+### `GET /api/v1/knowledge/:sourceId`
+Get KB source detail.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ source, chunks?: [...] }` |
+
+### `PUT /api/v1/knowledge/:sourceId`
+Update KB source content.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `{ title?, content? }` or `multipart/form-data` for file replacement |
+| Response `200` | `{ source }` |
+| Side effects | Re-hash → delete old vectors → re-chunk → re-embed |
+
+### `DELETE /api/v1/knowledge/:sourceId`
+Delete KB source and its Pinecone vectors.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `204` | No content |
+| Side effects | Delete Pinecone vectors (`pineconeIds`) → delete file from storage → delete MongoDB record |
+
+---
+
+## Widget Routes (Public)
+
+### `POST /api/v1/widget/sessions`
+Create or resume a contact session.
+
+| Field | Value |
+|-------|-------|
+| Auth | None (public) |
+| Body | `{ organizationId, agentId, websiteId, token?, email?, phone? }` |
+| Response `200` (resume) | `{ session, conversations: [...] }` |
+| Response `201` (new) | `{ session: { id, token } }` |
+| Logic | If `token` provided and valid (not expired) → resume; else → create new. If `email` provided, store on session at creation. |
+| CORS | Validate request origin against `website.allowedOrigins` |
+
+### `POST /api/v1/widget/sessions/:sessionId/contact`
+Update contact info on an existing session. **Note:** This endpoint is now secondary — primary contact collection happens at session creation. This endpoint remains available for updating contact info later (e.g., adding phone after initial email-only submission).
+
+| Field | Value |
+|-------|-------|
+| Auth | Session token header (`X-Session-Token`) |
+| Body | `{ email?, phone?, name? }` |
+| Response `200` | `{ session }` |
+| Note | Email and phone are primarily collected at session creation (pre-chat form). This endpoint is for updates only. |
+
+### `POST /api/v1/widget/conversations`
+Start a new conversation.
+
+| Field | Value |
+|-------|-------|
+| Auth | Session token (`X-Session-Token`) |
+| Body | `{ agentId, websiteId, initialMessage }` |
+| Response `201` | `{ conversation, message: { id, content, role: 'customer' } }` |
+| Side effects | Save customer message → trigger AI agent → emit Socket.io |
+
+### `GET /api/v1/widget/conversations/:conversationId/messages`
+Get messages for a widget conversation.
+
+| Field | Value |
+|-------|-------|
+| Auth | Session token (`X-Session-Token`) |
+| Query | `?before=<timestamp>&limit=30` |
+| Response `200` | `{ messages: [{ id, role, content, attachments, createdAt }] }` |
+| RLS | Conversation must belong to the session's `contactSessionId` |
+
+### `POST /api/v1/widget/conversations/:conversationId/messages`
+Send a customer message.
+
+| Field | Value |
+|-------|-------|
+| Auth | Session token (`X-Session-Token`) |
+| Body | `{ content, attachments? }` |
+| Response `201` | `{ message }` |
+| Side effects | Save message → trigger AI agent (if status = active) → emit Socket.io |
+
+### `POST /api/v1/widget/conversations/:conversationId/attachments`
+Upload a file attachment in widget.
+
+| Field | Value |
+|-------|-------|
+| Auth | Session token (`X-Session-Token`) |
+| Body | `multipart/form-data` with `file` |
+| Max size | 10 MB |
+| Allowed MIME | `image/*`, `application/pdf`, `text/plain` |
+| Response `201` | `{ attachment: { fileName, fileUrl, mimeType, size } }` |
+
+### `GET /api/v1/widget/settings`
+Get widget display settings (for rendering the widget UI).
+
+| Field | Value |
+|-------|-------|
+| Auth | None (public) |
+| Query | `?organizationId=xxx&agentId=xxx` |
+| Response `200` | `{ settings: WidgetSettings, agent: { name, avatarUrl }, sections: [...] }` |
+
+---
+
+## Billing Routes (Paddle Webhooks)
+
+### `POST /api/v1/billing/paddle/webhook`
+Paddle webhook receiver.
+
+| Field | Value |
+|-------|-------|
+| Auth | Paddle signature verification |
+| Events handled | `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed` |
+| Response `200` | `{ received: true }` |
+| Side effects | Update `subscriptions` and `organizations.plan`  |
+
+### `GET /api/v1/billing/subscription`
+Get current org subscription status.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ subscription, plan, usage: { aiMessages, kbSources } }` |
+
+### `POST /api/v1/billing/checkout`
+Generate a Paddle checkout link.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ plan: 'starter' | 'pro' | 'enterprise' }` |
+| Response `200` | `{ checkoutUrl }` |
+
+### `POST /api/v1/billing/portal`
+Generate a Paddle customer portal link.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Response `200` | `{ portalUrl }` |
+
+---
+
+## Admin Routes (Platform Admin)
+
+### `GET /api/v1/admin/organizations`
+List all organizations (platform admin only).
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT + `role: platform_admin` |
+| Query | `?page=1&limit=20&search=xxx` |
+| Response `200` | `{ organizations: [...], pagination }` |
+
+### `GET /api/v1/admin/stats`
+Platform-wide statistics.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT + `role: platform_admin` |
+| Response `200` | `{ totalOrgs, totalUsers, totalConversations, activeConversations, totalMessages }` |
+
+---
+
+## Leads Routes (Dashboard)
+
+### `GET /api/v1/leads`
+List contact sessions with contact info (leads view).
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?websiteId=xxx&hasEmail=true&page=1&limit=20` |
+| Response `200` | `{ leads: [{ sessionId, name, email, phone, conversationCount, lastActiveAt }], pagination }` |
+| RLS | `organizationId` from JWT |
+
+---
+
+## Widget Settings Routes (Dashboard)
+
+### `GET /api/v1/widget-settings/:agentId`
+Get widget settings for an agent.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ settings: WidgetSettings }` |
+
+### `PUT /api/v1/widget-settings/:agentId`
+Update widget settings.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | Full or partial `WidgetSettings` |
+| Response `200` | `{ settings }` |
+
+---
+
+## Sections Routes (Dashboard)
+
+### `GET /api/v1/sections/:agentId`
+List widget sections for an agent.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | `{ sections: [Section] }` |
+
+### `POST /api/v1/sections/:agentId`
+Create a section.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ title, description?, icon?, url?, action, topicPrompt?, order }` |
+| Response `201` | `{ section }` |
+
+### `PUT /api/v1/sections/:agentId/reorder`
+Reorder sections.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Body | `{ sectionIds: [ordered array of section IDs] }` |
+| Response `200` | `{ sections }` |
+
+### `DELETE /api/v1/sections/:sectionId`
+Delete a section.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Response `204` | No content |
+
+---
+
+## Analytics Routes (Dashboard)
+
+### `GET /api/v1/analytics/overview`
+Dashboard analytics overview.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?websiteId=xxx&period=7d|30d|90d` |
+| Response `200` | `{ totalConversations, resolvedCount, escalatedCount, avgResponseTime, aiMessages, operatorMessages, topKBQueries: [...] }` |
+
+### `GET /api/v1/analytics/conversations`
+Conversation analytics over time.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?websiteId=xxx&period=30d&granularity=day` |
+| Response `200` | `{ data: [{ date, conversations, resolved, escalated }] }` |
+
+---
+
+## Common Response Patterns
+
+### Pagination
+
+```typescript
+interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+}
+```
+
+### Error Response
+
+```typescript
+interface ErrorResponse {
+  error: {
+    code: string;           // Machine-readable code (e.g., 'DUPLICATE_CONTENT')
+    message: string;        // Human-readable message
+    details?: Record<string, unknown>;
+  };
+}
+```
+
+### Standard HTTP Status Codes
+
+| Code | Usage |
+|------|-------|
+| `200` | Success (read/update) |
+| `201` | Created |
+| `202` | Accepted (async job started) |
+| `204` | Deleted (no content) |
+| `400` | Validation error |
+| `401` | Unauthorized (no/invalid token) |
+| `403` | Forbidden (insufficient role/org) |
+| `404` | Not found |
+| `409` | Conflict (duplicate) |
+| `429` | Rate limited |
+| `500` | Server error |

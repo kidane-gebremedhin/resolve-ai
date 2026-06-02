@@ -1,0 +1,15 @@
+{
+  "name": "@csb/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint/base": "./eslint/base.js",
+    "./typescript/base.json": "./typescript/base.json"
+  },
+  "scripts": {
+    "lint": "echo 'no-op'",
+    "type-check": "echo 'no-op'",
+    "clean": "rm -rf .turbo node_modules"
+  }
+}

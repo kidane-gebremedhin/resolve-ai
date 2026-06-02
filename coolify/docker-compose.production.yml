@@ -1,0 +1,146 @@
+# Coolify-ingested compose file for the `csb-production` project.
+#
+# Image tags follow the pattern `production-${SHA}` (full git SHA). Production
+# deploys are gated on the GitHub `production` environment review — the SHA is
+# injected by the deploy webhook and must never be `latest` or a branch name.
+#
+# Backups:
+#   - MongoDB lives in Atlas (M10+). Atlas snapshots run continuously (PITR)
+#     with 7-day retention; verified restorable in the quarterly DR drill.
+#   - In addition, a daily `mongodump` cron should run from a sidecar / Coolify
+#     scheduled task and ship the dump to S3 (TODO: wire scripts/mongodump.sh
+#     once the cron host is provisioned).
+#   - Pinecone index is exported daily to S3 by apps/api/scripts/pinecone-snapshot.ts.
+version: '3.9'
+
+services:
+  api:
+    image: ghcr.io/${GHCR_OWNER}/csb-api:production-${SHA}
+    restart: always
+    env_file: ['.env']
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: ${MONGODB_URI}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`api.example.com`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.services.api.loadbalancer.server.port=4000
+      - traefik.http.middlewares.api-cors.headers.accesscontrolalloworiginlist=https://app.example.com,https://widget.example.com
+      - traefik.http.middlewares.api-ratelimit.ratelimit.average=100
+      - traefik.http.middlewares.api-ratelimit.ratelimit.burst=200
+      - traefik.http.routers.api.middlewares=api-ratelimit@docker
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    depends_on:
+      redis: { condition: service_healthy }
+
+  web:
+    image: ghcr.io/${GHCR_OWNER}/csb-web:production-${SHA}
+    restart: always
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.example.com/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.example.com
+      NEXT_PUBLIC_WIDGET_URL: https://widget.example.com
+      NEXT_PUBLIC_EMBED_URL: https://embed.example.com/widget.js
+      NEXT_PUBLIC_APP_URL: https://app.example.com
+      NEXTAUTH_URL: https://app.example.com
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`app.example.com`)
+      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.tls.certresolver=letsencrypt
+      - traefik.http.services.web.loadbalancer.server.port=3000
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    depends_on: [api]
+
+  widget:
+    image: ghcr.io/${GHCR_OWNER}/csb-widget:production-${SHA}
+    restart: always
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.example.com/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.example.com
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.widget.rule=Host(`widget.example.com`)
+      - traefik.http.routers.widget.entrypoints=websecure
+      - traefik.http.routers.widget.tls.certresolver=letsencrypt
+      - traefik.http.services.widget.loadbalancer.server.port=3001
+      - traefik.http.middlewares.widget-csp.headers.contentsecuritypolicy=frame-ancestors *
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+    depends_on: [api]
+
+  embed:
+    image: ghcr.io/${GHCR_OWNER}/csb-embed:production-${SHA}
+    restart: always
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.embed.rule=Host(`embed.example.com`)
+      - traefik.http.routers.embed.entrypoints=websecure
+      - traefik.http.routers.embed.tls.certresolver=letsencrypt
+      - traefik.http.services.embed.loadbalancer.server.port=80
+      - traefik.http.middlewares.embed-cors.headers.accesscontrolalloworiginlist=*
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:80/widget.js']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+
+  # MongoDB is external — production uses Atlas M10+ via MONGODB_URI in the
+  # Coolify secrets group. No in-compose mongo service.
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes: ['redis-data-prod:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  redis-data-prod:

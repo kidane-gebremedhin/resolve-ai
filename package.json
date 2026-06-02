@@ -2,25 +2,30 @@
   "name": "customer-service-chatbot",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "next": "16.2.6",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "dev": "turbo dev",
+    "dev:infra": "docker compose up -d",
+    "dev:infra:stop": "docker compose down",
+    "dev:infra:reset": "docker compose down -v && docker compose up -d",
+    "dev:full": "docker compose -f docker-compose.full.yml up --build",
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "type-check": "turbo type-check",
+    "clean": "turbo clean && rm -rf node_modules/.cache",
+    "format": "prettier --write .",
+    "db:migrate": "pnpm --filter @csb/api db:migrate",
+    "verify:assets": "node scripts/verify-assets.mjs",
+    "verify:env": "node scripts/verify-env.mjs"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "prettier": "^3.3.3",
+    "turbo": "^2.3.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
   }
 }

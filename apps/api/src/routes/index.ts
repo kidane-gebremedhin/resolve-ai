@@ -1,0 +1,38 @@
+import { Router } from "express";
+import auth from "./auth.routes.js";
+import org from "./org.routes.js";
+import website from "./website.routes.js";
+import agent from "./agent.routes.js";
+import conversation from "./conversation.routes.js";
+import message from "./message.routes.js";
+import kb from "./kb.routes.js";
+import widget from "./widget.routes.js";
+import widgetSettings from "./widget-settings.routes.js";
+import section from "./section.routes.js";
+import contact from "./contact.routes.js";
+import admin from "./admin.routes.js";
+import billing from "./billing.routes.js";
+import tts from "./tts.routes.js";
+import apiKeys from "./api-keys.routes.js";
+import audit from "./audit.routes.js";
+
+const router = Router();
+
+router.use("/auth", auth);
+router.use("/orgs", org);
+router.use("/websites", website);
+router.use("/agents", agent);
+router.use("/conversations", conversation);
+router.use("/messages", message);
+router.use("/knowledge", kb);
+router.use("/widget", widget);
+router.use("/widget-settings", widgetSettings);
+router.use("/sections", section);
+router.use("/contacts", contact);
+router.use("/admin", admin);
+router.use("/billing", billing);
+router.use("/tts", tts);
+router.use("/api-keys", apiKeys);
+router.use("/audit", audit);
+
+export default router;

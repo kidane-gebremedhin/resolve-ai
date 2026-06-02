@@ -1,0 +1,102 @@
+# Coolify-ingested compose file for the `csb-dev` project.
+# Image tag defaults to `dev` (mutable — every push to the dev branch redeploys).
+version: '3.9'
+
+services:
+  api:
+    image: ghcr.io/${GHCR_OWNER}/csb-api:${IMAGE_TAG:-dev}
+    restart: on-failure:3
+    mem_limit: 512m
+    env_file: ['.env']
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`api.dev.customer-service-chatbot.app`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.services.api.loadbalancer.server.port=4000
+      - traefik.http.middlewares.api-cors.headers.accesscontrolalloworiginlist=https://dev.customer-service-chatbot.app,https://widget.dev.customer-service-chatbot.app
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+
+  web:
+    image: ghcr.io/${GHCR_OWNER}/csb-web:${IMAGE_TAG:-dev}
+    restart: on-failure:3
+    mem_limit: 512m
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.dev.customer-service-chatbot.app/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.dev.customer-service-chatbot.app
+      NEXT_PUBLIC_WIDGET_URL: https://widget.dev.customer-service-chatbot.app
+      NEXT_PUBLIC_EMBED_URL: https://embed.dev.customer-service-chatbot.app/widget.js
+      NEXT_PUBLIC_APP_URL: https://dev.customer-service-chatbot.app
+      NEXTAUTH_URL: https://dev.customer-service-chatbot.app
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`dev.customer-service-chatbot.app`)
+      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.tls.certresolver=letsencrypt
+      - traefik.http.services.web.loadbalancer.server.port=3000
+    depends_on: [api]
+
+  widget:
+    image: ghcr.io/${GHCR_OWNER}/csb-widget:${IMAGE_TAG:-dev}
+    restart: on-failure:3
+    mem_limit: 512m
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.dev.customer-service-chatbot.app/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.dev.customer-service-chatbot.app
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.widget.rule=Host(`widget.dev.customer-service-chatbot.app`)
+      - traefik.http.routers.widget.entrypoints=websecure
+      - traefik.http.routers.widget.tls.certresolver=letsencrypt
+      - traefik.http.services.widget.loadbalancer.server.port=3001
+      - traefik.http.middlewares.widget-csp.headers.contentsecuritypolicy=frame-ancestors *
+    depends_on: [api]
+
+  embed:
+    image: ghcr.io/${GHCR_OWNER}/csb-embed:${IMAGE_TAG:-dev}
+    restart: on-failure:3
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.embed.rule=Host(`embed.dev.customer-service-chatbot.app`)
+      - traefik.http.routers.embed.entrypoints=websecure
+      - traefik.http.routers.embed.tls.certresolver=letsencrypt
+      - traefik.http.services.embed.loadbalancer.server.port=80
+      - traefik.http.middlewares.embed-cors.headers.accesscontrolalloworiginlist=*
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes: ['mongo-data-dev:/data/db']
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.runCommand({ ping: 1 })']
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes: ['redis-data-dev:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mongo-data-dev:
+  redis-data-dev:

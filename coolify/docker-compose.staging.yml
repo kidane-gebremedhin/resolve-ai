@@ -1,0 +1,117 @@
+# Coolify-ingested compose file for the `csb-staging` project.
+# Image tags follow the pattern `staging-${SHA}` and are interpolated by the
+# deploy webhook so every staging rollout is reproducible.
+version: '3.9'
+
+services:
+  api:
+    image: ghcr.io/${GHCR_OWNER}/csb-api:staging-${SHA:-latest}
+    restart: unless-stopped
+    env_file: ['.env']
+    environment:
+      NODE_ENV: staging
+      MONGODB_URI: ${MONGODB_URI}
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`api.staging.example.com`)
+      - traefik.http.routers.api.entrypoints=websecure
+      - traefik.http.routers.api.tls.certresolver=letsencrypt
+      - traefik.http.services.api.loadbalancer.server.port=4000
+      - traefik.http.middlewares.api-cors.headers.accesscontrolalloworiginlist=https://staging.example.com,https://widget.staging.example.com
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 1
+    depends_on:
+      redis: { condition: service_healthy }
+
+  web:
+    image: ghcr.io/${GHCR_OWNER}/csb-web:staging-${SHA:-latest}
+    restart: unless-stopped
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.staging.example.com/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.staging.example.com
+      NEXT_PUBLIC_WIDGET_URL: https://widget.staging.example.com
+      NEXT_PUBLIC_EMBED_URL: https://embed.staging.example.com/widget.js
+      NEXT_PUBLIC_APP_URL: https://staging.example.com
+      NEXTAUTH_URL: https://staging.example.com
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.web.rule=Host(`staging.example.com`)
+      - traefik.http.routers.web.entrypoints=websecure
+      - traefik.http.routers.web.tls.certresolver=letsencrypt
+      - traefik.http.services.web.loadbalancer.server.port=3000
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3000/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 1
+    depends_on: [api]
+
+  widget:
+    image: ghcr.io/${GHCR_OWNER}/csb-widget:staging-${SHA:-latest}
+    restart: unless-stopped
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: https://api.staging.example.com/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.staging.example.com
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.widget.rule=Host(`widget.staging.example.com`)
+      - traefik.http.routers.widget.entrypoints=websecure
+      - traefik.http.routers.widget.tls.certresolver=letsencrypt
+      - traefik.http.services.widget.loadbalancer.server.port=3001
+      - traefik.http.middlewares.widget-csp.headers.contentsecuritypolicy=frame-ancestors *
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/api/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 1
+    depends_on: [api]
+
+  embed:
+    image: ghcr.io/${GHCR_OWNER}/csb-embed:staging-${SHA:-latest}
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.embed.rule=Host(`embed.staging.example.com`)
+      - traefik.http.routers.embed.entrypoints=websecure
+      - traefik.http.routers.embed.tls.certresolver=letsencrypt
+      - traefik.http.services.embed.loadbalancer.server.port=80
+      - traefik.http.middlewares.embed-cors.headers.accesscontrolalloworiginlist=*
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:80/widget.js']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 1
+
+  # MongoDB is external for staging — we point at an Atlas free-tier (M0) cluster
+  # via MONGODB_URI in the Coolify secrets group. No in-compose mongo service.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes: ['redis-data-staging:/data']
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  redis-data-staging:

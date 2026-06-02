@@ -1,0 +1,61 @@
+name: csb-full
+
+services:
+  mongo:
+    extends:
+      file: docker-compose.yml
+      service: mongo
+  redis:
+    extends:
+      file: docker-compose.yml
+      service: redis
+  mailhog:
+    extends:
+      file: docker-compose.yml
+      service: mailhog
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: ['.env']
+    ports: ['4000:4000']
+    depends_on:
+      mongo: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:4000/api/v1
+      NEXT_PUBLIC_SOCKET_URL: http://api:4000
+    ports: ['3000:3000']
+    depends_on: [api]
+    restart: unless-stopped
+
+  widget:
+    build:
+      context: .
+      dockerfile: apps/widget/Dockerfile
+    env_file: ['.env']
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:4000/api/v1
+      NEXT_PUBLIC_SOCKET_URL: http://api:4000
+    ports: ['3001:3001']
+    depends_on: [api]
+    restart: unless-stopped
+
+  embed:
+    build:
+      context: .
+      dockerfile: apps/embed/Dockerfile
+    ports: ['3002:80']
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
+  redis-data:

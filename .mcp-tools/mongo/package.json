@@ -1,0 +1,12 @@
+{
+  "name": "csb-mcp-mongo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Local install of mongodb-mcp-server pinned to a working @mcp-ui/server. See ../README.md.",
+  "dependencies": {
+    "mongodb-mcp-server": "1.11.0"
+  },
+  "overrides": {
+    "@mcp-ui/server": "6.0.1"
+  }
+}

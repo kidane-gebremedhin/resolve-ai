@@ -1,0 +1,12 @@
+@import "tailwindcss";
+@source "../**/*.{js,ts,jsx,tsx}";
+
+/* Class-based dark mode: `dark:` variants apply when an ancestor carries `.dark`
+   (WidgetRoot toggles it from the resolved theme — light | dark | auto). This
+   overrides Tailwind v4's default prefers-color-scheme behaviour so the operator's
+   theme setting is the source of truth, with `auto` resolved in JS. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+body {
+  margin: 0;
+}

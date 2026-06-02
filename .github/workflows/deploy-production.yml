@@ -1,0 +1,49 @@
+name: deploy-production
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Git SHA to deploy (must already have published images)'
+        required: true
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  approve:
+    runs-on: ubuntu-latest
+    environment: production    # requires manual approval (configure in repo settings)
+    steps:
+      - run: echo "Approved deployment of ${{ inputs.sha }}"
+
+  deploy:
+    needs: approve
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify images exist
+        run: |
+          for app in web widget embed api; do
+            docker manifest inspect ghcr.io/${{ github.repository_owner }}/csb-$app:${{ inputs.sha }} > /dev/null
+          done
+      - name: Trigger Coolify production deploy
+        env:
+          COOLIFY_URL: ${{ secrets.COOLIFY_PROD_WEBHOOK_URL }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_PROD_API_TOKEN }}
+        run: |
+          curl -fsSL -X POST "$COOLIFY_URL" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"env\":\"production\",\"sha\":\"${{ inputs.sha }}\"}"
+      - name: Post-deploy health check
+        run: |
+          for url in $WEB_URL $WIDGET_URL $API_URL/health; do
+            for i in {1..30}; do
+              if curl -fsSL "$url" > /dev/null; then break; fi
+              sleep 10
+            done
+          done
+        env:
+          WEB_URL: ${{ vars.PROD_WEB_URL }}
+          WIDGET_URL: ${{ vars.PROD_WIDGET_URL }}
+          API_URL: ${{ vars.PROD_API_URL }}

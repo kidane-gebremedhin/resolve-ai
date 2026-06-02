@@ -1,0 +1,21 @@
+customer-service-chatbot — Third-Party Notices
+===============================================
+
+This directory vendors three skills from the official Anthropic skills repository:
+
+  Source:  https://github.com/anthropics/skills
+  Commit:  690f15cac7f7b4c055c5ab109c79ed9259934081
+  Date:    2026-05-23
+  License: Apache License 2.0
+
+Vendored skills (each retains its upstream LICENSE.txt verbatim):
+
+  - __skills/mcp-builder/        — © Anthropic, Apache-2.0
+  - __skills/webapp-testing/     — © Anthropic, Apache-2.0
+  - __skills/skill-creator/      — © Anthropic, Apache-2.0
+
+Per the Apache License 2.0, this NOTICE file is included in distributions.
+The vendored skills have not been modified from upstream.
+
+The remaining skills in __skills/ are original works authored in this repository
+and are licensed under the same terms as the repository as a whole.
