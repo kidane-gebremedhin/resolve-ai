@@ -6,6 +6,8 @@ import {
   type AgentDoc,
   type AgentDefaults,
 } from "@/components/ai/agent-editor";
+import { ConversationSettings } from "@/components/settings/conversation-settings";
+import type { Org } from "@/components/settings/tab-inlines";
 
 export const dynamic = "force-dynamic";
 
@@ -44,6 +46,14 @@ async function Page() {
     }
   }
 
+  // Org-level conversation behavior (escalation toggle + ask-before-resolve).
+  let org: Org | null = null;
+  try {
+    org = await api.get<Org>("/orgs/current");
+  } catch {
+    org = null;
+  }
+
   return (
     <div className="container-page py-8">
       <div>
@@ -65,6 +75,12 @@ async function Page() {
         <CreateAgentForm websiteId={websiteId} />
       ) : agent ? (
         <AgentEditor agent={agent} defaults={defaults} />
+      ) : null}
+
+      {agent ? (
+        <div className="mt-8">
+          <ConversationSettings org={org} />
+        </div>
       ) : null}
     </div>
   );

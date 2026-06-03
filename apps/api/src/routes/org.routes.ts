@@ -19,6 +19,7 @@ import {
 } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { enforceTeamMemberQuota } from "../middleware/plan-limit.middleware.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../utils/errors.js";
 import { getPineconeIndex } from "../config/pinecone.js";
 import { logger } from "../config/logger.js";
@@ -32,7 +33,24 @@ router.get("/current", requireAuth, requireOrg, async (req: Request, res: Respon
 });
 
 router.patch("/current", requireAuth, requireOrg, async (req: Request, res: Response) => {
-  const allowed = (({ name, settings }) => ({ name, settings }))(req.body ?? {});
+  const body = (req.body ?? {}) as { name?: unknown; settings?: unknown };
+  const allowed: { name?: string; settings?: Record<string, unknown> } = {};
+  if (typeof body.name === "string") allowed.name = body.name;
+  if (body.settings && typeof body.settings === "object") {
+    const settings = { ...(body.settings as Record<string, unknown>) };
+    // Coerce the typed conversation-controls block (escalation toggle +
+    // ask-before-resolve) to booleans; both default true.
+    const conv = settings.conversation;
+    if (conv && typeof conv === "object") {
+      const c = conv as Record<string, unknown>;
+      settings.conversation = {
+        ...c,
+        allowHumanEscalation: c.allowHumanEscalation !== false,
+        requireResolveConfirmation: c.requireResolveConfirmation !== false,
+      };
+    }
+    allowed.settings = settings;
+  }
   const org = await Organization.findByIdAndUpdate(req.orgId, allowed, { new: true });
   if (!org) throw new NotFoundError("Organization not found.");
   res.json(org);
@@ -128,6 +146,7 @@ router.post(
   "/current/members/invite",
   requireAuth,
   requireOrg,
+  enforceTeamMemberQuota,
   validateBody(inviteSchema),
   async (req: Request, res: Response) => {
     assertCanManageMembers(req);

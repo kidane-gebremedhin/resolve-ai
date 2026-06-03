@@ -13,3 +13,6 @@ export { Section, type SectionDocType } from "./Section.js";
 export { AuditEvent, type AuditEventDocType } from "./AuditEvent.js";
 export { ApiKey, type ApiKeyDocType } from "./ApiKey.js";
 export { PlatformSetting, type PlatformSettingDocType } from "./PlatformSetting.js";
+export { ProcessedWebhook, type ProcessedWebhookDocType } from "./ProcessedWebhook.js";
+export { Referral, type ReferralDocType } from "./Referral.js";
+export { Campaign, type CampaignDocType } from "./Campaign.js";

@@ -9,13 +9,22 @@ import {
   verifyPaddleSignature,
   createCheckoutSession,
   createCustomerPortalSession,
+  activateFromTransaction,
 } from "../services/billing.service.js";
 import { limitsForPlan } from "../middleware/plan-limit.middleware.js";
+import { loadPlanCatalog } from "../config/plans.js";
 import { Message, KnowledgeSource, Website, Membership } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { dailyMetric } from "../services/analytics.service.js";
 
 const router = Router();
+
+// Public plan catalog — single source of truth for the billing + pricing pages
+// (prices, features, limits, Paddle price ids). No auth: the marketing pricing
+// page is public.
+router.get("/plans", async (_req: Request, res: Response) => {
+  res.json({ plans: await loadPlanCatalog() });
+});
 
 // Webhook must consume the raw body to verify HMAC.
 router.post(
@@ -42,9 +51,14 @@ router.post(
 router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const sub = await Subscription.findOne({ organizationId: req.orgId });
   const org = await Organization.findById(req.orgId).select("plan").lean();
+  // `active` is the gate signal: a real subscription in an entitled state. When
+  // there is no subscription we report status "none" (NOT "active") so the
+  // dashboard gate redirects unpaid orgs to checkout.
+  const active = Boolean(sub && (sub.status === "active" || sub.status === "trialing"));
   res.json({
     plan: sub?.plan ?? org?.plan ?? "free",
-    status: sub?.status ?? "active",
+    status: sub?.status ?? "none",
+    active,
     paddleSubscriptionId: sub?.paddleSubscriptionId ?? null,
     paddleCustomerId: sub?.paddleCustomerId ?? null,
     currentPeriodStart: sub?.currentPeriodStart ?? null,
@@ -103,6 +117,26 @@ router.post("/portal", requireAuth, requireOrg, async (req: Request, res: Respon
   const result = await createCustomerPortalSession({ organizationId: req.orgId! });
   res.json(result);
 });
+
+// Activate the org's subscription from a just-completed checkout transaction,
+// without waiting for the webhook. Called by the checkout page on
+// `checkout.completed` so the dashboard unlocks immediately.
+const activateSchema = z.object({ transactionId: z.string().min(1) });
+router.post(
+  "/activate",
+  requireAuth,
+  requireOrg,
+  validateBody(activateSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const active = await activateFromTransaction(req.body.transactionId, req.orgId!);
+      res.json({ active });
+    } catch (err) {
+      logger.error("[billing] activate failed", { err: (err as Error).message });
+      res.json({ active: false });
+    }
+  },
+);
 
 // Daily time-series usage for the current org. Returns the last `days` days
 // (max 180). Each point includes the day's message count and the count of

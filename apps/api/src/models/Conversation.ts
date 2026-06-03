@@ -20,6 +20,9 @@ const conversationSchema = new Schema(
     messageCount: { type: Number, default: 0 },
     resolvedAt: { type: Date },
     resolvedBy: { type: String, enum: ["ai", "operator", "system"] },
+    // Set when the AI has asked the visitor to confirm closing the conversation
+    // and is waiting for their yes/no (ask-before-resolve, two-step).
+    pendingResolveConfirmation: { type: Boolean, default: false },
     escalatedAt: { type: Date },
     metadata: { type: Schema.Types.Mixed },
   },

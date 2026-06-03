@@ -18,8 +18,10 @@ function optional(name: string, fallback: string): string {
 export const env = {
   nodeEnv: optional("NODE_ENV", "development"),
   port: Number(optional("PORT", "4000")),
-  apiBaseUrl: optional("API_BASE_URL", "http://localhost:4000"),
-  corsOrigins: optional("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(","),
+  // URLs come from the environment (no host hardcoded). Required so a missing
+  // value fails fast instead of defaulting to a wrong host.
+  apiBaseUrl: required("API_BASE_URL"),
+  corsOrigins: required("CORS_ORIGINS").split(","),
   mongoUri: required("MONGODB_URI"),
   redisUrl: process.env.REDIS_URL,
   jwtSecret: required("JWT_SECRET"),
@@ -38,4 +40,7 @@ export const env = {
   },
   // Back-compat alias — older call sites read `env.aiConfidenceThreshold`.
   aiConfidenceThreshold: Number(required("AI_CONFIDENCE_THRESHOLD")),
+  // Widget attachment content-extraction caps (read by the upload handler).
+  attachmentExtractMaxChars: Number(optional("ATTACHMENT_EXTRACT_MAX_CHARS", "8000")),
+  attachmentExtractMaxBytes: Number(optional("ATTACHMENT_EXTRACT_MAX_BYTES", "5242880")),
 };

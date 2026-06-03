@@ -20,7 +20,65 @@ import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { generateAiReply } from "../services/ai/agent.service.js";
+import { parseFile } from "../services/kb/parsers.js";
+import geoip from "geoip-lite";
 import { logger } from "../config/logger.js";
+
+// Resolve the visitor's ISO country to default the phone-input country code.
+// Public IPs use the offline geoip-lite DB (fast, no network). For local/private
+// IPs (e.g. localhost dev) geoip can't resolve, so we fall back to an external
+// lookup that uses the SERVER's public IP — which on localhost is the developer's
+// own location. The local result is cached for the process.
+function isPrivateOrLocal(ip: string): boolean {
+  return (
+    !ip ||
+    ip === "127.0.0.1" ||
+    ip === "::1" ||
+    /^10\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^169\.254\./.test(ip) ||
+    /^fc00:/i.test(ip) ||
+    /^fe80:/i.test(ip)
+  );
+}
+
+let cachedLocalCountry: string | null | undefined; // undefined = not yet looked up
+
+async function resolveCountry(ip?: string): Promise<string | undefined> {
+  const clean = (ip ?? "").replace(/^::ffff:/, "");
+  const local = isPrivateOrLocal(clean);
+
+  if (!local) {
+    try {
+      const c = geoip.lookup(clean)?.country;
+      if (c) return c;
+    } catch {
+      /* fall through to external lookup */
+    }
+  } else if (cachedLocalCountry !== undefined) {
+    return cachedLocalCountry ?? undefined;
+  }
+
+  // External fallback. For local IPs omit the IP so the service uses the
+  // server's public IP (the dev's location). Best-effort, short timeout.
+  try {
+    const target = local ? "" : clean;
+    const res = await fetch(`http://ip-api.com/json/${target}?fields=status,countryCode`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (res.ok) {
+      const j = (await res.json()) as { status?: string; countryCode?: string };
+      const code = j.status === "success" && j.countryCode ? j.countryCode : undefined;
+      if (local) cachedLocalCountry = code ?? null;
+      return code;
+    }
+  } catch {
+    /* ignore — country stays undefined */
+  }
+  if (local) cachedLocalCountry = null;
+  return undefined;
+}
 
 const router = Router();
 
@@ -153,7 +211,42 @@ router.post(
       agentId: req.body.agentId as string | undefined,
     });
     const session = await createWidgetSession(ctx, req);
-    res.json(widgetInitPayload(ctx, session));
+    res.json({ ...widgetInitPayload(ctx, session), countryCode: await resolveCountry(req.ip) });
+  }),
+);
+
+// ---------- GET /widget/appearance ----------
+// Public, unauthenticated, side-effect-free. Returns only cosmetic appearance
+// fields resolved by agentId so the embed loader can style the launcher (and
+// seed iframe params) BEFORE a session exists — and so operators never need to
+// re-copy the embed snippet when they change position/color/theme in the studio.
+// Creates NO session (contrast POST /init).
+const appearanceQuerySchema = z.object({
+  agentId: z.string().regex(/^[0-9a-fA-F]{24}$/, "agentId must be a 24-char hex id"),
+});
+
+router.get(
+  "/appearance",
+  asyncHandler(async (req: Request, res: Response) => {
+    const parsed = appearanceQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ValidationError("agentId must be a 24-char hex id.");
+    }
+    const agent = await Agent.findOne({ _id: parsed.data.agentId, isActive: true });
+    if (!agent) throw new NotFoundError("No active agent for this id.");
+
+    const settings = await WidgetSettings.findOne({
+      organizationId: agent.organizationId,
+      agentId: agent._id,
+    });
+
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.json({
+      position: settings?.position ?? "bottom-right",
+      primaryColor: settings?.primaryColor ?? "#7c3aed",
+      theme: settings?.theme ?? "auto",
+      launcherIcon: null,
+    });
   }),
 );
 
@@ -168,7 +261,7 @@ router.post(
       agentId: req.body.agentId as string | undefined,
     });
     const session = await createWidgetSession(ctx, req);
-    res.status(201).json(widgetInitPayload(ctx, session));
+    res.status(201).json({ ...widgetInitPayload(ctx, session), countryCode: await resolveCountry(req.ip) });
   }),
 );
 
@@ -348,8 +441,10 @@ const sendMessageSchema = z.object({
       z.object({
         fileName: z.string(),
         fileUrl: z.string(),
+        url: z.string().optional(),
         mimeType: z.string(),
         size: z.number().int().nonnegative(),
+        extractedText: z.string().optional(),
       }),
     )
     .optional(),
@@ -425,7 +520,43 @@ router.post(
 // can rely on the prefix. We still verify `metadata.organizationId` on every
 // download as defence-in-depth.
 const ALLOWED_MIME_PREFIXES = ["image/"];
-const ALLOWED_MIME_EXACT = new Set(["application/pdf", "text/plain"]);
+// Widened to match what `parseFile` can extract (PDF/DOCX/Excel/CSV/text/markdown/HTML).
+const ALLOWED_MIME_EXACT = new Set([
+  "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "text/html",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+
+// Best-effort text extraction so the AI can read the attachment. Never throws —
+// an unreadable/oversized file just yields no text (the upload still succeeds).
+async function extractAttachmentText(
+  buffer: Buffer,
+  mimetype: string,
+  filename: string,
+): Promise<string | undefined> {
+  if (mimetype.startsWith("image/")) return undefined; // no OCR in this bundle
+  if (buffer.length > env.attachmentExtractMaxBytes) return "[file too large to read]";
+  try {
+    const { text } = await parseFile({ buffer, mimetype, filename });
+    const trimmed = (text ?? "").trim();
+    if (!trimmed) return undefined;
+    return trimmed.length > env.attachmentExtractMaxChars
+      ? trimmed.slice(0, env.attachmentExtractMaxChars)
+      : trimmed;
+  } catch (err) {
+    logger.warn("[widget] attachment extraction failed", {
+      filename,
+      mimetype,
+      err: (err as Error).message,
+    });
+    return undefined;
+  }
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -475,12 +606,20 @@ router.post(
       },
     });
 
+    const extractedText = await extractAttachmentText(buffer, mimetype, originalname);
+
+    // Absolute URL (API origin), so the widget — served from a different origin —
+    // resolves it correctly. The caller appends `?t=<sessionToken>` to authenticate
+    // the <img>/link request (see requireWidgetSession query-token fallback).
+    const fileUrl = `${env.apiBaseUrl}/api/v1/widget/attachments/${sha}`;
     res.status(201).json({
       attachment: {
-        url: `/api/v1/widget/attachments/${sha}`,
+        url: fileUrl,
+        fileUrl,
         fileName: originalname,
         mimeType: mimetype,
         size,
+        ...(extractedText ? { extractedText } : {}),
       },
     });
   }),

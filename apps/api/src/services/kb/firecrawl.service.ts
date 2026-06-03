@@ -6,7 +6,7 @@ import { chunkText } from "../../utils/chunker.js";
 import { embed } from "../ai/embedding.service.js";
 import { getPineconeIndex } from "../../config/pinecone.js";
 import { logger } from "../../config/logger.js";
-import { hashContent } from "./ingestion.service.js";
+import { hashContent, emitKnowledgeUpdate } from "./ingestion.service.js";
 
 const baseUrl = process.env.FIRECRAWL_BASE_URL ?? "https://api.firecrawl.dev/v1";
 const apiKey = process.env.FIRECRAWL_API_KEY;
@@ -81,6 +81,7 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
     source.lastSyncedAt = new Date();
     source.embeddingError = undefined;
     await source.save();
+    emitKnowledgeUpdate(source);
     logger.info("[kb] crawl produced no text", { sourceId, pages: pages.length });
     return;
   }
@@ -115,6 +116,7 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
   source.lastSyncedAt = new Date();
   source.embeddingError = undefined;
   await source.save();
+  emitKnowledgeUpdate(source);
   logger.info("[kb] crawl ingested", { sourceId, pages: pages.length, chunks: chunks.length });
 }
 

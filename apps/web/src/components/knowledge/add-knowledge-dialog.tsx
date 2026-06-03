@@ -25,9 +25,8 @@ import {
   Textarea,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { API_URL } from "@/lib/app-urls";
 import type { KnowledgeSource } from "./types";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
 
 type Props = {
   open: boolean;

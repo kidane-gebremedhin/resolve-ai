@@ -47,7 +47,7 @@ async function main() {
   app.set("io", io);
 
   httpServer.listen(env.port, () => {
-    logger.info(`[api] listening on http://localhost:${env.port}`);
+    logger.info(`[api] listening on port ${env.port}`);
   });
 
   startJobs();

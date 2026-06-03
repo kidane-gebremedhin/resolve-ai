@@ -10,3 +10,16 @@
 body {
   margin: 0;
 }
+
+/* react-phone-number-input: blend into the widget's field styling. */
+.csb-phone-field .PhoneInputInput {
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: inherit;
+  font-size: inherit;
+  min-width: 0;
+}
+.csb-phone-field .PhoneInputCountrySelect { color: #111; }
+.dark .csb-phone-field .PhoneInputCountrySelect { color: #111; }
+.csb-phone-field .PhoneInputCountryIcon { box-shadow: none; }

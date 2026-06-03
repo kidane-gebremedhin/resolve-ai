@@ -20,6 +20,7 @@ import {
   CreditCard,
   Menu,
   Code2,
+  Share2,
   ChevronsUpDown,
   Check,
   Plus,
@@ -55,6 +56,7 @@ type NavItem = {
     | '/app/leads'
     | '/app/usage'
     | '/app/billing'
+    | '/app/referrals'
     | '/app/developers';
   label: string;
   icon: typeof LayoutDashboard;
@@ -77,6 +79,7 @@ const nav: NavItem[] = [
   { href: '/app/analytics', label: 'Analytics', icon: BarChart3, group: 'Account' },
   { href: '/app/usage', label: 'Usage', icon: Gauge, group: 'Account' },
   { href: '/app/billing', label: 'Billing', icon: CreditCard, group: 'Account' },
+  { href: '/app/referrals', label: 'Referrals', icon: Share2, group: 'Account' },
   { href: '/app/settings', label: 'Settings', icon: Settings, group: 'Account' },
 ];
 
@@ -305,11 +308,13 @@ export function AppShell({
   orgName = 'Workspace',
   websites = [],
   activeWebsiteId = null,
+  plan,
 }: {
   children: React.ReactNode;
   orgName?: string;
   websites?: ScopeWebsite[];
   activeWebsiteId?: string | null;
+  plan?: string;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -357,6 +362,16 @@ export function AppShell({
             <Input placeholder="Search…" className="h-9 pl-8 text-sm" />
           </div>
           <div className="flex items-center gap-2">
+            {plan ? (
+              <Link
+                href="/app/billing"
+                title="Manage your plan"
+                className="hidden items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted sm:inline-flex"
+              >
+                <span className="font-medium capitalize">{plan}</span>
+                <span className="text-muted-foreground">· Change plan</span>
+              </Link>
+            ) : null}
             <ThemeToggle />
             <button className="relative grid h-9 w-9 place-items-center rounded-md border border-border bg-background hover:bg-muted">
               <Bell className="h-4 w-4" />

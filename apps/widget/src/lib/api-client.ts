@@ -3,8 +3,14 @@
 // a session token explicitly so the call sites can't accidentally hit an
 // authed endpoint with stale storage.
 
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
+// API base comes from the environment (set per env via .env files). No host is
+// hardcoded — a missing value fails fast rather than defaulting to a wrong host.
+function requireApiUrl(): string {
+  const v = process.env.NEXT_PUBLIC_API_URL;
+  if (!v) throw new Error("Missing NEXT_PUBLIC_API_URL — set it for this environment.");
+  return v;
+}
+export const API_URL = requireApiUrl();
 
 export type WidgetAgent = {
   id: string;
@@ -18,8 +24,6 @@ export type WidgetSettings = {
   _id?: string;
   organizationId?: string;
   agentId?: string;
-  title?: string;
-  subtitle?: string;
   welcomeMessage?: string;
   suggestedQuestions?: string[];
   primaryColor?: string;
@@ -49,6 +53,8 @@ export type InitResponse = {
   agent: WidgetAgent;
   settings: WidgetSettings;
   sections: WidgetSection[];
+  /** ISO country resolved from the visitor's IP (offline geo). Defaults the phone field. */
+  countryCode?: string;
 };
 
 export type SettingsResponse = {
@@ -76,6 +82,8 @@ export type WidgetAttachment = {
   mimeType?: string;
   size?: number;
   url?: string;
+  /** Server-extracted text (PDF/doc/sheet/text) — passed back on send so the AI reads it. */
+  extractedText?: string;
 };
 
 export type WidgetMessage = {

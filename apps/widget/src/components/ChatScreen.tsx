@@ -9,7 +9,7 @@
 // append + socket-driven append logic in one place (WidgetRoot) instead of
 // duplicated here.
 
-import type { WidgetAgent, WidgetMessage } from "../lib/api-client";
+import type { WidgetAgent, WidgetAttachment, WidgetMessage } from "../lib/api-client";
 import { WidgetHeader } from "./WidgetHeader";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
@@ -24,18 +24,22 @@ export function ChatScreen({
   onAttach,
   composerDisabled = false,
   aiTyping = false,
+  sessionToken,
 }: {
   agent: WidgetAgent | null;
   primaryColor: string;
   messages: WidgetMessage[];
   /** Show the escalated banner above the transcript. */
   escalated: boolean;
-  onSend: (content: string) => Promise<void> | void;
-  onAttach?: (file: File) => Promise<void> | void;
+  onSend: (content: string, attachments?: WidgetAttachment[]) => Promise<void> | void;
+  /** Uploads a file and returns its metadata for the composer to queue. */
+  onAttach?: (file: File) => Promise<WidgetAttachment>;
   /** Set true while the contact_prompt overlay is up — chat is read-only then. */
   composerDisabled?: boolean;
   /** Show the animated "AI is typing" indicator while a reply is pending. */
   aiTyping?: boolean;
+  /** Authenticates attachment preview/download URLs. */
+  sessionToken?: string;
 }) {
   return (
     <div className="flex h-full w-full flex-col bg-white dark:bg-neutral-900">
@@ -49,7 +53,7 @@ export function ChatScreen({
       {escalated ? (
         <EscalatedBanner operatorJoined={messages.some((m) => m.role === "operator")} />
       ) : null}
-      <MessageList messages={messages} primaryColor={primaryColor} typing={aiTyping} />
+      <MessageList messages={messages} primaryColor={primaryColor} typing={aiTyping} sessionToken={sessionToken} />
       <Composer
         onSend={onSend}
         onAttach={onAttach}

@@ -40,15 +40,13 @@ type Props = {
 // is the order attributes appear in every snippet.
 //
 // Only `data-agent` identifies the install — the API derives the organization
-// and website from the agent (one agent maps to one website), so no org/website
-// IDs are needed. The cosmetic attributes mirror the saved Widget Studio config
-// so the launcher renders correctly before the iframe loads.
+// and website from the agent (one agent maps to one website). Appearance
+// (position / primary color / theme) is fetched live by agentId from
+// GET /widget/appearance on load, so it is NOT baked into the snippet: operators
+// can change it in Widget Studio without re-copying or re-deploying the script.
 const ATTR_DEFS: { attr: string; ds: string; key: keyof EmbedConfig }[] = [
   { attr: "data-agent", ds: "agent", key: "agentId" },
   { attr: "data-widget-url", ds: "widgetUrl", key: "widgetUrl" },
-  { attr: "data-position", ds: "position", key: "position" },
-  { attr: "data-primary-color", ds: "primaryColor", key: "primaryColor" },
-  { attr: "data-theme", ds: "theme", key: "theme" },
 ];
 
 function CodeBlock({ code }: { code: string }) {

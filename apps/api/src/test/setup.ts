@@ -24,6 +24,7 @@ process.env.AI_SUGGESTIONS_TEMPERATURE ??= "0.4";
 process.env.AI_KB_SEARCH_TOP_K ??= "8";
 process.env.AI_KB_SEARCH_MIN_SCORE ??= "0.2";
 process.env.CORS_ORIGINS ??= "http://localhost:3000";
+process.env.API_BASE_URL ??= "http://localhost:4000";
 
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";

@@ -4,8 +4,6 @@ const widgetSettingsSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true },
     agentId: { type: Schema.Types.ObjectId, ref: "Agent", required: true },
-    title: { type: String },
-    subtitle: { type: String },
     welcomeMessage: { type: String },
     suggestedQuestions: { type: [String], default: [] },
     primaryColor: { type: String },

@@ -1,17 +1,29 @@
 import crypto from "node:crypto";
-import { Organization, Subscription } from "../models/index.js";
+import { Organization, Subscription, ProcessedWebhook } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { NotFoundError } from "../utils/errors.js";
-
-const PLAN_BY_PRICE: Record<string, "starter" | "pro" | "enterprise"> = {};
-if (process.env.PADDLE_PRICE_STARTER) PLAN_BY_PRICE[process.env.PADDLE_PRICE_STARTER] = "starter";
-if (process.env.PADDLE_PRICE_PRO) PLAN_BY_PRICE[process.env.PADDLE_PRICE_PRO] = "pro";
-if (process.env.PADDLE_PRICE_ENTERPRISE) PLAN_BY_PRICE[process.env.PADDLE_PRICE_ENTERPRISE] = "enterprise";
+import { planByPriceId } from "../config/plans.js";
+import { recordEarnedCommissionForOrg } from "./affiliate.service.js";
 
 const PADDLE_API_BASE =
   (process.env.PADDLE_ENVIRONMENT ?? "sandbox") === "production"
     ? "https://api.paddle.com"
     : "https://sandbox-api.paddle.com";
+
+// Startup sanity check: a sandbox key with PADDLE_ENVIRONMENT=production (or
+// vice-versa) silently breaks checkout. Warn loudly rather than fail.
+(function assertPaddleEnvConsistency() {
+  const env = process.env.PADDLE_ENVIRONMENT ?? "sandbox";
+  const key = process.env.PADDLE_API_KEY ?? "";
+  const looksLive = /pdl_live_/.test(key);
+  const looksSandbox = /pdl_sdbx_|pdl_test_/.test(key);
+  if (env === "production" && looksSandbox) {
+    logger.warn("[billing] PADDLE_ENVIRONMENT=production but API key looks like a sandbox key.");
+  }
+  if (env !== "production" && looksLive) {
+    logger.warn("[billing] PADDLE_ENVIRONMENT=sandbox but a LIVE Paddle API key is configured.");
+  }
+})();
 
 export function verifyPaddleSignature(rawBody: string, header: string | undefined): boolean {
   const secret = process.env.PADDLE_WEBHOOK_SECRET;
@@ -31,6 +43,7 @@ export function verifyPaddleSignature(rawBody: string, header: string | undefine
 }
 
 type SubscriptionEvent = {
+  event_id?: string;
   event_type: string;
   data: {
     id: string;
@@ -45,6 +58,18 @@ type SubscriptionEvent = {
 
 export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void> {
   if (!event.event_type?.startsWith("subscription.")) return;
+
+  // Idempotency: Paddle retries deliveries. Record the event id and no-op if
+  // we've already applied it. A duplicate insert (unique index) means "seen".
+  if (event.event_id) {
+    try {
+      await ProcessedWebhook.create({ provider: "paddle", eventId: event.event_id });
+    } catch {
+      logger.info("[billing] duplicate webhook event ignored", { eventId: event.event_id });
+      return;
+    }
+  }
+
   const data = event.data;
   const organizationId = data.custom_data?.organizationId;
   if (!organizationId) {
@@ -52,7 +77,7 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
     return;
   }
   const priceId = data.items?.[0]?.price?.id;
-  const plan = (priceId && PLAN_BY_PRICE[priceId]) ?? "starter";
+  const plan = (priceId && (await planByPriceId())[priceId]) ?? "starter";
 
   await Subscription.findOneAndUpdate(
     { organizationId },
@@ -80,6 +105,13 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
     paddleSubscriptionId: data.id,
     paddleCustomerId: data.customer_id,
   });
+
+  // Affiliate: when a referred org first activates a paid plan, earn the
+  // referrer's commission (no-op if there's no pending referral).
+  if (data.status === "active") {
+    const sub = await Subscription.findOne({ organizationId }).select("_id").lean();
+    await recordEarnedCommissionForOrg(organizationId, plan, sub?._id);
+  }
 }
 
 async function paddleFetch(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -125,6 +157,60 @@ export async function createCheckoutSession(args: {
     customData: { organizationId: args.organizationId },
     url: args.successUrl,
   };
+}
+
+// Activate a subscription directly from a completed checkout transaction —
+// WITHOUT waiting for the webhook. Used right after the Paddle overlay reports
+// `checkout.completed` so the dashboard unlocks immediately (the webhook can't
+// reach localhost, and even in prod there's a delivery delay). Fetches the
+// transaction, finds its subscription, verifies the org, and upserts. Returns
+// whether the subscription is now entitled.
+export async function activateFromTransaction(
+  transactionId: string,
+  expectedOrgId: string,
+): Promise<boolean> {
+  const result = (await paddleFetch(`/transactions/${transactionId}`)) as {
+    data?: {
+      id: string;
+      subscription_id?: string;
+      custom_data?: { organizationId?: string } | null;
+      status?: string;
+    };
+  };
+  const d = result.data;
+  if (!d) throw new NotFoundError("Transaction not found in Paddle.");
+  const orgId = d.custom_data?.organizationId;
+  if (orgId && orgId !== expectedOrgId) {
+    throw new NotFoundError("Transaction does not belong to this organization.");
+  }
+  if (!d.subscription_id) {
+    return false; // subscription not yet linked (rare timing); webhook will follow
+  }
+  await syncSubscriptionFromPaddle(d.subscription_id);
+  const sub = await Subscription.findOne({ organizationId: expectedOrgId })
+    .select("status")
+    .lean();
+  return Boolean(sub && (sub.status === "active" || sub.status === "trialing"));
+}
+
+// Reconcile a subscription's local record from Paddle (used by the admin
+// "Refresh status" action). Fetches the live subscription and re-applies it
+// through the same upsert path. Bypasses idempotency (no event_id).
+export async function syncSubscriptionFromPaddle(paddleSubscriptionId: string): Promise<void> {
+  const result = (await paddleFetch(`/subscriptions/${paddleSubscriptionId}`)) as {
+    data?: SubscriptionEvent["data"];
+  };
+  const d = result.data;
+  if (!d) throw new NotFoundError("Subscription not found in Paddle.");
+  if (!d.custom_data?.organizationId) {
+    const existing = await Subscription.findOne({ paddleSubscriptionId })
+      .select("organizationId")
+      .lean();
+    if (existing) {
+      d.custom_data = { ...(d.custom_data ?? {}), organizationId: existing.organizationId.toString() };
+    }
+  }
+  await handlePaddleEvent({ event_type: "subscription.reconcile", data: d });
 }
 
 export async function createCustomerPortalSession(args: {

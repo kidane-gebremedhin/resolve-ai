@@ -1,9 +1,7 @@
 "use client";
 
 import { io, type Socket } from "socket.io-client";
-
-const SOCKET_URL =
-  process.env.NEXT_PUBLIC_SOCKET_URL ?? process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/v1\/?$/, "") ?? "http://localhost:4000";
+import { SOCKET_URL } from "./app-urls";
 
 let cached: Socket | null = null;
 let cachedToken: string | null = null;

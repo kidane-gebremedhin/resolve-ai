@@ -17,33 +17,13 @@ type Subscription = {
   canceledAt: string | null;
 };
 
-const PLANS = [
-  {
-    id: "starter" as const,
-    label: "Starter",
-    price: "$19",
-    cadence: "/mo",
-    items: ["3 websites", "2,000 AI messages / mo", "25 knowledge sources", "Email support"],
-    priceEnv: "NEXT_PUBLIC_PADDLE_PRICE_STARTER",
-  },
-  {
-    id: "pro" as const,
-    label: "Pro",
-    price: "$99",
-    cadence: "/mo",
-    items: ["10 websites", "20,000 AI messages / mo", "200 knowledge sources", "Priority support"],
-    priceEnv: "NEXT_PUBLIC_PADDLE_PRICE_PRO",
-    highlighted: true,
-  },
-  {
-    id: "enterprise" as const,
-    label: "Enterprise",
-    price: "Custom",
-    cadence: "",
-    items: ["Unlimited websites", "Unlimited messages", "SSO + SAML", "Dedicated success engineer"],
-    priceEnv: "NEXT_PUBLIC_PADDLE_PRICE_ENTERPRISE",
-  },
-];
+type CatalogEntry = {
+  plan: "free" | "starter" | "pro" | "enterprise";
+  name: string;
+  priceId: string | null;
+  priceMonthlyUsd: number | null;
+  features: string[];
+};
 
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
@@ -78,12 +58,22 @@ async function Page() {
       e instanceof ApiError ? e.message : "Failed to load subscription.";
   }
 
+  // Admin-configured plan catalog (GET /billing/plans). Free tier isn't a
+  // purchasable card. Pro is highlighted by convention.
+  let catalog: CatalogEntry[] = [];
+  try {
+    const res = await api.get<{ plans: CatalogEntry[] }>("/billing/plans");
+    catalog = res.plans.filter((p) => p.plan !== "free");
+  } catch {
+    catalog = [];
+  }
+
   const plan = sub?.plan ?? "free";
   const status = sub?.status ?? "active";
   const statusBadge = statusVariant(status);
   const hasPaddleCustomer = Boolean(sub?.paddleCustomerId);
   const currentPlanLabel =
-    plan === "free" ? "Free" : plan.charAt(0).toUpperCase() + plan.slice(1);
+    plan === "free" ? "No active plan" : plan.charAt(0).toUpperCase() + plan.slice(1);
 
   return (
     <div className="container-page py-8">
@@ -156,30 +146,32 @@ async function Page() {
       <div className="mt-8">
         <div className="font-display text-sm font-semibold">Plans</div>
         <div className="mt-3 grid gap-4 md:grid-cols-3">
-          {PLANS.map((p) => {
-            const priceId = process.env[p.priceEnv];
-            const isCurrent = plan === p.id;
+          {catalog.map((p) => {
+            const isCurrent = plan === p.plan;
+            const highlighted = p.plan === "pro";
+            const priceLabel = p.priceMonthlyUsd == null ? "Custom" : `$${p.priceMonthlyUsd}`;
+            const cadence = p.priceMonthlyUsd == null ? "" : "/mo";
             return (
               <div
-                key={p.id}
+                key={p.plan}
                 className={`rounded-xl border bg-card p-5 ${
                   isCurrent
                     ? "border-foreground ring-1 ring-foreground"
-                    : p.highlighted
+                    : highlighted
                       ? "border-primary/50"
                       : "border-border"
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <div className="font-display text-lg font-semibold">{p.label}</div>
+                  <div className="font-display text-lg font-semibold">{p.name}</div>
                   {isCurrent && <Badge variant="secondary">Current</Badge>}
                 </div>
                 <div className="mt-2 font-display text-3xl font-semibold">
-                  {p.price}
-                  <span className="text-sm font-normal text-muted-foreground">{p.cadence}</span>
+                  {priceLabel}
+                  <span className="text-sm font-normal text-muted-foreground">{cadence}</span>
                 </div>
                 <ul className="mt-4 space-y-2 text-sm">
-                  {p.items.map((i) => (
+                  {p.features.map((i) => (
                     <li key={i} className="flex items-start gap-2">
                       <Check className="mt-0.5 h-3.5 w-3.5 text-success" /> {i}
                     </li>
@@ -187,7 +179,11 @@ async function Page() {
                 </ul>
                 <div className="mt-5">
                   <ChoosePlanButton
-                    plan={{ id: p.id, priceId, label: p.label }}
+                    plan={{
+                      id: p.plan as "starter" | "pro" | "enterprise",
+                      priceId: p.priceId ?? undefined,
+                      label: p.name,
+                    }}
                     organizationId={organizationId}
                     isCurrent={isCurrent}
                   />

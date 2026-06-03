@@ -1,0 +1,542 @@
+@import "tailwindcss";
+/* Scan apps/web/src AND the shared UI package — shadcn primitives live in
+   packages/ui/src/components and bring their own utility classes (z-index,
+   `top-[50%]`, `translate-x-[-50%]`, `data-[state=open]:animate-in`, etc).
+   Without this @source the Dialog mounts but renders off-screen (top=docHeight,
+   no translate applied), which looks like "Add knowledge does nothing". */
+@source "../**/*.{js,ts,jsx,tsx}";
+@source "../../../../packages/ui/src/**/*.{js,ts,jsx,tsx}";
+@import "tw-animate-css";
+@import "../styles/icon-font.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface: var(--surface);
+  --color-surface-foreground: var(--surface-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+:root {
+  --radius: 0.625rem;
+  /* Cloud White palette */
+  --background: oklch(0.995 0.002 247);
+  --foreground: oklch(0.18 0.02 260);
+  --surface: oklch(0.975 0.004 247);
+  --surface-foreground: oklch(0.22 0.02 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.02 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.02 260);
+  --primary: oklch(0.58 0.20 258);
+  --primary-foreground: oklch(0.99 0.003 247);
+  --secondary: oklch(0.955 0.006 247);
+  --secondary-foreground: oklch(0.22 0.02 260);
+  --muted: oklch(0.96 0.005 247);
+  --muted-foreground: oklch(0.50 0.02 257);
+  --accent: oklch(0.955 0.01 250);
+  --accent-foreground: oklch(0.22 0.02 260);
+  --destructive: oklch(0.58 0.22 27);
+  --destructive-foreground: oklch(0.99 0.003 247);
+  --success: oklch(0.62 0.16 155);
+  --success-foreground: oklch(0.99 0.003 247);
+  --warning: oklch(0.78 0.15 75);
+  --warning-foreground: oklch(0.20 0.02 75);
+  --border: oklch(0.91 0.008 250);
+  --input: oklch(0.91 0.008 250);
+  --ring: oklch(0.58 0.20 258);
+  --sidebar: oklch(0.985 0.003 247);
+  --sidebar-foreground: oklch(0.22 0.02 260);
+  --sidebar-primary: oklch(0.58 0.20 258);
+  --sidebar-primary-foreground: oklch(0.99 0.003 247);
+  --sidebar-accent: oklch(0.95 0.006 247);
+  --sidebar-accent-foreground: oklch(0.22 0.02 260);
+  --sidebar-border: oklch(0.91 0.008 250);
+  --sidebar-ring: oklch(0.58 0.20 258);
+}
+
+.dark {
+  /* Near-black neutral palette */
+  --background: oklch(0.1448 0 0);          /* hsl(223.8 0% 3.94%) */
+  --foreground: oklch(0.96 0 0);
+  --surface: oklch(0.1822 0 0);             /* between bg and card */
+  --surface-foreground: oklch(0.95 0 0);
+  --card: oklch(0.2103 0 0);                /* hsl(223.8 0% 9.05%) */
+  --card-foreground: oklch(0.96 0 0);
+  --popover: oklch(0.2103 0 0);
+  --popover-foreground: oklch(0.96 0 0);
+  --primary: oklch(0.62 0.20 258);
+  --primary-foreground: oklch(0.99 0.003 247);
+  --secondary: oklch(0.2103 0 0);
+  --secondary-foreground: oklch(0.95 0 0);
+  --muted: oklch(0.2103 0 0);
+  --muted-foreground: oklch(0.66 0 0);
+  --accent: oklch(0.25 0 0);
+  --accent-foreground: oklch(0.96 0 0);
+  --destructive: oklch(0.62 0.22 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.70 0.16 155);
+  --success-foreground: oklch(0.1448 0 0);
+  --warning: oklch(0.80 0.15 75);
+  --warning-foreground: oklch(0.18 0.02 75);
+  --border: oklch(0.27 0 0);
+  --input: oklch(0.27 0 0);
+  --ring: oklch(0.62 0.20 258);
+  --sidebar: oklch(0.1448 0 0);
+  --sidebar-foreground: oklch(0.95 0 0);
+  --sidebar-primary: oklch(0.62 0.20 258);
+  --sidebar-primary-foreground: oklch(0.99 0.003 247);
+  --sidebar-accent: oklch(0.2103 0 0);
+  --sidebar-accent-foreground: oklch(0.96 0 0);
+  --sidebar-border: oklch(0.27 0 0);
+  --sidebar-ring: oklch(0.62 0.20 258);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    /* color-scheme drives the browser's default form-control colors so
+       <input>/<textarea> caret + autofill match the current theme. Without it,
+       typed text in dark mode renders as the user-agent default (often pure
+       black on dark bg) and the user sees an "invisible text" bug. */
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+  h1, h2, h3, h4, h5 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .container-page {
+    max-width: 1200px;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, color-mix(in oklab, var(--foreground) 5%, transparent) 1px, transparent 1px),
+      linear-gradient(to bottom, color-mix(in oklab, var(--foreground) 5%, transparent) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(ellipse at center, black 40%, transparent 75%);
+  }
+  .dot-bg {
+    background-image: radial-gradient(color-mix(in oklab, var(--foreground) 12%, transparent) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .text-balance { text-wrap: balance; }
+  .ring-soft {
+    box-shadow: 0 0 0 1px var(--color-border), 0 1px 2px color-mix(in oklab, var(--foreground) 4%, transparent);
+  }
+  .focus-ring:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+/* ============================================================
+   NEXTSAAS LANDING PAGE THEME & UTILITIES
+   Scoped to .ns-theme wrapper so dashboard theme is unaffected
+   ============================================================ */
+
+/* NS Theme variables — override Tailwind color tokens inside landing pages */
+.ns-theme {
+  font-family: var(--font-inter-tight), sans-serif;
+  --color-primary-50: #f4f2fe;
+  --color-primary-100: #ece8ff;
+  --color-primary-200: #dcd4ff;
+  --color-primary-300: #c3b1ff;
+  --color-primary-400: #a585ff;
+  --color-primary-500: #864ffe;
+  --color-primary-600: #7c31f6;
+  --color-primary-700: #6d1fe2;
+  --color-primary-800: #5a19be;
+  --color-secondary: #1a1a1c;
+  --color-accent: #fcfcfc;
+  --color-background-1: #fcfcfd;
+  --color-background-2: #f9fafb;
+  --color-background-3: #f4f5f8;
+  --color-background-4: #f0f2f6;
+  --color-background-5: #13171e;
+  --color-background-6: #0f1217;
+  --color-background-7: #181d26;
+  --color-background-8: #070b10;
+  --color-background-9: #1f252f;
+  --color-background-10: #ebebeb;
+  --color-stroke-1: #dfe4eb;
+  --color-stroke-2: #e3e7ed;
+  --color-stroke-3: #d7dde5;
+  --color-stroke-4: #eceff4;
+  --color-stroke-5: #1b232f;
+  --color-stroke-6: #202731;
+  --color-stroke-7: #2a333e;
+  --color-stroke-8: #303b49;
+  --color-ns-yellow: #f9eb57;
+  --color-ns-green: #c6f56f;
+  --color-ns-red: #ffb9a2;
+  --color-ns-cyan: #83e7ee;
+  --color-ns-green-light: #e8fbc6;
+  --color-ns-cyan-light: #cdf5f8;
+  --color-ns-yellow-light: #fdf7bc;
+  /* --font-inter-tight is injected by next/font (see layout.tsx) */
+  --text-heading-1: 4.25rem;
+  --text-heading-1--line-height: 110%;
+  --text-heading-2: 3.25rem;
+  --text-heading-2--line-height: 120%;
+  --text-heading-3: 2.5rem;
+  --text-heading-3--line-height: 120%;
+  --text-heading-4: 2rem;
+  --text-heading-4--line-height: 130%;
+  --text-heading-5: 1.5rem;
+  --text-heading-5--line-height: 140%;
+  --text-heading-6: 1.25rem;
+  --text-heading-6--line-height: 140%;
+  --text-tagline-1: 1rem;
+  --text-tagline-1--line-height: 150%;
+  --text-tagline-2: 0.875rem;
+  --text-tagline-2--line-height: 150%;
+  --text-tagline-3: 0.75rem;
+  --text-tagline-3--line-height: 150%;
+  --blur-ns-badge-blur: 17.228288650512695px;
+  --shadow-1: 0px 1px 2px 0px rgba(16, 24, 40, 0.05);
+}
+
+.ns-theme.dark, .dark .ns-theme {
+  --color-secondary: #fcfcfc;
+  --color-split-text: #fcfcfc;
+}
+
+/* NS Tailwind @theme extension for ns-specific colors */
+@theme inline {
+  --color-primary-50: #f4f2fe;
+  --color-primary-100: #ece8ff;
+  --color-primary-200: #dcd4ff;
+  --color-primary-300: #c3b1ff;
+  --color-primary-400: #a585ff;
+  --color-primary-500: #864ffe;
+  --color-primary-600: #7c31f6;
+  --color-primary-700: #6d1fe2;
+  --color-primary-800: #5a19be;
+  --color-background-1: #fcfcfd;
+  --color-background-2: #f9fafb;
+  --color-background-3: #f4f5f8;
+  --color-background-4: #f0f2f6;
+  --color-background-5: #13171e;
+  --color-background-6: #0f1217;
+  --color-background-7: #181d26;
+  --color-background-8: #070b10;
+  --color-background-9: #1f252f;
+  --color-background-10: #ebebeb;
+  --color-background-11: #b5b5b9;
+  --color-background-12: #eaeceb;
+  --color-stroke-1: #dfe4eb;
+  --color-stroke-2: #e3e7ed;
+  --color-stroke-3: #d7dde5;
+  --color-stroke-4: #eceff4;
+  --color-stroke-5: #1b232f;
+  --color-stroke-6: #202731;
+  --color-stroke-7: #2a333e;
+  --color-stroke-8: #303b49;
+  --color-ns-yellow: #f9eb57;
+  --color-ns-green: #c6f56f;
+  --color-ns-red: #ffb9a2;
+  --color-ns-cyan: #83e7ee;
+  --color-ns-green-light: #e8fbc6;
+  --color-ns-cyan-light: #cdf5f8;
+  --color-ns-yellow-light: #fdf7bc;
+  --text-heading-1: 4.25rem;
+  --text-heading-1--line-height: 110%;
+  --text-heading-2: 3.25rem;
+  --text-heading-2--line-height: 120%;
+  --text-heading-3: 2.5rem;
+  --text-heading-3--line-height: 120%;
+  --text-heading-4: 2rem;
+  --text-heading-4--line-height: 130%;
+  --text-heading-5: 1.5rem;
+  --text-heading-5--line-height: 140%;
+  --text-heading-6: 1.25rem;
+  --text-heading-6--line-height: 140%;
+  --text-tagline-1: 1rem;
+  --text-tagline-1--line-height: 150%;
+  --text-tagline-2: 0.875rem;
+  --text-tagline-2--line-height: 150%;
+  --text-tagline-3: 0.75rem;
+  --text-tagline-3--line-height: 150%;
+  --blur-ns-badge-blur: 17.228288650512695px;
+  --shadow-1: 0px 1px 2px 0px rgba(16, 24, 40, 0.05);
+  --shadow-2: 0px 10px 20px -5px rgba(28, 34, 43, 0.05), 0px 20px 65px -5px rgba(28, 34, 43, 0.05);
+}
+
+/* NS Typography inside .ns-theme */
+.ns-theme h1, .ns-theme h2, .ns-theme h3, .ns-theme h4, .ns-theme h5, .ns-theme h6 {
+  font-family: var(--font-inter-tight), sans-serif;
+  color: #1a1a1c;
+}
+.ns-theme.dark h1, .ns-theme.dark h2, .ns-theme.dark h3, .ns-theme.dark h4, .ns-theme.dark h5, .ns-theme.dark h6,
+.dark .ns-theme h1, .dark .ns-theme h2, .dark .ns-theme h3, .dark .ns-theme h4, .dark .ns-theme h5, .dark .ns-theme h6 {
+  color: #fcfcfc;
+}
+.ns-theme h1 { font-size: 2rem; line-height: 130%; font-weight: 500; }
+@media (min-width: 640px) { .ns-theme h1 { font-size: 2.5rem; } }
+@media (min-width: 768px) { .ns-theme h1 { font-size: 3.25rem; } }
+@media (min-width: 1280px) { .ns-theme h1 { font-size: 4.25rem; line-height: 110%; } }
+.ns-theme h2 { font-size: 1.5rem; line-height: 140%; font-weight: 400; }
+@media (min-width: 640px) { .ns-theme h2 { font-size: 2rem; } }
+@media (min-width: 768px) { .ns-theme h2 { font-size: 2.5rem; } }
+@media (min-width: 1280px) { .ns-theme h2 { font-size: 3.25rem; line-height: 120%; } }
+.ns-theme h3 { font-size: 1.5rem; line-height: 140%; font-weight: 400; }
+@media (min-width: 768px) { .ns-theme h3 { font-size: 2rem; } }
+@media (min-width: 1280px) { .ns-theme h3 { font-size: 2.5rem; line-height: 120%; } }
+.ns-theme p { font-size: 0.875rem; line-height: 150%; color: rgba(26,26,28,0.6); font-weight: 400; }
+@media (min-width: 640px) { .ns-theme p { font-size: 1rem; } }
+.dark .ns-theme p, .ns-theme.dark p { color: rgba(252,252,252,0.6); }
+
+/* NS Container */
+@utility main-container {
+  max-width: 1290px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+@media (min-width: 1440px) {
+  .main-container { padding-inline: 0; }
+}
+
+/* NS Scrollbar */
+.scroll-bar::-webkit-scrollbar { display: none; }
+.scroll-bar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* NS Reveal animation initial state */
+[data-ns-animate] { opacity: 0; }
+
+/* NS Footer links */
+.footer-link {
+  font-size: 1rem;
+  color: #f4f2fe;
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  font-weight: 400;
+}
+.footer-link::before {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0;
+  height: 1px; width: 100%;
+  transform-origin: right;
+  transform: scaleX(0);
+  background: white;
+  transition: transform 0.5s;
+}
+.footer-link:hover::before { transform-origin: left; transform: scaleX(1); }
+.footer-link-v2 {
+  font-size: 1rem;
+  color: #1a1a1c;
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  font-weight: 400;
+}
+.footer-link-v2::before {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0;
+  height: 1px; width: 100%;
+  transform-origin: right;
+  transform: scaleX(0);
+  background: #1a1a1c;
+  transition: transform 0.5s;
+}
+.footer-link-v2:hover::before { transform-origin: left; transform: scaleX(1); }
+.dark .footer-link-v2::before { background: white; }
+/* Without this the link text stays #1a1a1c (near-black) in dark mode and is
+   invisible on the dark auth card (e.g. "Create an Account" on /login). */
+.dark .footer-link-v2 { color: #fcfcfc; }
+.footer-social-link { transition: transform 0.3s; }
+.footer-social-link:hover { transform: translateY(-4px); }
+
+/* NS Hero text gradient animation */
+.hero-text-gradient {
+  animation: ns-textAnimate 5s linear infinite;
+  background-size: 200%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-block;
+  background-repeat: no-repeat;
+  color: transparent;
+}
+.hero-text-color-2 {
+  background-image: linear-gradient(45deg, #83e7ee, #f9eb57, #83e7ee);
+}
+@keyframes ns-textAnimate {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* NS Authentication input */
+.auth-form-input {
+  border: 1px solid #d7dde5;
+  background: #fcfcfd;
+  font-size: 0.875rem;
+  color: #1a1a1c;
+  display: block;
+  height: 45px;
+  width: 100%;
+  border-radius: 9999px;
+  padding: 0.75rem 1.125rem;
+  font-weight: 400;
+  outline: none;
+}
+.auth-form-input:focus { outline: 2px solid #864ffe; }
+.auth-form-input::placeholder { font-size: 0.875rem; color: rgba(26,26,28,0.6); font-weight: 400; }
+.dark .auth-form-input {
+  background: #0f1217;
+  border-color: #2a333e;
+  color: #fcfcfc;
+}
+.dark .auth-form-input::placeholder { color: rgba(252,252,252,0.6); }
+
+/* NS Stacked cards */
+.js-stack-cards { --stack-cards-gap: 20px; --stack-cards-top-offset: 50vh; }
+.js-stack-cards__item {
+  position: sticky;
+  top: var(--stack-cards-top-offset, 50vh);
+  transform-origin: center center;
+  margin-bottom: var(--stack-cards-gap);
+  height: auto;
+}
+
+/* NS Button utilities */
+@utility btn {
+  position: relative;
+  display: inline-block;
+  cursor: pointer;
+  overflow: hidden;
+  border-radius: 9999px;
+  border-width: 1px;
+  text-align: center;
+  font-weight: 400;
+  white-space: nowrap;
+  transition: all 0.5s ease-in-out;
+  text-transform: lowercase;
+}
+.btn span { display: inline-block; transition: transform 0.3s ease-in-out; text-transform: capitalize; }
+.btn::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='white' viewBox='0 0 256 256'%3E%3Cpath d='M181.66,133.66l-80,80a8,8,0,0,1-11.32-11.32L164.69,128,90.34,53.66a8,8,0,0,1,11.32-11.32l80,80A8,8,0,0,1,181.66,133.66Z'%3E%3C/path%3E%3C/svg%3E");
+  background-position: center;
+  background-repeat: no-repeat;
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0;
+  height: 0; width: 0;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: all 0.3s ease-in-out;
+}
+.btn:hover::before { width: 0.75rem; height: 0.75rem; transform: translate(-1rem, -50%); opacity: 1; }
+.btn:hover span { transform: translateX(-0.5rem); }
+@utility btn-primary {
+  background-color: #864ffe; border-color: #7c31f6; color: white;
+}
+@utility btn-white {
+  background-color: #fcfcfd; border-color: #d7dde5; color: #1a1a1c;
+}
+@utility btn-white-dark {
+  background-color: #0f1217; border-color: #2a333e; color: #fcfcfc;
+}
+@utility btn-secondary {
+  background-color: #1a1a1c; border-color: #000; color: white;
+}
+@utility btn-transparent {
+  border-color: #2a333e; color: #fcfcfc; background: transparent;
+}
+@utility btn-green {
+  background-color: #c6f56f; border-color: #e8fbc6; color: #1a1a1c;
+}
+@utility btn-dark { background: rgba(252,252,252,0.1); color: #fcfcfc; border: none; }
+@utility btn-black { background: #000; color: #fcfcfc; border: none; }
+@utility btn-accent { background: #fcfcfc; border-color: #d7dde5; color: #1a1a1c; }
+@utility btn-sm { padding: 0.25rem 1rem; }
+@utility btn-md {
+  font-size: 0.875rem;
+  min-width: 90px;
+  padding: 0.625rem 1.25rem;
+}
+@utility btn-lg { font-size: 1rem; padding: 0.625rem 1.5rem; }
+@utility btn-xl { font-size: 1rem; padding: 0.875rem 2rem; }
+
+/* NS Badge utilities */
+@utility badge {
+  display: inline-block;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: #1a1a1c;
+  border-radius: 9999px;
+  padding: 0.375rem 1.25rem;
+  text-transform: capitalize;
+}
+@utility badge-green { background: #e8fbc6; }
+.dark .badge-green { color: #f9eb57; background: rgba(252,252,252,0.1); }
+@utility badge-green-v2 { background: #e8fbc6; }
+.dark .badge-green-v2 { color: #c6f56f; background: rgba(252,252,252,0.1); }
+@utility badge-yellow { background: #fdf7bc; }
+.dark .badge-yellow { color: #f9eb57; background: rgba(252,252,252,0.1); }
+@utility badge-cyan { background: #cdf5f8; }
+.dark .badge-cyan { color: #c6f56f; background: rgba(252,252,252,0.1); }
+@utility badge-blur { background: rgba(252,252,252,0.1); color: #f4f2fe; }
+@utility badge-secondary { background: #1a1a1c; color: white; font-weight: 500; }
+.dark .badge-secondary { background: #fcfcfc; color: #1a1a1c; }

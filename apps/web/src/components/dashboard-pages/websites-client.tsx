@@ -32,6 +32,7 @@ import {
   DialogFooter,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { WIDGET_URL } from "@/lib/app-urls";
 
 export type Website = {
   _id: string;
@@ -394,7 +395,7 @@ function EmbedDialog({
       domain: "${website.domain}"
     };
     var s = d.createElement("script");
-    s.src = "${process.env.NEXT_PUBLIC_WIDGET_URL ?? "http://localhost:3001"}/widget.js";
+    s.src = "${WIDGET_URL}/widget.js";
     s.async = 1;
     d.head.appendChild(s);
   })(window, document);

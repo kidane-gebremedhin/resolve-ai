@@ -7,16 +7,21 @@
 // "Continue" to proceed.
 
 import { useState } from "react";
+import { isValidPhoneNumber } from "react-phone-number-input";
+import { PhoneField } from "./PhoneField";
 
 export function ContactPromptScreen({
   primaryColor,
   initialEmail,
   initialPhone,
+  defaultCountry,
   onSave,
 }: {
   primaryColor: string;
   initialEmail?: string;
   initialPhone?: string;
+  /** ISO country (geo-detected) used to default the phone field. */
+  defaultCountry?: string;
   onSave: (args: { email?: string; phone?: string }) => Promise<void> | void;
 }) {
   const [email, setEmail] = useState(initialEmail ?? "");
@@ -39,6 +44,10 @@ export function ContactPromptScreen({
     }
     if (trimmedEmail && !isValidEmail(trimmedEmail)) {
       setError("That email doesn't look right.");
+      return;
+    }
+    if (trimmedPhone && !isValidPhoneNumber(trimmedPhone)) {
+      setError("That phone number doesn't look valid.");
       return;
     }
     setError(null);
@@ -83,12 +92,10 @@ export function ContactPromptScreen({
             disabled={busy}
             autoFocus
           />
-          <input
-            type="tel"
+          <PhoneField
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="Phone (optional)"
-            className="w-full rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none focus:border-neutral-400 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:focus:border-neutral-500"
+            onChange={setPhone}
+            defaultCountry={defaultCountry}
             disabled={busy}
           />
         </div>

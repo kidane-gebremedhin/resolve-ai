@@ -15,6 +15,8 @@ const Hero = () => {
       className="bg-cover bg-top bg-no-repeat pt-[170px] md:pt-[206px] md:pb-[100px] pb-[50px] xl:max-h-[1126px] max-h-[900px] relative z-20"
       style={{ backgroundImage: "url('/images/home-page-34/hero-bg.jpg')" }}
     >
+      {/* Dark scrim so the white hero text stays readable over the photo. */}
+      <div className="absolute inset-0 -z-[5] bg-gradient-to-b from-black/55 via-black/35 to-black/10" />
       <div className="absolute top-[10%] left-1/2 -translate-x-1/2 max-w-[1365px] mx-auto -z-10">
         <figure>
           <Image
@@ -60,7 +62,7 @@ const Hero = () => {
           <ul className="flex items-center gap-4 justify-center md:flex-row flex-col mt-14">
             <li className="w-full sm:w-auto text-center sm:text-left">
               <LinkButton href="/pricing" className="btn hover:btn-secondary border-0 btn-green btn-xl md:w-auto w-[90%] text-center">
-                Get started Free
+                Get Started
               </LinkButton>
             </li>
             <li className="w-full sm:w-auto text-center sm:text-left">

@@ -16,6 +16,14 @@ function extractToken(req: Request): string | null {
     const token = auth.slice("Bearer ".length).trim();
     if (token.length > 0) return token;
   }
+
+  // Query-param fallback (`?t=<token>`). Browsers can't attach custom headers to
+  // an <img> src or a plain link navigation, so attachment previews/downloads
+  // authenticate via the query string instead. Only meaningful for GETs.
+  const q = req.query?.t;
+  if (typeof q === "string" && q.length > 0) return q;
+  if (Array.isArray(q) && typeof q[0] === "string" && q[0].length > 0) return q[0];
+
   return null;
 }
 

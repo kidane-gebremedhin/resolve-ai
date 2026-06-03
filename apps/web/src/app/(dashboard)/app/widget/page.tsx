@@ -3,6 +3,7 @@
 // hand them to the client editor along with the widget app URL for the preview.
 
 import { api, ApiError } from "@/lib/api";
+import { WIDGET_URL } from "@/lib/app-urls";
 import { getActiveWebsiteId } from "@/lib/website-scope";
 import {
   WidgetStudio,
@@ -30,7 +31,7 @@ async function safeGet<T>(path: string): Promise<T | null> {
 
 export default async function WidgetStudioPage() {
   const websiteId = await getActiveWebsiteId();
-  const widgetUrl = process.env.NEXT_PUBLIC_WIDGET_URL ?? "http://localhost:3001";
+  const widgetUrl = WIDGET_URL;
 
   if (!websiteId) {
     return (

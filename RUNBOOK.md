@@ -2,6 +2,37 @@
 
 Step-by-step instructions for setting up, running, and operating the Customer Service Chatbot monorepo (4 apps + shared packages, orchestrated by Turborepo + pnpm, with Docker-backed infrastructure).
 
+## 0. Apps
+
+| App | Path | Tech | Dev port | Responsibility |
+|---|---|---|---|---|
+| **API** | [`apps/api`](apps/api) | Express + TS + Mongoose + Socket.io | `4000` | All data access, auth (JWT), the AI agent + tools, KB ingestion (Firecrawl/Pinecone), widget endpoints, billing + webhooks, admin. Serves `/api/v1/*`, `/health`, Socket.io. |
+| **Web** | [`apps/web`](apps/web) | Next.js 16 (App Router) | `3000` | Three surfaces in one app via route groups: `(marketing)` public site, `(dashboard)/app` operator dashboard, `(admin)/admin` platform admin. NextAuth (Google + credentials). |
+| **Widget** | [`apps/widget`](apps/widget) | Next.js 16 | `3001` | The customer chat UI rendered inside the embed iframe (state machine, Socket.io, pre-chat/contact capture, attachments). |
+| **Embed** | [`apps/embed`](apps/embed) | Vite (vanilla TS) | `3002` | `widget.js` loader: reads `data-*`, fetches appearance by `agentId`, injects the widget iframe + postMessage bridge. Library build → only `dist/widget.js`. |
+| **Admin** | [`apps/admin`](apps/admin) | Next.js 16 | `3003` | Standalone **platform-admin portal** (dashboard, organizations, agents, users, subscriptions, analytics, marketing campaigns, system preferences). Same design as `/app`; talks to the same API. Gated to `platform_admin`. |
+
+**Data stores:** MongoDB (`customer-support` db) · Pinecone (`customer-support-chatbot` index — KB vectors) · local disk or MinIO (uploads) · optional Redis (socket scaling).
+
+**Per-environment URLs:** no host is hardcoded in source — every URL comes from env. Local values live in `.env`/`.env.local`; deployed environments copy [`.env.development.example`](.env.development.example) / [`.env.staging.example`](.env.staging.example) / [`.env.production.example`](.env.production.example). `NEXT_PUBLIC_*`/`VITE_*` are inlined at **build** time (rebuild web/widget/embed after changing them); API vars are runtime.
+
+**Access model:** new signups are sent to `/checkout`; the `/app` dashboard is hard-gated until a Paddle subscription is `active` (`GET /billing/subscription` → `active`). Platform admin = `User.role === "platform_admin"`. Plans are admin-editable (System Preferences → Plans, served by `GET /billing/plans`).
+
+### Accessing the admin portal
+
+The platform-admin portal is the standalone **`apps/admin`** app (dev: **http://localhost:3003**, prod: the `admin.<host>` you configure). It's gated to users whose `User.role` is `platform_admin`; everyone else gets a 404.
+
+1. **Run it:** included in `pnpm dev`, or `pnpm --filter @csb/admin dev` (port 3003). It needs the API (`apps/api`) running.
+2. **Grant yourself admin** — the DB ships with no admins, so promote a registered user once via Mongo:
+   ```bash
+   mongosh "$MONGODB_URI" --eval 'db.users.updateOne({ email: "you@example.com" }, { $set: { role: "platform_admin" } })'
+   ```
+   (Register the account first through the normal web signup, or `POST /api/v1/auth/register`.)
+3. **Sign in** at http://localhost:3003/login with that account (credentials or Google). You land on the admin dashboard.
+4. **Sections:** Dashboard · Analytics · Organizations · Agents · Users · Subscriptions · **Campaigns** (create marketing campaigns; share signup links with `?campaign=<code>` and track attributed signups + paid conversions) · **System Preferences** (global app font, plans, SMTP, security, limits, affiliate program).
+
+> The admin portal calls the same `/admin/*` API endpoints (all `requireAuth + requirePlatformAdmin`). The legacy in-`apps/web` `/admin` routes still exist; the standalone app is the primary admin surface.
+
 ## 1. Prerequisites
 
 Install the following on your machine before you begin:

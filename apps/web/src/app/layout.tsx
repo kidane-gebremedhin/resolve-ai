@@ -1,22 +1,26 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
-import { Inter, Inter_Tight } from 'next/font/google';
 import { ThemeProvider } from '@/components/theme-provider';
 import { parseTheme, type Theme } from '@/lib/theme';
 import { APP_NAME, APP_TAGLINE } from '@/lib/app-config';
+import { sansFont, displayFont } from './fonts';
+import { API_URL } from '@/lib/app-urls';
 import './globals.css';
 
-const inter = Inter({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter',
-});
-
-const interTight = Inter_Tight({
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-inter-tight',
-});
+// Global app font is a platform setting (admin → Settings → Theming). Read it
+// from the public theming endpoint server-side; falls back to the Inter default
+// when unreachable so the app always renders.
+async function getTheming(): Promise<{ fontSans?: string; fontDisplay?: string }> {
+  try {
+    const res = await fetch(`${API_URL}/public/theming`, {
+      next: { revalidate: 60, tags: ['platform-theming'] },
+    });
+    if (!res.ok) return {};
+    return (await res.json()) as { fontSans?: string; fontDisplay?: string };
+  } catch {
+    return {};
+  }
+}
 
 export const metadata: Metadata = {
   title: {
@@ -41,10 +45,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const cookieTheme = parseTheme(cookieStore.get('theme')?.value);
   const initialTheme: Theme = cookieTheme ?? 'light';
 
+  const theming = await getTheming();
+  const sans = sansFont(theming.fontSans);
+  const display = displayFont(theming.fontDisplay);
+
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${interTight.variable}${initialTheme === 'dark' ? ' dark' : ''}`}
+      className={`${sans.variable} ${display.variable}${initialTheme === 'dark' ? ' dark' : ''}`}
       suppressHydrationWarning
     >
       <body suppressHydrationWarning>

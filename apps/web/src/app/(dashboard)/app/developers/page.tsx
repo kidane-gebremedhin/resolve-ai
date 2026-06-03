@@ -6,6 +6,7 @@
 // component.
 
 import { api, ApiError } from "@/lib/api";
+import { WIDGET_URL, EMBED_URL } from "@/lib/app-urls";
 import { getActiveWebsiteId } from "@/lib/website-scope";
 import { DevelopersClient, type EmbedConfig } from "./developers-client";
 
@@ -57,8 +58,8 @@ export default async function DevelopersPage() {
     : null;
 
   const embedUrl =
-    process.env.NEXT_PUBLIC_EMBED_URL ?? "http://localhost:3002/widget.js";
-  const widgetUrl = process.env.NEXT_PUBLIC_WIDGET_URL ?? "http://localhost:3001";
+    EMBED_URL;
+  const widgetUrl = WIDGET_URL;
 
   const config: EmbedConfig = {
     agentId: agent?._id ?? "YOUR_AGENT_ID",

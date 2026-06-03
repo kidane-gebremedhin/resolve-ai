@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 import { AppShell, type ScopeWebsite } from '@/components/layouts/app-shell';
 import { APP_NAME, APP_TAGLINE } from '@/lib/app-config';
 import { api, ApiError } from '@/lib/api';
@@ -20,6 +21,13 @@ async function safeGet<T>(path: string): Promise<T | null> {
 }
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // Hard subscription gate: no dashboard access without an active paid plan.
+  // Unpaid orgs are sent to checkout (the only post-signup destination).
+  const sub = await safeGet<{ active?: boolean; plan?: string }>('/billing/subscription');
+  if (!sub?.active) {
+    redirect('/checkout');
+  }
+
   // The org name is a fixed label; websites drive the scope switcher. Both come
   // from the API; the operator's current scope comes from the cookie.
   const [org, websites] = await Promise.all([
@@ -33,6 +41,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       orgName={org?.name ?? 'Workspace'}
       websites={websites ?? []}
       activeWebsiteId={activeWebsiteId}
+      plan={sub?.plan ?? undefined}
     >
       {/* Key the page subtree by the active website so switching workspaces
           remounts every /app page. Server components already re-fetch on the

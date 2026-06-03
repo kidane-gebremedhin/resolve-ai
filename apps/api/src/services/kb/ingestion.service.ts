@@ -10,7 +10,7 @@ import { parseFile, type ParseInput } from "./parsers.js";
 // Broadcast a KB source status change to the org room so the dashboard list
 // can swap the badge live (no router.refresh). Best-effort: tests + workers
 // run before the socket server is attached, so a null `io` is normal.
-function emitKnowledgeUpdate(source: {
+export function emitKnowledgeUpdate(source: {
   _id: { toString(): string };
   organizationId: { toString(): string };
   embeddingStatus?: string | null;

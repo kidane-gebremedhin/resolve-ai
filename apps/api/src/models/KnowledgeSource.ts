@@ -19,6 +19,9 @@ const knowledgeSourceSchema = new Schema(
     mimeType: { type: String },
     fileSize: { type: Number },
     sourceUrl: { type: String },
+    // For website sources: the site's favicon, resolved on crawl completion and
+    // used as the agent's default widget avatar when none is set.
+    faviconUrl: { type: String },
     contentHash: { type: String, required: true },
     extractedText: { type: String },
     chunkCount: { type: Number },

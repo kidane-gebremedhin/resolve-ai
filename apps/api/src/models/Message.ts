@@ -16,6 +16,10 @@ const messageSchema = new Schema(
             fileUrl: String,
             mimeType: String,
             size: Number,
+            // Text extracted from the file at upload time (PDF/DOCX/Excel/CSV/
+            // text/HTML) so the AI can read attachment content. Truncated to
+            // ATTACHMENT_EXTRACT_MAX_CHARS. Omitted for images / unsupported types.
+            extractedText: String,
           },
           { _id: false },
         ),

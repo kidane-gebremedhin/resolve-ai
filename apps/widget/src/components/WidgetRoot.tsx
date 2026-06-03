@@ -27,6 +27,7 @@ import {
   updateContact,
   uploadAttachment,
   type ConversationStatus,
+  type WidgetAttachment,
   type WidgetMessage,
   type WidgetSection,
 } from "../lib/api-client";
@@ -52,14 +53,7 @@ const DEFAULT_PRIMARY = "#7c3aed"; // violet-600 — matches BootScreen fallback
 // Derive the socket origin from the API URL so we don't need a separate env
 // var. NEXT_PUBLIC_SOCKET_URL still wins if explicitly set.
 const SOCKET_URL =
-  process.env.NEXT_PUBLIC_SOCKET_URL ??
-  (() => {
-    try {
-      return new URL(API_URL).origin;
-    } catch {
-      return "http://localhost:4000";
-    }
-  })();
+  process.env.NEXT_PUBLIC_SOCKET_URL ?? API_URL.replace(/\/api\/v1\/?$/, "");
 
 export type WidgetRootProps = {
   domain: string;
@@ -105,9 +99,8 @@ export function WidgetRoot({
 
   // Saved position wins over the embed-tag hint; used for the floating offset.
   const position = state.context.settings?.position ?? positionProp;
-  // Whether the operator requires contact details before the first message.
-  const requireContact =
-    state.context.settings?.requireContactBeforeChat === true;
+  // Contact details are captured AFTER the first message via the
+  // ContactPromptScreen overlay (triggered on first AI reply).
   // Footer attribution unless the operator turned it off (default on).
   const showBranding = state.context.settings?.showBranding !== false;
 
@@ -115,6 +108,7 @@ export function WidgetRoot({
   // re-render. Source of truth is still localStorage via readSession().
   const sessionTokenRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const countryCodeRef = useRef<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const [busy, setBusy] = useState(false);
   // We track the conversation id locally so socket callbacks can match it
@@ -220,6 +214,7 @@ export function WidgetRoot({
           });
           token = fresh.sessionToken;
           sessionId = fresh.sessionId;
+          countryCodeRef.current = fresh.countryCode ?? null;
           writeSession({
             id: fresh.sessionId,
             token: fresh.sessionToken,
@@ -279,6 +274,17 @@ export function WidgetRoot({
           avatarUrl: bootstrap.settings?.avatarUrl || bootstrap.agent.avatarUrl,
         };
 
+        // Determine whether to show contact prompt on resume. If we have a
+        // conversation with messages but the user never submitted contact info,
+        // re-show the overlay so it persists across reloads.
+        const contactAlreadyCaptured = existing?.contactCaptured === true;
+        const hasAiReply = (messages ?? []).some((m) => m.role === "ai");
+        const needsContactOnResume =
+          resumedConversationId &&
+          !resumedEmail &&
+          !contactAlreadyCaptured &&
+          hasAiReply;
+
         send({
           type: "BOOTSTRAPPED",
           agent: mergedAgent,
@@ -289,6 +295,7 @@ export function WidgetRoot({
           conversationStatus,
           messages,
           contact: resumedEmail ? { email: resumedEmail } : undefined,
+          showContactPrompt: Boolean(needsContactOnResume),
         });
       } catch (e) {
         if (cancelled) return;
@@ -423,10 +430,17 @@ export function WidgetRoot({
   );
 
   const sendCustomerMessage = useCallback(
-    async (content: string, conversationId: string) => {
+    async (content: string, conversationId: string, attachments?: WidgetAttachment[]) => {
       const token = sessionTokenRef.current;
       if (!token) throw new Error("No active session.");
-      const { message } = await sendMessage(token, conversationId, content);
+      // The API requires non-empty content; when only files are attached, fall
+      // back to the file names so the bubble still has a label.
+      const finalContent =
+        content.trim() ||
+        (attachments && attachments.length
+          ? attachments.map((a) => a.fileName ?? "Attachment").join(", ")
+          : "");
+      const { message } = await sendMessage(token, conversationId, finalContent, attachments);
       send({ type: "MESSAGE_APPENDED", message });
       // Show the "AI is typing" indicator until the reply lands (or times out).
       startAiTyping();
@@ -437,32 +451,9 @@ export function WidgetRoot({
   // ---- Screen handlers -------------------------------------------------
 
   const handlePreChatStart = useCallback(
-    async (args: { content: string; email?: string; phone?: string }) => {
+    async (args: { content: string }) => {
       setBusy(true);
       try {
-        const token = sessionTokenRef.current;
-        const sessionId = sessionIdRef.current;
-        if (!token || !sessionId) throw new Error("No active session.");
-
-        // Optionally save contact details before kicking off the conversation
-        // — best-effort, we don't block the chat if it fails.
-        if (args.email || args.phone) {
-          try {
-            await updateContact(token, sessionId, {
-              email: args.email,
-              phone: args.phone,
-            });
-            send({
-              type: "CONTACT_CAPTURED",
-              contact: { email: args.email, phone: args.phone },
-            });
-            if (args.email) updateSession({ email: args.email });
-          } catch (e) {
-            // eslint-disable-next-line no-console
-            console.warn("[widget] updateContact failed (continuing):", (e as Error).message);
-          }
-        }
-
         const conversationId = await ensureConversation();
         await sendCustomerMessage(args.content, conversationId);
       } catch (e) {
@@ -504,16 +495,16 @@ export function WidgetRoot({
   );
 
   const handleStartNew = useCallback(() => {
-    updateSession({ conversationId: undefined });
+    updateSession({ conversationId: undefined, contactCaptured: false });
     send({ type: "START_NEW_CONVERSATION" });
   }, [send]);
 
   const handleChatSend = useCallback(
-    async (content: string) => {
+    async (content: string, attachments?: WidgetAttachment[]) => {
       try {
         const conversationId =
           state.context.conversationId ?? (await ensureConversation());
-        await sendCustomerMessage(content, conversationId);
+        await sendCustomerMessage(content, conversationId, attachments);
       } catch (e) {
         send({ type: "ERROR", message: (e as Error).message });
       }
@@ -521,22 +512,20 @@ export function WidgetRoot({
     [state.context.conversationId, ensureConversation, sendCustomerMessage, send],
   );
 
+  // Upload a file and RETURN its metadata for the composer to queue as a
+  // preview. It is NOT sent here — the visitor sends it (with optional text and
+  // more attachments) manually. Ensures a conversation exists so the upload
+  // endpoint has somewhere to attach.
   const handleAttach = useCallback(
-    async (file: File) => {
-      try {
-        const token = sessionTokenRef.current;
-        const conversationId = state.context.conversationId;
-        if (!token || !conversationId) return;
-        const { attachment } = await uploadAttachment(token, conversationId, file);
-        const { message } = await sendMessage(token, conversationId, file.name, [
-          attachment,
-        ]);
-        send({ type: "MESSAGE_APPENDED", message });
-      } catch (e) {
-        send({ type: "ERROR", message: (e as Error).message });
-      }
+    async (file: File): Promise<WidgetAttachment> => {
+      const token = sessionTokenRef.current;
+      if (!token) throw new Error("No active session.");
+      const conversationId =
+        state.context.conversationId ?? (await ensureConversation());
+      const { attachment } = await uploadAttachment(token, conversationId, file);
+      return attachment;
     },
-    [state.context.conversationId, send],
+    [state.context.conversationId, ensureConversation],
   );
 
   const handleContactSave = useCallback(
@@ -547,6 +536,9 @@ export function WidgetRoot({
       await updateContact(token, sessionId, args);
       send({ type: "CONTACT_CAPTURED", contact: args });
       if (args.email) updateSession({ email: args.email });
+      // Persist the fact that contact was captured so subsequent reloads
+      // don't re-show the overlay.
+      updateSession({ contactCaptured: true });
     },
     [send],
   );
@@ -599,7 +591,6 @@ export function WidgetRoot({
             agent={state.context.agent}
             settings={state.context.settings}
             primaryColor={primaryColor}
-            requireContact={requireContact}
             onStart={handlePreChatStart}
             busy={busy}
           />
@@ -630,6 +621,7 @@ export function WidgetRoot({
             onAttach={handleAttach}
             composerDisabled={state.overlay === "contact_prompt"}
             aiTyping={aiTyping}
+            sessionToken={sessionTokenRef.current ?? undefined}
           />
         );
 
@@ -659,6 +651,7 @@ export function WidgetRoot({
             onAttach={handleAttach}
             composerDisabled
             aiTyping={aiTyping}
+            sessionToken={sessionTokenRef.current ?? undefined}
           />
         );
 
@@ -683,11 +676,12 @@ export function WidgetRoot({
         <div className="relative flex min-h-0 flex-1 flex-col">
           {screen}
           {state.overlay === "contact_prompt" &&
-          (state.state === "chat_active" || state.state === "escalated") ? (
+            (state.state === "chat_active" || state.state === "escalated") ? (
             <ContactPromptScreen
               primaryColor={primaryColor}
               initialEmail={state.context.contact.email}
               initialPhone={state.context.contact.phone}
+              defaultCountry={countryCodeRef.current ?? undefined}
               onSave={handleContactSave}
             />
           ) : null}

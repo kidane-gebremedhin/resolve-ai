@@ -19,6 +19,8 @@ export type WidgetSession = {
   conversationId?: string;
   /** Cached email so we don't re-prompt mid-session even if the API forgets it. */
   email?: string;
+  /** True once the user has submitted contact info. Survives reloads. */
+  contactCaptured?: boolean;
 };
 
 function safeStorage(): Storage | null {
