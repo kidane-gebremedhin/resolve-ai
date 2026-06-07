@@ -1,5 +1,6 @@
 import { cn } from '@/utils/ns-cn';
 import RevealAnimation from '../animation/RevealAnimation';
+import { PlanCta } from '@/components/billing/plan-cta';
 
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={10} height={8} viewBox="0 0 11 8" fill="none" className={cn('shrink-0', className)}>
@@ -12,7 +13,7 @@ const featureLabels = ['Pages included', 'Custom design', 'SEO optimization', 'B
 const pricingPlans = [
   {
     id: 'essential',
-    name: 'Starter',
+    name: 'Basic',
     price: '$19',
     description: 'For small teams getting started',
     buttonText: 'Get started',
@@ -27,9 +28,9 @@ const pricingPlans = [
   },
   {
     id: 'advanced',
-    name: 'Advanced',
+    name: 'Business',
     price: '$99',
-    description: 'Plans for advanced users',
+    description: 'For growing businesses',
     buttonText: 'Get started',
     planType: 'featured' as const,
     features: [
@@ -43,8 +44,8 @@ const pricingPlans = [
   {
     id: 'enterprise',
     name: 'Enterprise',
-    price: 'Enterprise',
-    description: 'Contact us for enterprise users',
+    price: '$199',
+    description: 'For large teams at scale',
     buttonText: 'Get started',
     planType: 'premium' as const,
     features: [
@@ -129,12 +130,12 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                           <h3 className={cn('text-[1.5rem] leading-[140%] font-normal', plan.planType === 'featured' && 'text-accent')}>{displayPrice}</h3>
                           <p className={cn(plan.planType === 'featured' && 'text-accent/60')}>{plan.description}</p>
                         </div>
-                        <a
-                          href="/register"
+                        <PlanCta
+                          tier={TIER_BY_ID[plan.id] ?? ''}
                           className={cn('btn btn-md w-full', plan.planType === 'featured' ? 'btn-primary hover:btn-white border-0' : 'btn-white dark:btn-white-dark hover:btn-primary')}
                         >
                           <span>{plan.buttonText}</span>
-                        </a>
+                        </PlanCta>
                       </div>
                       <div className="rounded-b-[20px] bg-white dark:bg-black">
                         <ul>

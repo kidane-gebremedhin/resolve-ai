@@ -71,9 +71,10 @@ stateDiagram-v2
 ### `pre_chat`
 - First-time visitor OR expired session
 - Shows:
-  - Agent avatar + name
-  - Title: "How can we help?" (customizable via `widgetSettings.title`)
-  - Subtitle: "Typically reply in under 2 minutes" (customizable)
+  - Agent avatar + name (the widget refers only to the agent's identity, never
+    the organization name)
+  - Optional welcome message (from `widgetSettings.welcomeMessage` /
+    `agent.welcomeMessage`) — no hard-coded "How can we help?" greeting
   - Suggested questions (from `agent.suggestedQuestions`)
   - Message input composer
 - **No contact form here** — conversation-first. Email/phone capture is

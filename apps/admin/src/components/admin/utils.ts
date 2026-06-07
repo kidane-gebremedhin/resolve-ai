@@ -1,9 +1,12 @@
 // Shared helpers used by admin pages. Server-importable: no client-only APIs.
 
+// Keep in sync with the plan catalog (apps/api/src/config/plans.ts): Basic $19,
+// Business $99, Enterprise $199. Used for the per-row MRR column when the API
+// doesn't echo a price.
 export const PLAN_PRICES: Record<string, number> = {
-  starter: 29,
+  starter: 19,
   pro: 99,
-  enterprise: 499,
+  enterprise: 199,
 };
 
 export type AdminStats = {
@@ -54,6 +57,7 @@ export type AdminUser = {
 export type AdminSubscription = {
   _id: string;
   organizationId: string;
+  organizationName?: string;
   paddleSubscriptionId: string;
   paddleCustomerId: string;
   plan: "starter" | "pro" | "enterprise";
@@ -68,6 +72,18 @@ export type AdminSubscription = {
 
 export function planPrice(plan: string): number {
   return PLAN_PRICES[plan] ?? 0;
+}
+
+// Display labels for internal plan keys (keys stay starter/pro/enterprise).
+const PLAN_LABELS: Record<string, string> = {
+  free: "Free",
+  starter: "Basic",
+  pro: "Business",
+  enterprise: "Enterprise",
+};
+export function planLabel(plan?: string | null): string {
+  if (!plan) return "—";
+  return PLAN_LABELS[plan] ?? plan;
 }
 
 export function computeMrr(subs: AdminSubscription[]): number {

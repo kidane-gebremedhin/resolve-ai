@@ -49,6 +49,14 @@ router.patch("/current", requireAuth, requireOrg, async (req: Request, res: Resp
         requireResolveConfirmation: c.requireResolveConfirmation !== false,
       };
     }
+    // Pagination preference: how many rows per page in this org's lists. Clamp
+    // to 1–200; default 10 (see getOrgPageSize in utils/list-query).
+    const pag = settings.pagination;
+    if (pag && typeof pag === "object") {
+      const raw = Number((pag as Record<string, unknown>).pageSize);
+      const pageSize = Number.isFinite(raw) ? Math.min(200, Math.max(1, Math.trunc(raw))) : 10;
+      settings.pagination = { ...(pag as Record<string, unknown>), pageSize };
+    }
     allowed.settings = settings;
   }
   const org = await Organization.findByIdAndUpdate(req.orgId, allowed, { new: true });

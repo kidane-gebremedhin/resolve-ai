@@ -5,14 +5,14 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "./auth";
-import { API_URL } from "./app-urls";
+import { API_URL, API_INTERNAL_URL } from "./app-urls";
 
-// Any 401 from the API means our bearer token is missing/stale/invalid (the
-// dashboard only ever calls authed endpoints; login failures go through
-// next-auth's credentials provider, not this client). So we auto-logout on ANY
-// 401 rather than matching specific message copy.
-function isUnauthorized(status: number): boolean {
-  return status === 401;
+// The admin panel only ever calls authed `/admin/*` endpoints. A 401 means our
+// bearer token is missing/stale/invalid (or the account was deleted/wiped); a
+// 403 means this user is no longer a platform admin. Either way the session is
+// no good — force a logout rather than showing "Failed to load …".
+function shouldForceLogout(status: number): boolean {
+  return status === 401 || status === 403;
 }
 
 export class ApiError extends Error {
@@ -56,7 +56,10 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
   };
   if (token) headers.authorization = `Bearer ${token}`;
 
-  const url = path.startsWith("http") ? path : `${API_URL}${path}`;
+  // Server-side calls use the internal base (container→container); the browser
+  // path keeps the public URL.
+  const base = typeof window === "undefined" ? API_INTERNAL_URL : API_URL;
+  const url = path.startsWith("http") ? path : `${base}${path}`;
   const method = (options.method ?? "GET").toUpperCase();
   // Retry idempotent reads through a brief API outage (e.g. a dev `tsx watch`
   // restart or a deploy) so a transient blip doesn't surface as "Failed to
@@ -101,17 +104,18 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
   if (!res.ok) {
     const err = body as { error?: { code?: string; message?: string; details?: unknown } } | undefined;
     const message = err?.error?.message ?? `Request failed: ${res.status}`;
-    // Server-side auto-logout: if the API rejects our bearer token (next-auth's
-    // 7d session outlives the API's 15m JWT), redirect to /login. The client
-    // does the equivalent in `clientApiFetch` after this throws; we only
-    // redirect when the caller didn't pass an explicit token (i.e. a true
-    // server-side call resolving the session via `auth()`).
+    // Server-side auto-logout: when the API rejects our token (stale JWT, the
+    // account was wiped, or admin rights revoked), go through /logout — a Route
+    // Handler that CLEARS the session cookie before redirecting to /login. A
+    // bare /login redirect would leave the stale cookie in place. Pages must
+    // re-throw non-ApiError errors so this redirect isn't swallowed by their
+    // try/catch (see each list page's load()).
     if (
-      isUnauthorized(res.status) &&
+      shouldForceLogout(res.status) &&
       options.token === undefined &&
       typeof window === "undefined"
     ) {
-      redirect("/login?session=expired");
+      redirect("/logout");
     }
     throw new ApiError(
       res.status,
@@ -151,7 +155,7 @@ export async function clientApiFetch<T>(
     // so route handlers can decide for themselves.
     if (
       err instanceof ApiError &&
-      isUnauthorized(err.status) &&
+      shouldForceLogout(err.status) &&
       typeof window !== "undefined"
     ) {
       const { signOut } = await import("next-auth/react");

@@ -16,9 +16,16 @@ async function safeGet<T>(path: string): Promise<T | null> {
   }
 }
 
-export default async function CheckoutPage() {
+export default async function CheckoutPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ plan?: string }>;
+}) {
   const session = await auth();
   const organizationId = session?.user?.organizationId;
+  const email = session?.user?.email ?? undefined;
+  // The plan the visitor picked on the pricing page, carried through signup.
+  const { plan: preselectedPlan } = await searchParams;
 
   const sub = await safeGet<{ active?: boolean }>("/billing/subscription");
   if (sub?.active) {
@@ -32,13 +39,17 @@ export default async function CheckoutPage() {
       </header>
       <main className="container-page py-12">
         <div className="mx-auto max-w-3xl text-center">
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Choose your plan</h1>
+          <h1 className="font-display text-2xl font-semibold tracking-tight">Complete your subscription</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Pick a plan to activate your workspace. You can change or cancel anytime from Billing.
+            Choose a plan to activate your workspace. You can change or cancel anytime from Billing.
           </p>
         </div>
         <div className="mx-auto mt-8 max-w-4xl">
-          <CheckoutPlans organizationId={organizationId} />
+          <CheckoutPlans
+            organizationId={organizationId}
+            customerEmail={email}
+            preselectedPlan={preselectedPlan}
+          />
         </div>
       </main>
     </div>

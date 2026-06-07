@@ -65,6 +65,19 @@ Decisions:
 ### shared-types (G7)
 - Update `packages/shared-types` Subscription to match the Mongoose model (add `paused`, `paddleCustomerId`, `currentPeriodStart`, `canceledAt`, `trialEndAt`).
 
+### Checkout entry flow (plan-through-signup)
+The conversion path is **pricing → signup → checkout**, and the plan the visitor chose must survive the round-trip:
+- Public **"Get Started"** CTAs (navbar/hero/CTA) link to **`/pricing`**, not `/register` — visitors choose a plan first.
+- Each pricing plan card links to `/register?plan=<tier>` (tier = `starter|pro|enterprise`, mapped from the template id via `TIER_BY_ID`).
+- The signup form (`SignupHero`) carries `?plan=` through (alongside `?ref=`/`?campaign=`) and, after the account is created + auto-login, redirects to `/checkout?plan=<tier>`.
+- `/checkout` reads `?plan=` and the logged-in email from the session, and `CheckoutPlans` **opens that plan's Paddle overlay directly** (email pre-filled via `Checkout.open({ customer: { email } })`). When a plan is preselected it **hides the plan grid entirely** and shows a focused "opening checkout" panel (with a "Choose a different plan" link) — the user does not see the plans page again.
+- When **no** plan is preselected (e.g. the user logged in directly without choosing on `/pricing`) _(Changelog 19)_: `CheckoutPlans` renders the **full plans grid in-place** (cards with name, price, features; CTA opens the Paddle overlay via the same `subscribe()` path). Previously this case bounced to `/pricing`; now the user can subscribe without leaving checkout. A "Compare plans in detail" link still points to `/pricing`.
+
+### Stale-session gate (ghost users)
+The `/app` dashboard is gated until a subscription is `active`, redirecting unpaid orgs to `/checkout`. After a **data wipe / account deletion**, the NextAuth cookie + API JWT are still cryptographically valid, so the old behavior bounced the now-nonexistent user to `/checkout` forever. Fixes:
+- API `requireAuth` verifies the token's user **still exists** (`User.exists`) and returns **401** when it doesn't — so deleted accounts immediately lose access (security win too).
+- The web server-side API client redirects 401s to a `/logout` Route Handler that calls NextAuth `signOut` to **clear the cookie** before `/login` (a bare redirect would leave the stale cookie and re-gate the ghost user).
+
 ---
 
 ## Out of scope

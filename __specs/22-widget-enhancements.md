@@ -72,12 +72,16 @@ Add a **public, unauthenticated, side-effect-free** appearance endpoint and have
 - On bootstrap, if `agentKey` present, `fetch()` appearance from the API origin, then style the launcher (and seed the iframe query params) from the response.
 - `data-*` attributes become **optional overrides**: precedence `data-* attr > fetched appearance > built-in default`.
 - The embed must know the **API origin** (distinct from the widget origin). Add it as:
-  - optional `data-api-url` attribute, falling back to
+  - `data-api-url` attribute (**now emitted by the generated snippet** from `NEXT_PUBLIC_API_URL`, so the live fetch works on any host without relying on the embed build env), falling back to
   - `VITE_API_URL` baked at build time, falling back to
   - the widget origin (last-resort, logs a warning).
 
+**CORS (critical):** the embed loader calls `GET /widget/appearance` from the **host page's origin** (an arbitrary customer site), not from the widget origin. The global CORS allowlist (`CORS_ORIGINS`) would block that, leaving the launcher stuck at the default position. So all public `/api/v1/widget/*` endpoints are mounted with **reflect-any-origin CORS** (`cors({ origin: true })`, no credentials — they authenticate via bearer session tokens, not cookies). Without this, position/color/theme never apply on a pasted snippet.
+
 ### Decisions
 - Keep `data-agent` / `data-agent-id` required (unchanged) — it is the resolution key.
+- The generated snippet emits `data-agent`, `data-widget-url`, and `data-api-url` only; cosmetics (position/color/theme) stay out of the snippet and are fetched live so Studio changes apply without re-copying.
+- Public widget endpoints use permissive CORS; cookie-authed dashboard/admin routes keep the strict `CORS_ORIGINS` allowlist.
 - Appearance endpoint returns a **stable, minimal** shape; it must never leak org-internal fields (no IDs, no quotas).
 - `VITE_API_URL` is a **new env var** → add to [`.env.example`](../.env.example) and per-app `apps/embed/.env.local` (per repo env convention; see [`19-local-development.md`](./19-local-development.md)).
 
@@ -106,7 +110,14 @@ The upload endpoint must return an **absolute** URL built from `env.apiBaseUrl` 
 **3b. Inline previews** ([`apps/widget/src/components/MessageList.tsx`](../apps/widget/src/components/MessageList.tsx)):
 - `image/*` → inline thumbnail (`<img>` capped at ~160px, rounded, click opens full in new tab).
 - PDF/doc/sheet/text → a **file chip**: type icon + filename + human size, linking to the file.
-- Mirror the same renderer in the operator inbox thread ([`apps/web`](../apps/web)) for parity (secondary; can defer).
+- Mirror the same renderer in the operator inbox thread — **shipped** (Changelog 18): see Feature 3d.
+
+**3d. Operator (inbox) attachments — send & render.** _(Changelog 18.)_
+Operators authenticate with a NextAuth bearer (not a widget session), so they get parallel, operator-authed endpoints over the **same** content-addressed storage:
+- Shared logic lives in [`attachments.service.ts`](../apps/api/src/services/attachments.service.ts) (MIME allow-list, `org/<orgId>/<sha>.bin` key, multer, `extractAttachmentText`, `storeAttachment`, `streamStoredAttachment` with the cross-tenant guard + `Cross-Origin-Resource-Policy: cross-origin`). The widget routes reuse it.
+- `POST /messages/attachments` (multipart, operator JWT, scoped to a conversation in the operator's org) and `GET /messages/attachments/:hash`; `POST /messages` accepts `attachments[]`.
+- The dashboard `<img>`/link can't send the bearer header, so it loads files through a **same-origin Next proxy** ([`apps/web/.../api/attachments/[hash]/route.ts`](../apps/web/src/app/api/attachments/[hash]/route.ts)) that resolves the session server-side and forwards to the API with the bearer — no token in URLs, no CORP needed.
+- The customer's widget renders operator-sent attachments by rewriting the stored `/messages/attachments/<sha>` path to the widget route `/widget/attachments/<sha>` (same key) before appending `?t=` ([`MessageList.tsx`](../apps/widget/src/components/MessageList.tsx)).
 
 **3c. Content extraction → AI (reuse the existing KB flow).**
 - At **upload time** (buffer in hand), route the file through `parseFile()` from [`parsers.ts`](../apps/api/src/services/kb/parsers.ts) for supported types (pdf/docx/excel/csv/html/text). Store the extracted text on the attachment.
@@ -135,6 +146,18 @@ The upload endpoint must return an **absolute** URL built from `env.apiBaseUrl` 
 - [`apps/widget/src/components/MessageList.tsx`](../apps/widget/src/components/MessageList.tsx) — preview renderer.
 - [`apps/widget/src/lib/api-client.ts`](../apps/widget/src/lib/api-client.ts) — types (`extractedText`, absolute url).
 - (defer) operator thread renderer in `apps/web`.
+
+---
+
+## Feature 4 — Suggested questions at the bottom of the widget _(Changelog 19)_
+
+### Problem
+Per-agent **Suggested questions** (set in `/app/widget`, persisted on `Agent.suggestedQuestions`, delivered to the widget as `agent.suggestedQuestions`) were rendered at the **top** of the pre-chat conversation area, left-aligned under a "Suggested" label — not matching the expected Chatbase-style placement.
+
+### Design
+- Render them as **right-aligned outlined pills pinned to the bottom**, just above the composer (like the customer's own message bubbles). Clicking a chip **sends it immediately** (`onStart`/`onSend`), and the chips disappear after the first message. Reference: Chatbase widget UI.
+- Primary surface: [`PreChatScreen.tsx`](../apps/widget/src/components/PreChatScreen.tsx) (the first-visit entry view that also shows the welcome message). Also added to [`ChatScreen.tsx`](../apps/widget/src/components/ChatScreen.tsx) for an empty active conversation (shown only while `messages.length === 0`).
+- Source precedence unchanged: `settings.suggestedQuestions ?? agent.suggestedQuestions`. Capped at 4.
 
 ---
 

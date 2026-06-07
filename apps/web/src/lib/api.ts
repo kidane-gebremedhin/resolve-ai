@@ -5,7 +5,7 @@
 
 import { redirect } from "next/navigation";
 import { auth } from "./auth";
-import { API_URL } from "./app-urls";
+import { API_URL, API_INTERNAL_URL } from "./app-urls";
 
 // Any 401 from the API means our bearer token is missing/stale/invalid (the
 // dashboard only ever calls authed endpoints; login failures go through
@@ -56,7 +56,11 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
   };
   if (token) headers.authorization = `Bearer ${token}`;
 
-  const url = path.startsWith("http") ? path : `${API_URL}${path}`;
+  // Server-side calls (server components, route handlers) use the internal base
+  // so container→container traffic doesn't bounce through the public host;
+  // browser calls (clientApiFetch passes a token) keep the public URL.
+  const base = typeof window === "undefined" ? API_INTERNAL_URL : API_URL;
+  const url = path.startsWith("http") ? path : `${base}${path}`;
   const method = (options.method ?? "GET").toUpperCase();
   // Retry idempotent reads through a brief API outage (e.g. a dev `tsx watch`
   // restart or a deploy) so a transient blip doesn't surface as "Failed to
@@ -102,16 +106,19 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
     const err = body as { error?: { code?: string; message?: string; details?: unknown } } | undefined;
     const message = err?.error?.message ?? `Request failed: ${res.status}`;
     // Server-side auto-logout: if the API rejects our bearer token (next-auth's
-    // 7d session outlives the API's 15m JWT), redirect to /login. The client
-    // does the equivalent in `clientApiFetch` after this throws; we only
-    // redirect when the caller didn't pass an explicit token (i.e. a true
-    // server-side call resolving the session via `auth()`).
+    // 7d session outlives the API's 15m JWT, or the account was deleted/wiped so
+    // it no longer exists), go through /logout — a Route Handler that CLEARS the
+    // session cookie before redirecting to /login. A bare redirect to /login
+    // would leave the stale cookie in place and re-gate the ghost user to
+    // /checkout. The client does the equivalent (signOut) in `clientApiFetch`.
+    // We only do this for true server-side calls resolving the session via
+    // `auth()` (no explicit token passed).
     if (
       isUnauthorized(res.status) &&
       options.token === undefined &&
       typeof window === "undefined"
     ) {
-      redirect("/login?session=expired");
+      redirect("/logout");
     }
     throw new ApiError(
       res.status,

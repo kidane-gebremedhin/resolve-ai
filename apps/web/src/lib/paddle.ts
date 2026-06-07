@@ -57,6 +57,8 @@ export type OpenCheckoutArgs = {
   priceId: string;
   customData: { organizationId: string } & Record<string, unknown>;
   successUrl?: string;
+  /** Pre-fills the email field in the Paddle overlay (the logged-in user). */
+  customerEmail?: string;
   /** Invoked when Paddle reports `checkout.completed`. Receives the event data
    *  (includes `transaction_id`) so the caller can activate + redirect. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -78,6 +80,7 @@ export async function openCheckout(args: OpenCheckoutArgs): Promise<void> {
   paddle.Checkout.open({
     items: [{ priceId: args.priceId, quantity: 1 }],
     customData: args.customData,
+    customer: args.customerEmail ? { email: args.customerEmail } : undefined,
     settings: args.successUrl ? { successUrl: args.successUrl } : undefined,
   });
 }

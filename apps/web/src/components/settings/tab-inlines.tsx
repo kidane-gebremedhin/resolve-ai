@@ -42,6 +42,9 @@ export type Org = {
       allowHumanEscalation?: boolean;
       requireResolveConfirmation?: boolean;
     };
+    pagination?: {
+      pageSize?: number;
+    };
     [key: string]: unknown;
   };
 };

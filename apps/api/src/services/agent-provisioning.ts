@@ -3,7 +3,7 @@
 // UNSET so the runtime reads the env defaults and the dashboard prepopulates the
 // editors from GET /agents/defaults — operators then override per website.
 
-import { Agent, Website } from "../models/index.js";
+import { Agent } from "../models/index.js";
 
 export async function ensureWebsiteAgent(
   organizationId: string | { toString(): string },
@@ -13,11 +13,10 @@ export async function ensureWebsiteAgent(
   const existing = await Agent.findOne({ websiteId });
   if (existing) return existing;
 
-  let agentName = name;
-  if (!agentName) {
-    const site = await Website.findById(websiteId).lean();
-    agentName = site?.name ? `${site.name} agent` : "Support agent";
-  }
+  // Default agents get a generic, brand-neutral name — NEVER the website/org
+  // name. The widget's identity is the operator-configured Agent Name; deriving
+  // it from the website made the bot refer to itself by the company/site name.
+  const agentName = name ?? "Support agent";
 
   return Agent.create({
     organizationId,

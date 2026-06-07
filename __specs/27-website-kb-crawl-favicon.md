@@ -40,6 +40,7 @@ Backlog item #11: "when a knowledge base is a website, scrape all links, update 
 - Crawl ingests **all** discovered links, capped only by `FIRECRAWL_MAX_PAGES`; **no** same-host enforcement.
 - Favicon extraction is best-effort, non-blocking, never regresses sync status.
 - Favicon sets the avatar **only when none is set** (default, idempotent); operator choice always wins.
+- Crawling sets the favicon/avatar **only** — it must **never** touch `Agent.name`. The widget refers solely to the operator-configured Agent Name (see [`09-widget-state-machine.md`](./09-widget-state-machine.md)); deriving the name from the website `<title>` would surface the website/org name in the widget, which is explicitly disallowed.
 
 ### Open questions
 - O1: Re-crawl behavior on re-sync — refresh favicon? → Default: re-extract favicon but still only auto-set avatar if none set.

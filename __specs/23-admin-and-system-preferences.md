@@ -4,7 +4,9 @@
 
 Backlog items #1 (admin panel) and #2 (global app-font system preference). **Most of the admin panel already exists** — this spec is a gap-fill, not a greenfield build. Plan: [`__plans/07-admin-and-system-prefs.md`](../__plans/07-admin-and-system-prefs.md).
 
-The admin panel is a route group `(admin)/admin/*` inside the single `apps/web` Next.js app, gated to `User.role === "platform_admin"` ([`apps/web/src/app/(admin)/admin/layout.tsx`](../apps/web/src/app/(admin)/admin/layout.tsx) returns 404 for non-admins). Backed by cross-tenant `/admin/*` API routes ([`apps/api/src/routes/admin.routes.ts`](../apps/api/src/routes/admin.routes.ts)) guarded by `requireAuth + requirePlatformAdmin`.
+The admin panel is the standalone `apps/admin` Next.js app, gated to `User.role === "platform_admin"`. Backed by cross-tenant `/admin/*` API routes ([`apps/api/src/routes/admin.routes.ts`](../apps/api/src/routes/admin.routes.ts)) guarded by `requireAuth + requirePlatformAdmin`.
+
+**Session integrity:** when an `/admin/*` call returns **401** (token stale / account wiped) or **403** (platform-admin rights revoked), the admin API client redirects to a `/logout` Route Handler that clears the NextAuth cookie before `/login` — instead of rendering "Failed to load …". List/detail pages must re-throw non-`ApiError` errors in their `load()` `catch` so that redirect propagates (a bare catch would swallow it and show the error string).
 
 ## Current state vs. requested
 
@@ -56,10 +58,13 @@ Offer a **curated set** of fonts (not arbitrary), so we keep `next/font` optimiz
 - Pre-import N curated Google fonts via `next/font` in a `fonts.ts` module, each exposing a CSS variable. Default = current Inter / Inter_Tight (set as the seeded value so behavior is unchanged on day one).
 - Store the choice in `PlatformSetting.theming` (new sub-schema): `{ fontSans: "inter", fontDisplay: "inter-tight" }` (enum of curated keys).
 - Root `layout.tsx` (server component) reads `PlatformSetting` once, selects the matching pre-imported font objects, and applies their `variable` classes to `<html>`; `globals.css` keeps mapping `--font-sans`/`--font-display`. `.ns-theme` is updated to consume `--font-display`/`--font-sans` instead of hard-coding Inter Tight, so public pages follow the same choice ("consistent app font everywhere").
-- Admin UI: a "Appearance/Theming" tab in [`AdminSettingsForm`](../apps/web/src/components/layouts/admin-shell.tsx) (the `admin/settings` form) with two selects (body, heading) previewing the curated fonts.
+- Admin UI: the `/admin/settings` ("System Preferences") page renders [`FontPreferences`](../apps/admin/src/components/font-preferences.tsx) — two dropdown selects (body, heading) listing every curated font, each with a **live sample aligned to its right** that re-renders in the selected font as you pick, before saving.
 
 ### Decisions
-- **Curated list** (initial): Inter, Inter Tight, Geist, Roboto, Open Sans, Lora (serif), JetBrains Mono (for completeness). Extendable by editing `fonts.ts`.
+- **Curated list (self-hosted via @fontsource + `next/font/local`)**: a popular set — body/sans (Inter, **Geist, DM Sans, Plus Jakarta Sans, Manrope, Sora, Space Grotesk, IBM Plex Sans**, Roboto, Open Sans, Lato, Montserrat, Poppins, Nunito, Work Sans) and heading/display (Inter Tight, **Geist, Sora, Space Grotesk**, Montserrat, Poppins, Playfair Display, Lora, Merriweather, Oswald). _(Bolded fonts added in Changelog 19.)_ The fonts are vendored as `@fontsource[-variable]` npm packages and loaded with `next/font/local` so the **build never fetches Google Fonts** (that made the Docker/Coolify build fail intermittently). The canonical list lives in `apps/{web,admin}/src/app/fonts.ts`; the API enum in `admin.routes.ts` mirrors its keys. To add a font: `pnpm add --filter @csb/{web,admin} @fontsource[-variable]/<name>`, add a `localFont()` entry + key in both `fonts.ts`, and the enum key.
+- **`admin/fonts.ts` was stale** _(fixed Changelog 19)_: it still used `next/font/google` with only ~3 fonts per slot (never migrated to the `@fontsource` local set like web), so a chosen platform font frequently failed to apply on admin pages. Now synced verbatim to the web registry. Keep the two files identical.
+- **Unified body + title options** _(Changelog 20)_: the body and heading selects now offer the **same** list. `fonts.ts` declares every font twice — once for the body slot (`variable: --font-inter`) and once for the heading slot (`variable: --font-inter-tight`) — because next/font only loads a font when its `.variable` className is applied. A single `FONT_OPTIONS` list backs both selects (aliased to `SANS_OPTIONS`/`DISPLAY_OPTIONS`), and the API enum is a single `FONT_KEYS` for both `fontSans`/`fontDisplay`. Current set (20, popular website fonts): Inter, Inter Tight, Geist, DM Sans, Plus Jakarta Sans, Manrope, Sora, Space Grotesk, IBM Plex Sans, Roboto, Open Sans, Lato, Montserrat, Poppins, Nunito, Work Sans, Lora, Merriweather, Playfair Display, Oswald.
+- **Base type size** _(Changelog 19)_: `html { font-size: 112.5% }` (16px → 18px, ~12%) in [web](../apps/web/src/app/globals.css) + [admin](../apps/admin/src/app/globals.css) `globals.css` scales all rem-based text proportionally; px widths stay fixed. The widget keeps its own sizing (fixed-size panel, not a platform-font surface).
 - **Default = current** (Inter / Inter Tight) seeded into `PlatformSetting.theming` so existing visuals are identical until changed (satisfies "current font as default value").
 - Font choice is **global/platform-level** (one font for the whole product), matching "global app font" — not per-org. (Per-org theming is a separate, larger item; noted out-of-scope.)
 - Layout reads the singleton server-side; revalidate/caching: tag the read so a settings save busts it (Next `revalidateTag`), or accept next-request freshness. Default: `revalidateTag("platform-settings")` on PATCH.
@@ -73,9 +78,18 @@ Offer a **curated set** of fonts (not arbitrary), so we keep `next/font` optimiz
 - [`apps/api/src/routes/admin.routes.ts`](../apps/api/src/routes/admin.routes.ts) — extend settings Zod schema + `$set`; add `GET /admin/agents`.
 - `apps/web/src/app/fonts.ts` (new) — curated `next/font` registry.
 - [`apps/web/src/app/layout.tsx`](../apps/web/src/app/layout.tsx) — read setting, apply selected variables.
-- [`apps/web/src/app/globals.css`](../apps/web/src/app/globals.css) — `.ns-theme` consumes `--font-*` vars.
+- [`apps/web/src/app/globals.css`](../apps/web/src/app/globals.css) — `.ns-theme` consumes `--font-*` vars. **(Changelog 18)** This was previously incomplete: `.ns-theme` body **and** headings hard-coded `var(--font-inter-tight)`, so marketing followed only the chosen display font and ignored the body font. Now body → `--font-sans`, headings → `--font-display`, so the System-Preferences font truly applies on every surface.
 - `(admin)/admin/organizations/page.tsx`, `(admin)/admin/agents/page.tsx` (new) + `admin-shell.tsx` nav.
 - Admin settings form — add Theming tab.
+
+---
+
+## Feature 3 — Analytics filters _(Changelog 18, extended 19)_
+The `/admin/analytics` page previously fetched a fixed `days=30` window of all three metrics. It now has URL-param filters:
+- **Time range** — 7 / 30 / 90 / 180 days (`?days=`); the `/admin/timeseries` endpoint already clamps `days` to 1–180.
+- **Metric** — all / signups / conversations / messages (`?metric=`); only the selected metric's chart(s) render, and the subtitle reflects the chosen range.
+- **Organization** (`?organizationId=`) and **Agent** (`?agentId=`) _(Changelog 19)_ — option lists loaded server-side from `/admin/organizations` + `/admin/agents`. Backend: `adminTimeSeries` ([`analytics.service.ts`](../apps/api/src/services/analytics.service.ts)) scopes all metrics by `organizationId`; agent scopes conversations by `Conversation.agentId` and messages by that agent's conversation ids (messages carry no `agentId`). Signups aren't agent-scoped. Ids are validated as ObjectIds in the route.
+- Control: [`analytics-filter.tsx`](../apps/admin/src/components/admin/analytics-filter.tsx) + static option lists in [`analytics-options.ts`](../apps/admin/src/components/admin/analytics-options.ts) (kept out of the `'use client'` file — importing data constants from a client module into a server component yields client-reference proxies, breaking `.map`); page: [`(admin)/analytics/page.tsx`](../apps/admin/src/app/(admin)/analytics/page.tsx) (server, reads `searchParams`, `force-dynamic`).
 
 ---
 

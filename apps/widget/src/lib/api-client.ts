@@ -259,3 +259,39 @@ export function uploadAttachment(
     { method: "POST", formData: fd, sessionToken },
   );
 }
+
+// Client-side country detection — fallback for the phone-field default country
+// when the server didn't resolve one (e.g. on localhost the API's IP is private,
+// and on resumed sessions /init isn't called). Runs in the VISITOR's browser, so
+// it sees the visitor's real public IP in every environment (no reverse-proxy
+// caveats). Uses GeoJS: free, keyless, HTTPS, CORS-enabled. Cached in
+// localStorage so we hit it at most once per visitor.
+const COUNTRY_CACHE_KEY = "csb_widget_country";
+
+export async function detectVisitorCountry(): Promise<string | undefined> {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const cached = window.localStorage.getItem(COUNTRY_CACHE_KEY);
+    if (cached) return cached;
+  } catch {
+    /* localStorage blocked — fall through to network */
+  }
+  try {
+    const res = await fetch("https://get.geojs.io/v1/ip/country.json", {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return undefined;
+    const j = (await res.json()) as { country?: string };
+    const code = j.country && /^[A-Za-z]{2}$/.test(j.country) ? j.country.toUpperCase() : undefined;
+    if (code) {
+      try {
+        window.localStorage.setItem(COUNTRY_CACHE_KEY, code);
+      } catch {
+        /* ignore cache write failure */
+      }
+    }
+    return code;
+  } catch {
+    return undefined;
+  }
+}

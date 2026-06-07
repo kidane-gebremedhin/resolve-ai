@@ -14,7 +14,7 @@ process.env.JWT_SECRET ??= "test-secret-32-chars-long-xxxxxx";
 process.env.JWT_ACCESS_EXPIRY ??= "15m";
 process.env.JWT_REFRESH_EXPIRY ??= "7d";
 process.env.SESSION_TOKEN_EXPIRY_HOURS ??= "1"; // 1 hour — we assert TTL is in the future + < 2h
-process.env.AI_CONFIDENCE_THRESHOLD ??= "0.6";
+process.env.AI_CONFIDENCE_THRESHOLD ??= "0.7";
 // Tests can't reach OpenRouter, but the env loader requires these knobs
 // regardless of whether the LLM is actually called.
 process.env.AI_MODEL ??= "openai/gpt-4o-mini";

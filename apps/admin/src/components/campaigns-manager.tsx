@@ -67,9 +67,36 @@ export function CampaignsManager() {
     await reload();
   }
 
+  // Aggregate analytics across all campaigns.
+  const summary = campaigns
+    ? {
+        active: campaigns.filter((c) => c.status === 'active').length,
+        signups: campaigns.reduce((s, c) => s + c.metrics.signups, 0),
+        conversions: campaigns.reduce((s, c) => s + c.metrics.conversions, 0),
+      }
+    : null;
+  const overallRate =
+    summary && summary.signups > 0 ? Math.round((summary.conversions / summary.signups) * 100) : 0;
+
   return (
     <div className="mt-6 space-y-6">
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+      {summary ? (
+        <div className="grid gap-4 sm:grid-cols-4">
+          {([
+            ['Active campaigns', summary.active],
+            ['Attributed signups', summary.signups],
+            ['Paid conversions', summary.conversions],
+            ['Conversion rate', `${overallRate}%`],
+          ] as const).map(([k, v]) => (
+            <div key={k} className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs text-muted-foreground">{k}</div>
+              <div className="mt-1 font-display text-2xl font-semibold">{v}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <div className="flex justify-end">
         <Button size="sm" onClick={() => setCreating((v) => !v)}>

@@ -50,8 +50,8 @@ const NavbarFour = () => {
               </ul>
             </nav>
             <div className="flex items-center gap-2">
-              <a href="/register" className="btn btn-primary hover:btn-white-dark btn-md hidden sm:inline-block">
-                <span>Get started</span>
+              <a href="/login" className="btn btn-primary hover:btn-white-dark btn-md hidden sm:inline-block">
+                <span>Login</span>
               </a>
               {/* Mobile menu button */}
               <button
@@ -90,8 +90,8 @@ const NavbarFour = () => {
                 ))}
               </ul>
             </nav>
-            <a href="/register" className="btn btn-primary btn-md w-full">
-              <span>Get started</span>
+            <a href="/login" className="btn btn-primary btn-md w-full">
+              <span>Login</span>
             </a>
           </aside>
         </div>

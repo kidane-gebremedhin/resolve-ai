@@ -30,6 +30,15 @@ export type Conversation = {
 
 export type MessageRole = "customer" | "ai" | "operator" | "system";
 
+export type Attachment = {
+  fileName?: string;
+  fileUrl?: string;
+  url?: string;
+  mimeType?: string;
+  size?: number;
+  extractedText?: string;
+};
+
 export type Message = {
   _id: string;
   conversationId: string;
@@ -42,6 +51,7 @@ export type Message = {
   isEnhanced?: boolean;
   originalContent?: string;
   readByOperator?: boolean;
+  attachments?: Attachment[];
   createdAt: string;
 };
 

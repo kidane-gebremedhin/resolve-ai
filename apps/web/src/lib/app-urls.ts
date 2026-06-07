@@ -19,6 +19,16 @@ function requireEnv(name: string, value: string | undefined): string {
 /** API base, including the `/api/v1` prefix. e.g. https://api.example.com/api/v1 */
 export const API_URL = requireEnv("NEXT_PUBLIC_API_URL", process.env.NEXT_PUBLIC_API_URL);
 
+/**
+ * Server-side (container→container) API base. Used by server components and
+ * NextAuth — never shipped to the browser. Falls back to the public `API_URL`
+ * when unset, so local `pnpm dev` and single-URL deploys (e.g. Coolify behind a
+ * proxy) are unchanged; set it (e.g. `http://api:4000/api/v1`) only when the API
+ * is reachable at a different internal host than the browser sees, as in
+ * `docker-compose.full.yml`.
+ */
+export const API_INTERNAL_URL = process.env.API_INTERNAL_URL || API_URL;
+
 /** Socket.io origin. Defaults to the API origin (API_URL without the /api/v1 suffix). */
 export const SOCKET_URL =
   process.env.NEXT_PUBLIC_SOCKET_URL ?? API_URL.replace(/\/api\/v1\/?$/, "");

@@ -11,12 +11,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Bot, Send, Sparkles, Undo2, User2, Wrench } from "lucide-react";
+import { Bot, FileText, Paperclip, Send, Sparkles, Undo2, User2, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@csb/ui";
-import { clientApi } from "@/lib/api";
+import { clientApi, API_BASE_URL } from "@/lib/api";
 import { getOperatorSocket } from "@/lib/socket";
 import { SuggestionsPanel } from "./suggestions-panel";
 import type {
+  Attachment,
   ContactSession,
   Conversation,
   ConversationStatus,
@@ -24,6 +25,73 @@ import type {
   MessageListResponse,
   MessageRole,
 } from "./types";
+
+// Attachments are served through the same-origin proxy
+// (apps/web/.../api/attachments/[hash]), which forwards to the API with the
+// operator bearer token — so an <img>/link works without leaking the token in a
+// URL. We pull the content hash out of whatever URL the API stored (widget- or
+// operator-uploaded share the same content-addressed key) and route it there.
+const SHA_RE = /([a-f0-9]{64})/i;
+function attachmentHref(a: Attachment): string | undefined {
+  const raw = a.url ?? a.fileUrl;
+  const sha = raw?.match(SHA_RE)?.[1];
+  return sha ? `/api/attachments/${sha}` : raw;
+}
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)(\?|#|$)/i;
+function isImageAttachment(a: Attachment): boolean {
+  if ((a.mimeType ?? "").startsWith("image/")) return true;
+  return IMAGE_EXT_RE.test(a.fileName ?? "") || IMAGE_EXT_RE.test(a.fileUrl ?? a.url ?? "");
+}
+
+function formatBytes(n?: number): string {
+  if (!n || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AttachmentList({ attachments }: { attachments: Attachment[] }) {
+  if (attachments.length === 0) return null;
+  return (
+    <ul className="mt-2 space-y-2">
+      {attachments.map((a, i) => {
+        const href = attachmentHref(a);
+        if (!href) return null;
+        const label = a.fileName ?? "Attachment";
+        if (isImageAttachment(a)) {
+          return (
+            <li key={i}>
+              <a href={href} target="_blank" rel="noopener noreferrer" aria-label={label}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={href}
+                  alt={label}
+                  className="max-h-48 max-w-full rounded-lg border border-border object-cover"
+                  loading="lazy"
+                />
+              </a>
+            </li>
+          );
+        }
+        return (
+          <li key={i}>
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface/60 px-2.5 py-1.5 text-xs no-underline transition hover:bg-surface"
+            >
+              <FileText className="h-3.5 w-3.5 shrink-0 opacity-70" />
+              <span className="min-w-0 max-w-[200px] truncate font-medium">{label}</span>
+              {a.size ? <span className="shrink-0 opacity-60">{formatBytes(a.size)}</span> : null}
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 type Props = {
   initialConversation: Conversation;
@@ -119,6 +187,9 @@ function MessageBubble({ message }: { message: Message }) {
         </div>
         <div className="mt-1.5 whitespace-pre-wrap rounded-xl border border-border bg-card p-3.5 text-sm leading-relaxed">
           {message.content}
+          {message.attachments && message.attachments.length > 0 && (
+            <AttachmentList attachments={message.attachments} />
+          )}
         </div>
       </div>
     </div>
@@ -141,8 +212,11 @@ export function InboxThread({
   const [sending, setSending] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<Attachment[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Auto-scroll on new messages.
   useEffect(() => {
@@ -238,9 +312,50 @@ export function InboxThread({
     setOriginalDraft(null);
   }, [originalDraft]);
 
+  // Upload picked files to the operator attachment endpoint (multipart — so it
+  // bypasses the JSON clientApi) and stash them as pending until the operator
+  // sends. The send call then persists them on the message.
+  const handleFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setUploading(true);
+      setError(null);
+      try {
+        const tokenRes = await fetch("/api/session-token", { cache: "no-store" });
+        const { accessToken } = (await tokenRes.json()) as { accessToken?: string };
+        const uploaded: Attachment[] = [];
+        for (const file of Array.from(files)) {
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("conversationId", conversation._id);
+          const res = await fetch(`${API_BASE_URL}/messages/attachments`, {
+            method: "POST",
+            headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+            body: fd,
+          });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as
+              | { error?: { message?: string } }
+              | null;
+            throw new Error(body?.error?.message ?? `Upload failed (${res.status}).`);
+          }
+          const { attachment } = (await res.json()) as { attachment: Attachment };
+          uploaded.push(attachment);
+        }
+        setPending((prev) => [...prev, ...uploaded]);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to upload attachment.");
+      } finally {
+        setUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      }
+    },
+    [conversation._id],
+  );
+
   const handleSend = useCallback(async () => {
     const content = draft.trim();
-    if (!content || sending) return;
+    if ((!content && pending.length === 0) || sending) return;
     setSending(true);
     setError(null);
     const wasEnhanced = originalDraft !== null;
@@ -249,6 +364,7 @@ export function InboxThread({
         conversationId: conversation._id,
         content,
         role: "operator",
+        attachments: pending.length ? pending : undefined,
         isEnhanced: wasEnhanced || undefined,
         originalContent: wasEnhanced ? originalDraft ?? undefined : undefined,
       });
@@ -258,13 +374,14 @@ export function InboxThread({
         prev.some((m) => m._id === created._id) ? prev : [...prev, created],
       );
       setDraft("");
+      setPending([]);
       setOriginalDraft(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send message.");
     } finally {
       setSending(false);
     }
-  }, [draft, sending, originalDraft, conversation._id]);
+  }, [draft, pending, sending, originalDraft, conversation._id]);
 
   const handleAssignToMe = useCallback(async () => {
     if (!session?.user?.id) return;
@@ -394,8 +511,52 @@ export function InboxThread({
               className="min-h-[88px] w-full resize-none rounded-t-xl border-0 bg-transparent p-3 text-sm focus-visible:ring-0"
               rows={4}
             />
+            {pending.length > 0 && (
+              <div className="flex flex-wrap gap-2 border-t border-border px-3 py-2">
+                {pending.map((a, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface/60 px-2 py-1 text-[11px]"
+                  >
+                    {isImageAttachment(a) ? (
+                      <Paperclip className="h-3 w-3 opacity-60" />
+                    ) : (
+                      <FileText className="h-3 w-3 opacity-60" />
+                    )}
+                    <span className="max-w-[160px] truncate font-medium">{a.fileName ?? "file"}</span>
+                    <button
+                      type="button"
+                      aria-label="Remove attachment"
+                      onClick={() => setPending((prev) => prev.filter((_, j) => j !== i))}
+                      className="opacity-60 transition hover:opacity-100"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-center justify-between border-t border-border px-3 py-2">
               <div className="flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,application/pdf,text/plain,text/markdown,text/csv,text/html,.doc,.docx,.xls,.xlsx"
+                  className="hidden"
+                  onChange={(e) => handleFiles(e.target.files)}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="gap-1.5"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  {uploading ? "Uploading…" : "Attach"}
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -423,7 +584,7 @@ export function InboxThread({
               <Button
                 size="sm"
                 onClick={handleSend}
-                disabled={sending || !draft.trim()}
+                disabled={sending || uploading || (!draft.trim() && pending.length === 0)}
                 className="gap-1.5"
               >
                 <Send className="h-3.5 w-3.5" />

@@ -134,16 +134,22 @@ export async function churnRate30d(): Promise<number> {
   return canceled / denom;
 }
 
-/** Time-series for the supported admin metrics. */
+/** Time-series for the supported admin metrics, optionally scoped to one org
+ *  and/or one agent. Signups aren't agent-scoped (users belong to an org, not an
+ *  agent), so the agent filter only narrows conversations/messages. */
 export async function adminTimeSeries(
   metric: "signups" | "conversations" | "messages" | "mrr_snapshot",
   days: number,
+  opts: { organizationId?: string; agentId?: string } = {},
 ): Promise<DailyPoint[]> {
+  const { organizationId, agentId } = opts;
+
   if (metric === "signups") {
     return dailyMetric({
       collection: User as unknown as Model<unknown>,
       dateField: "createdAt",
       days,
+      organizationId,
     });
   }
   if (metric === "conversations") {
@@ -151,13 +157,26 @@ export async function adminTimeSeries(
       collection: Conversation as unknown as Model<unknown>,
       dateField: "createdAt",
       days,
+      organizationId,
+      match: agentId ? { agentId: new mongoose.Types.ObjectId(agentId) } : undefined,
     });
   }
   if (metric === "messages") {
+    // Messages have no agentId of their own — resolve the agent's conversations
+    // first and match by conversationId.
+    let match: Record<string, unknown> | undefined;
+    if (agentId) {
+      const convoIds = await Conversation.find({
+        agentId: new mongoose.Types.ObjectId(agentId),
+      }).distinct("_id");
+      match = { conversationId: { $in: convoIds } };
+    }
     return dailyMetric({
       collection: Message as unknown as Model<unknown>,
       dateField: "createdAt",
       days,
+      organizationId,
+      match,
     });
   }
   // mrr_snapshot: same MRR value across the window (we don't store historical

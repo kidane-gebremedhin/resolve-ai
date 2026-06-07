@@ -43,10 +43,15 @@ function formatBytes(n?: number): string {
 
 // Attachment download/preview URLs are API-origin and session-guarded. An <img>
 // or link can't send the x-session-token header, so we append it as `?t=`.
+// Operator-sent attachments are stored against the operator-only
+// `/messages/attachments/<sha>` route; the customer can only authenticate the
+// widget route, so we rewrite the path to `/widget/attachments/<sha>` (same
+// org-scoped storage key) before appending the session token.
 function authedUrl(raw: string | undefined, sessionToken?: string): string | undefined {
   if (!raw) return undefined;
-  if (!sessionToken) return raw;
-  return raw + (raw.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(sessionToken);
+  const widgetUrl = raw.replace("/api/v1/messages/attachments/", "/api/v1/widget/attachments/");
+  if (!sessionToken) return widgetUrl;
+  return widgetUrl + (widgetUrl.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(sessionToken);
 }
 
 // Detect images by MIME type, falling back to the file name/URL extension —

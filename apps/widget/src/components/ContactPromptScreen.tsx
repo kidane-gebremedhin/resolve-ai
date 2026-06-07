@@ -93,6 +93,10 @@ export function ContactPromptScreen({
             autoFocus
           />
           <PhoneField
+            // Re-mount when the detected country lands so the underlying input
+            // adopts it (defaultCountry is only read on first render). `phone`
+            // lives here in the parent, so the entered value survives the swap.
+            key={defaultCountry ?? "intl"}
             value={phone}
             onChange={setPhone}
             defaultCountry={defaultCountry}

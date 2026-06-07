@@ -20,6 +20,7 @@ import { io, type Socket } from "socket.io-client";
 import {
   API_URL,
   createConversation,
+  detectVisitorCountry,
   getSettings,
   initWidget,
   listMessages,
@@ -108,7 +109,10 @@ export function WidgetRoot({
   // re-render. Source of truth is still localStorage via readSession().
   const sessionTokenRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const countryCodeRef = useRef<string | null>(null);
+  // ISO country for the phone-field default. Seeded from /init (server geo) and,
+  // when that's missing (localhost, resumed sessions), filled by a client-side
+  // lookup. State (not a ref) so the contact overlay re-renders once it lands.
+  const [country, setCountry] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const [busy, setBusy] = useState(false);
   // We track the conversation id locally so socket callbacks can match it
@@ -214,7 +218,7 @@ export function WidgetRoot({
           });
           token = fresh.sessionToken;
           sessionId = fresh.sessionId;
-          countryCodeRef.current = fresh.countryCode ?? null;
+          if (fresh.countryCode) setCountry(fresh.countryCode);
           writeSession({
             id: fresh.sessionId,
             token: fresh.sessionToken,
@@ -315,6 +319,20 @@ export function WidgetRoot({
     // expected to be stable for the lifetime of the iframe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.state]);
+
+  // ---- Country fallback -------------------------------------------------
+  // If the server didn't hand us a country (private API IP on localhost, or a
+  // resumed session that skipped /init), detect it client-side once.
+  useEffect(() => {
+    if (country) return;
+    let cancelled = false;
+    void detectVisitorCountry().then((c) => {
+      if (!cancelled && c) setCountry(c);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [country]);
 
   // ---- Socket ----------------------------------------------------------
   // Open once we have a session token. The socket connection is independent
@@ -681,7 +699,7 @@ export function WidgetRoot({
               primaryColor={primaryColor}
               initialEmail={state.context.contact.email}
               initialPhone={state.context.contact.phone}
-              defaultCountry={countryCodeRef.current ?? undefined}
+              defaultCountry={country ?? undefined}
               onSave={handleContactSave}
             />
           ) : null}

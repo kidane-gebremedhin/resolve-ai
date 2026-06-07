@@ -37,10 +37,11 @@ async function loadCurrent(): Promise<{ fontSans: string; fontDisplay: string; e
       error: null,
     };
   } catch (err) {
+    if (!(err instanceof ApiError)) throw err; // propagate the /logout redirect on 401/403
     return {
       fontSans: DEFAULT_SANS,
       fontDisplay: DEFAULT_DISPLAY,
-      error: err instanceof ApiError ? err.message : 'Failed to load settings',
+      error: err.message,
     };
   }
 }

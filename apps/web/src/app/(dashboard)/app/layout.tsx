@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { AppShell, type ScopeWebsite } from '@/components/layouts/app-shell';
+import { ClearCheckoutPlan } from '@/components/billing/clear-checkout-plan';
 import { APP_NAME, APP_TAGLINE } from '@/lib/app-config';
 import { api, ApiError } from '@/lib/api';
 import { getActiveWebsiteId } from '@/lib/website-scope';
@@ -43,6 +44,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       activeWebsiteId={activeWebsiteId}
       plan={sub?.plan ?? undefined}
     >
+      {/* Checkout is complete (this route is subscription-gated) — clear any
+          plan stashed during pricing → checkout. */}
+      <ClearCheckoutPlan />
       {/* Key the page subtree by the active website so switching workspaces
           remounts every /app page. Server components already re-fetch on the
           switcher's router.refresh(); remounting also resets client components

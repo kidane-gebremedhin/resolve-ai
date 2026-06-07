@@ -51,7 +51,7 @@ Indexes: `referrerUserId + status`, unique `referredOrganizationId`.
 
 ## Attribution flow
 
-1. **Capture** — `SignupHero.tsx` reads `?ref=<code>` from the URL (and persists to a short-lived cookie/localStorage so it survives the Google round-trip), forwards it to `POST /register` and the `/auth/google` exchange.
+1. **Capture** — [`AttributionCapture`](../apps/web/src/components/marketing/attribution-capture.tsx) (mounted in the root layout) persists `?ref=` **and** `?campaign=` into 30-day cookies (`csb_ref`, `csb_campaign`) on first landing, so attribution survives browsing pricing → register and the Google round-trip. `SignupHero.tsx` reads the URL param first, then falls back to the cookie, and forwards `referralCode`/`campaignCode` to `POST /register`.
 2. **Bind** — `registerUser` / `ensureMembershipForUser` resolve `code → referrer user`; reject self-referral; set `Organization.referredByUserId`; create a `Referral{status:"pending"}`.
 3. **Qualify/Earn** — in `handlePaddleEvent`, when a referred org's subscription becomes `active` (first paid), find its `Referral`, compute `commissionCents` from the plan catalog ([`24-paddle-subscriptions.md`](./24-paddle-subscriptions.md) `config/plans.ts`) × `commissionRate`, set `status:"earned"`, snapshot plan + subscriptionId; email the referrer.
 4. **Pay** — admin marks payouts paid (manual/CSV export v1); `status:"paid"`, `payoutRef` recorded.

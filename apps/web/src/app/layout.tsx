@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { ThemeProvider } from '@/components/theme-provider';
+import { AttributionCapture } from '@/components/marketing/attribution-capture';
 import { parseTheme, type Theme } from '@/lib/theme';
 import { APP_NAME, APP_TAGLINE } from '@/lib/app-config';
 import { sansFont, displayFont } from './fonts';
@@ -56,6 +57,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       suppressHydrationWarning
     >
       <body suppressHydrationWarning>
+        <AttributionCapture />
         <ThemeProvider initialTheme={initialTheme}>{children}</ThemeProvider>
       </body>
     </html>

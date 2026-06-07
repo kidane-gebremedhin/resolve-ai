@@ -15,7 +15,8 @@ async function load(): Promise<{ stats: Stats | null; error: string | null }> {
   try {
     return { stats: await api.get<Stats>('/admin/stats'), error: null };
   } catch (err) {
-    return { stats: null, error: err instanceof ApiError ? err.message : 'Failed to load stats' };
+    if (!(err instanceof ApiError)) throw err; // propagate the /logout redirect on 401/403
+    return { stats: null, error: err.message };
   }
 }
 

@@ -15,10 +15,17 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 FROM deps AS build
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Inlined into the client bundle at build time (.env is .dockerignore'd). The
+# widget is browser-only, so it just needs the public API/socket URLs.
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+ARG NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
 RUN pnpm --filter @csb/widget build
 
 FROM node:20-alpine AS runtime
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3001
+# HOSTNAME=0.0.0.0 so the standalone server binds all interfaces (Docker sets
+# HOSTNAME to the container id otherwise, breaking the in-container healthcheck).
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3001 HOSTNAME=0.0.0.0
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app && apk add --no-cache wget
 COPY --from=build --chown=app:app /repo/apps/widget/.next/standalone ./

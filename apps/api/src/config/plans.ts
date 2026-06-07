@@ -52,7 +52,7 @@ export function defaultPlanCatalog(): PlanCatalogEntry[] {
   return [
     {
       plan: "starter",
-      name: "Starter",
+      name: "Basic",
       priceId: process.env.PADDLE_PRICE_STARTER ?? null,
       priceMonthlyUsd: 19,
       features: ["3 websites", "2,000 AI messages / mo", "25 knowledge sources", "5 team members"],
@@ -60,7 +60,7 @@ export function defaultPlanCatalog(): PlanCatalogEntry[] {
     },
     {
       plan: "pro",
-      name: "Pro",
+      name: "Business",
       priceId: process.env.PADDLE_PRICE_PRO ?? null,
       priceMonthlyUsd: 99,
       features: ["10 websites", "20,000 AI messages / mo", "200 knowledge sources", "25 team members"],

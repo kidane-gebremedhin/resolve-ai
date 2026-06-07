@@ -1,15 +1,18 @@
 "use client";
 
-// Post-signup checkout: pick a paid plan, open the Paddle overlay, then poll for
-// the subscription to activate (via webhook) and continue into the dashboard.
-// This is the only destination after signup until a subscription is active.
+// Post-signup checkout. If a plan was chosen on /pricing (carried via ?plan= or
+// sessionStorage), we resolve it and open its Paddle overlay directly. If NO plan
+// was selected (e.g. the user just logged in), we render the full plans grid here
+// so they can pick one without leaving checkout. Either path opens the Paddle
+// overlay, then polls for the subscription to activate and continues to /app.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@csb/ui";
 import { clientApi } from "@/lib/api";
 import { isPaddleConfigured, openCheckout } from "@/lib/paddle";
+import { PLAN_STORAGE_KEY } from "./plan-cta";
 
 type Plan = {
   plan: "starter" | "pro" | "enterprise" | "free";
@@ -19,12 +22,35 @@ type Plan = {
   features: string[];
 };
 
-export function CheckoutPlans({ organizationId }: { organizationId?: string }) {
+export function CheckoutPlans({
+  organizationId,
+  customerEmail,
+  preselectedPlan,
+}: {
+  organizationId?: string;
+  /** Logged-in user's email — pre-fills the Paddle overlay. */
+  customerEmail?: string;
+  /** Plan tier from the URL (?plan=); falls back to the sessionStorage choice. */
+  preselectedPlan?: string;
+}) {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[] | null>(null);
-  const [busyPlan, setBusyPlan] = useState<string | null>(null);
+  const [chosenTier, setChosenTier] = useState<string | undefined>(preselectedPlan || undefined);
+  const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const autoStarted = useRef(false);
+
+  // Resolve the chosen plan: URL param first, else the pricing-page selection.
+  useEffect(() => {
+    if (chosenTier) return;
+    try {
+      const stored = sessionStorage.getItem(PLAN_STORAGE_KEY);
+      if (stored) setChosenTier(stored);
+    } catch {
+      /* sessionStorage unavailable */
+    }
+  }, [chosenTier]);
 
   useEffect(() => {
     clientApi
@@ -43,6 +69,11 @@ export function CheckoutPlans({ organizationId }: { organizationId?: string }) {
         const sub = await clientApi.get<{ active: boolean }>("/billing/subscription");
         if (sub.active) {
           clearInterval(iv);
+          try {
+            sessionStorage.removeItem(PLAN_STORAGE_KEY);
+          } catch {
+            /* ignore */
+          }
           router.push("/app");
           router.refresh();
         }
@@ -56,107 +87,173 @@ export function CheckoutPlans({ organizationId }: { organizationId?: string }) {
     }, 3000);
   }, [router]);
 
-  async function subscribe(p: Plan) {
-    if (!p.priceId || !organizationId) return;
-    setBusyPlan(p.plan);
-    setError(null);
-    try {
-      await clientApi.post("/billing/checkout", { priceId: p.priceId });
-      await openCheckout({
-        priceId: p.priceId,
-        customData: { organizationId },
-        // On successful payment, activate immediately from the transaction
-        // (don't wait for the webhook, which can't reach localhost), then enter
-        // the dashboard.
-        onCompleted: async (data) => {
-          setPolling(true);
-          const transactionId = data?.transaction_id ?? data?.transactionId ?? data?.id;
-          try {
-            if (transactionId) {
-              const r = await clientApi.post<{ active: boolean }>("/billing/activate", { transactionId });
-              if (r.active) {
-                router.push("/app");
-                router.refresh();
-                return;
+  const subscribe = useCallback(
+    async (p: Plan) => {
+      if (!p.priceId || !organizationId) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await clientApi.post("/billing/checkout", { priceId: p.priceId });
+        await openCheckout({
+          priceId: p.priceId,
+          customData: { organizationId },
+          customerEmail,
+          // On successful payment, activate immediately from the transaction
+          // (don't wait for the webhook, which can't reach localhost), then enter
+          // the dashboard.
+          onCompleted: async (data) => {
+            setPolling(true);
+            const transactionId = data?.transaction_id ?? data?.transactionId ?? data?.id;
+            try {
+              if (transactionId) {
+                const r = await clientApi.post<{ active: boolean }>("/billing/activate", { transactionId });
+                if (r.active) {
+                  try {
+                    sessionStorage.removeItem(PLAN_STORAGE_KEY);
+                  } catch {
+                    /* ignore */
+                  }
+                  router.push("/app");
+                  router.refresh();
+                  return;
+                }
               }
+            } catch {
+              /* fall back to polling below */
             }
-          } catch {
-            /* fall back to polling below */
-          }
-          startPolling();
-        },
-      });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Checkout failed.");
-    } finally {
-      setBusyPlan(null);
-    }
-  }
+            startPolling();
+          },
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Checkout failed.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [organizationId, customerEmail, startPolling, router],
+  );
 
-  if (error && !plans) {
-    return <p className="text-sm text-destructive">{error}</p>;
-  }
+  // The resolved, purchasable plan (has a price id).
+  const chosen = plans && chosenTier ? plans.find((p) => p.plan === chosenTier && p.priceId) : undefined;
+
+  // Open the overlay once, automatically, for the chosen plan.
+  useEffect(() => {
+    if (autoStarted.current || !chosen || !organizationId || !isPaddleConfigured()) return;
+    autoStarted.current = true;
+    const id = setTimeout(() => void subscribe(chosen), 0);
+    return () => clearTimeout(id);
+  }, [chosen, organizationId, subscribe]);
+
   if (!plans) {
     return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" /> Loading plans…
+      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Preparing checkout…
       </div>
     );
   }
 
+  // No plan remembered (e.g. the user logged in without picking one on /pricing)
+  // — show the full plans grid here so they can choose without leaving checkout.
+  if (!chosen) {
+    return (
+      <div>
+        {!isPaddleConfigured() ? (
+          <div className="mx-auto mb-6 max-w-md rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-center text-sm">
+            Checkout is not configured (missing <code>NEXT_PUBLIC_PADDLE_CLIENT_TOKEN</code>).
+          </div>
+        ) : null}
+        {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
+        <div className="grid gap-4 sm:grid-cols-3">
+          {plans.map((p) => {
+            const highlighted = p.plan === "pro";
+            const priceLabel = p.priceMonthlyUsd == null ? "Custom" : `$${p.priceMonthlyUsd}`;
+            return (
+              <div
+                key={p.plan}
+                className={`flex flex-col rounded-xl border bg-card p-6 ${
+                  highlighted ? "border-primary ring-1 ring-primary/30" : "border-border"
+                }`}
+              >
+                <div className="font-display text-lg font-semibold">{p.name}</div>
+                <div className="mt-1 font-display text-3xl font-semibold">
+                  {priceLabel}
+                  {p.priceMonthlyUsd == null ? "" : (
+                    <span className="text-sm font-normal text-muted-foreground">/mo</span>
+                  )}
+                </div>
+                {p.features?.length ? (
+                  <ul className="mt-4 flex-1 space-y-2 text-sm text-muted-foreground">
+                    {p.features.map((f, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="text-primary">✓</span>
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="flex-1" />
+                )}
+                <Button
+                  className="mt-6"
+                  size="sm"
+                  variant={highlighted ? "default" : "outline"}
+                  onClick={() => subscribe(p)}
+                  disabled={busy || polling || !isPaddleConfigured() || !p.priceId}
+                >
+                  {polling ? "Confirming…" : `Choose ${p.name}`}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={() => router.push("/pricing")}
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            Compare plans in detail
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const price = chosen.priceMonthlyUsd == null ? "Custom" : `$${chosen.priceMonthlyUsd}`;
+
   return (
-    <div>
+    <div className="mx-auto max-w-md rounded-xl border border-border bg-card p-6 text-center">
+      <div className="font-display text-lg font-semibold">{chosen.name} plan</div>
+      <div className="mt-1 font-display text-3xl font-semibold">
+        {price}
+        {chosen.priceMonthlyUsd == null ? "" : <span className="text-sm font-normal text-muted-foreground">/mo</span>}
+      </div>
+
       {!isPaddleConfigured() ? (
-        <div className="mb-4 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+        <div className="mt-4 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
           Checkout is not configured (missing <code>NEXT_PUBLIC_PADDLE_CLIENT_TOKEN</code>).
         </div>
-      ) : null}
-      {polling ? (
-        <div className="mb-4 flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
-          <Loader2 className="h-4 w-4 animate-spin" /> Confirming your subscription… you&apos;ll be
-          redirected automatically.
-        </div>
-      ) : null}
-      {error ? <p className="mb-4 text-sm text-destructive">{error}</p> : null}
-
-      <div className="grid gap-4 md:grid-cols-3">
-        {plans.map((p) => {
-          const highlighted = p.plan === "pro";
-          const price = p.priceMonthlyUsd == null ? "Custom" : `$${p.priceMonthlyUsd}`;
-          return (
-            <div
-              key={p.plan}
-              className={`rounded-xl border bg-card p-5 ${
-                highlighted ? "border-primary/50 ring-1 ring-primary/30" : "border-border"
-              }`}
+      ) : (
+        <>
+          <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {polling ? "Confirming your subscription…" : "Opening secure checkout…"}
+          </div>
+          {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+          <div className="mt-5 flex flex-col items-center gap-2">
+            <Button size="sm" onClick={() => subscribe(chosen)} disabled={busy || polling}>
+              Continue to checkout
+            </Button>
+            <button
+              type="button"
+              onClick={() => router.push("/pricing")}
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
             >
-              <div className="font-display text-lg font-semibold">{p.name}</div>
-              <div className="mt-2 font-display text-3xl font-semibold">
-                {price}
-                <span className="text-sm font-normal text-muted-foreground">
-                  {p.priceMonthlyUsd == null ? "" : "/mo"}
-                </span>
-              </div>
-              <ul className="mt-4 space-y-2 text-sm">
-                {p.features.map((f) => (
-                  <li key={f} className="flex items-start gap-2">
-                    <Check className="mt-0.5 h-3.5 w-3.5 text-success" /> {f}
-                  </li>
-                ))}
-              </ul>
-              <Button
-                className="mt-5 w-full"
-                size="sm"
-                disabled={!p.priceId || !organizationId || busyPlan === p.plan || polling}
-                onClick={() => subscribe(p)}
-              >
-                {busyPlan === p.plan && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                Subscribe
-              </Button>
-            </div>
-          );
-        })}
-      </div>
+              Choose a different plan
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -1,12 +1,21 @@
 'use client';
 
-// Global app font picker. Lists every available font with a live sample
-// rendered in that font, and saves the choice to PlatformSetting.theming. The
-// chosen font applies across /app, public pages, and this admin portal.
+// Global app font picker. Two dropdowns (body + heading) list every available
+// font; a live preview panel re-renders instantly in the selected fonts so the
+// admin can see the change before saving. The choice is saved to
+// PlatformSetting.theming and applies across /app, public pages, and this
+// admin portal.
 
-import { useState } from 'react';
-import { Check, Loader2 } from 'lucide-react';
-import { Button } from '@csb/ui';
+import { useMemo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
+import {
+  Button,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@csb/ui';
 import { clientApi, ApiError } from '@/lib/api';
 
 export type FontOption = {
@@ -18,44 +27,11 @@ export type FontOption = {
   fontFamily: string;
 };
 
-const SAMPLE = 'The quick brown fox jumps over the lazy dog';
+const SAMPLE =
+  'The quick brown fox jumps over the lazy dog. 0123456789 — Pack my box with five dozen liquor jugs.';
 
-function FontCard({
-  option,
-  selected,
-  display,
-  onSelect,
-}: {
-  option: FontOption;
-  selected: boolean;
-  display: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={`flex flex-col items-start rounded-xl border p-4 text-left transition ${
-        selected ? 'border-foreground ring-1 ring-foreground' : 'border-border hover:bg-muted/40'
-      }`}
-    >
-      <div className="flex w-full items-center justify-between">
-        <span className="text-sm font-medium">{option.label}</span>
-        {selected ? <Check className="h-4 w-4" /> : null}
-      </div>
-      <span
-        className={`${option.className} mt-2 ${display ? 'text-2xl font-semibold' : 'text-base'} leading-snug text-foreground`}
-        style={{ fontFamily: option.fontFamily }}
-      >
-        {display ? 'Heading sample' : SAMPLE}
-      </span>
-      {!display ? (
-        <span className={`${option.className} mt-1 text-xs text-muted-foreground`} style={{ fontFamily: option.fontFamily }}>
-          0123456789 — ABCDEFG abcdefg
-        </span>
-      ) : null}
-    </button>
-  );
+function byValue(options: FontOption[], value: string) {
+  return options.find((o) => o.value === value) ?? options[0];
 }
 
 export function FontPreferences({
@@ -75,6 +51,9 @@ export function FontPreferences({
 
   const dirty = fontSans !== current.fontSans || fontDisplay !== current.fontDisplay;
 
+  const sansOpt = useMemo(() => byValue(sans, fontSans), [sans, fontSans]);
+  const displayOpt = useMemo(() => byValue(display, fontDisplay), [display, fontDisplay]);
+
   async function save() {
     setSaving(true);
     setError(null);
@@ -91,23 +70,81 @@ export function FontPreferences({
 
   return (
     <div className="mt-6 space-y-8">
-      <section>
-        <h2 className="font-display text-base font-semibold">Body font</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">Used for paragraphs and UI text everywhere.</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {sans.map((o) => (
-            <FontCard key={o.value} option={o} selected={fontSans === o.value} display={false} onSelect={() => { setFontSans(o.value); setSaved(false); }} />
-          ))}
+      {/* Each picker sits on the left with a live sample, in the chosen font,
+          aligned to its right — so the change is visible right beside the control. */}
+      <section className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        <div className="sm:w-72 sm:shrink-0">
+          <label className="font-display text-sm font-semibold">Body font</label>
+          <p className="mt-0.5 text-xs text-muted-foreground">Paragraphs and UI text everywhere.</p>
+          <Select
+            value={fontSans}
+            onValueChange={(v) => {
+              setFontSans(v);
+              setSaved(false);
+            }}
+          >
+            <SelectTrigger className="mt-3">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {sans.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  <span className={o.className} style={{ fontFamily: o.fontFamily }}>
+                    {o.label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex-1 rounded-xl border border-border bg-muted/20 p-4">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Sample · {sansOpt.label}
+          </p>
+          <p
+            className={`${sansOpt.className} mt-2 text-base leading-relaxed text-foreground`}
+            style={{ fontFamily: sansOpt.fontFamily }}
+          >
+            {SAMPLE}
+          </p>
         </div>
       </section>
 
-      <section>
-        <h2 className="font-display text-base font-semibold">Heading font</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">Used for titles and display text.</p>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {display.map((o) => (
-            <FontCard key={o.value} option={o} selected={fontDisplay === o.value} display onSelect={() => { setFontDisplay(o.value); setSaved(false); }} />
-          ))}
+      <section className="flex flex-col gap-4 sm:flex-row sm:items-start">
+        <div className="sm:w-72 sm:shrink-0">
+          <label className="font-display text-sm font-semibold">Heading font</label>
+          <p className="mt-0.5 text-xs text-muted-foreground">Titles and display text.</p>
+          <Select
+            value={fontDisplay}
+            onValueChange={(v) => {
+              setFontDisplay(v);
+              setSaved(false);
+            }}
+          >
+            <SelectTrigger className="mt-3">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="max-h-72">
+              {display.map((o) => (
+                <SelectItem key={o.value} value={o.value}>
+                  <span className={o.className} style={{ fontFamily: o.fontFamily }}>
+                    {o.label}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex-1 rounded-xl border border-border bg-muted/20 p-4">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+            Sample · {displayOpt.label}
+          </p>
+          <h3
+            className={`${displayOpt.className} mt-2 text-2xl font-semibold leading-tight text-foreground`}
+            style={{ fontFamily: displayOpt.fontFamily }}
+          >
+            Your support, beautifully on brand
+          </h3>
         </div>
       </section>
 

@@ -32,11 +32,11 @@ Complete the platform admin panel (add the missing **Organizations** and **Agent
 
 | # | Task | Files | Skill | Acceptance |
 |---|------|-------|-------|------------|
-| 4 | Curated `next/font` registry (Inter, Inter Tight, Geist, Roboto, Open Sans, Lora, JetBrains Mono), each exposing a CSS variable | `apps/web/src/app/fonts.ts` (new) | nextjs16-template-migration | Module exports `{key → fontObject}` for sans + display sets |
+| 4 | Curated `next/font` registry of popular Google fonts — sans (Inter, Roboto, Open Sans, Lato, Montserrat, Poppins, Raleway, Nunito, Work Sans, Source Sans 3, Rubik, DM Sans, Manrope, Plus Jakarta Sans, Mulish, Figtree) + display (Inter Tight, Montserrat, Poppins, Playfair Display, Lora, Merriweather, Raleway, Oswald, Space Grotesk, Sora, Archivo, DM Serif Display), each exposing a CSS variable | `apps/web/src/app/fonts.ts`, `apps/admin/src/app/fonts.ts` (kept in sync) | nextjs16-template-migration | Module exports `{key → fontObject}` for sans + display sets |
 | 5 | Add `theming.{fontSans,fontDisplay}` (enum of curated keys, default `inter`/`inter-tight`) to `PlatformSetting`; extend admin settings Zod schema + `$set`; seed default on first read | `apps/api/src/models/PlatformSetting.ts`, `apps/api/src/routes/admin.routes.ts` | express-mongoose-scaffold | `GET /admin/settings` returns `theming` defaults; PATCH validates enum |
 | 6 | Root layout reads `PlatformSetting` server-side, applies selected font variables to `<html>`; `revalidateTag("platform-settings")` on settings PATCH | `apps/web/src/app/layout.tsx`, `apps/api`/web settings save path | nextjs16-template-migration | Chosen font variables present on `<html>`; default reproduces current look |
 | 7 | `.ns-theme` consumes `--font-sans`/`--font-display` instead of hard-coded Inter Tight | `apps/web/src/app/globals.css` | — | Public pages follow the global font |
-| 8 | Admin "Theming" tab: two font selects (body + heading) with live preview | admin settings form component | nextjs16-template-migration | Selecting + saving updates global font across `/app`, `/admin`, public |
+| 8 | System Preferences page: two font dropdown selects (body + heading) listing every curated font, with a live preview panel | `apps/admin/src/components/font-preferences.tsx`, `apps/admin/src/app/(admin)/settings/page.tsx` | nextjs16-template-migration | Selecting a font updates the live preview instantly; saving updates the global font across `/app`, `/admin`, public |
 
 ### Wrap-up
 

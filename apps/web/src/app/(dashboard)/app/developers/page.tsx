@@ -6,7 +6,7 @@
 // component.
 
 import { api, ApiError } from "@/lib/api";
-import { WIDGET_URL, EMBED_URL } from "@/lib/app-urls";
+import { WIDGET_URL, API_URL } from "@/lib/app-urls";
 import { getActiveWebsiteId } from "@/lib/website-scope";
 import { DevelopersClient, type EmbedConfig } from "./developers-client";
 
@@ -57,14 +57,18 @@ export default async function DevelopersPage() {
     ? await safeGet<WidgetSettings>(`/widget-settings/${agent._id}`)
     : null;
 
-  const embedUrl =
-    EMBED_URL;
+  // The embed loader's origin comes from EMBED_BASE_URL (a runtime server env, so
+  // it adapts to production deployments without rebuilding). Defaults to the
+  // local embed dev server.
+  const embedBase = (process.env.EMBED_BASE_URL || "http://localhost:3002").replace(/\/+$/, "");
+  const embedUrl = `${embedBase}/widget.js`;
   const widgetUrl = WIDGET_URL;
 
   const config: EmbedConfig = {
     agentId: agent?._id ?? "YOUR_AGENT_ID",
     embedUrl,
     widgetUrl,
+    apiUrl: API_URL,
     position: settings?.position,
     primaryColor: settings?.primaryColor,
     theme: settings?.theme,

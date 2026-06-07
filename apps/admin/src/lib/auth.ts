@@ -1,7 +1,9 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import { API_URL as apiUrl } from "./app-urls";
+// NextAuth runs server-side only, so it uses the internal API base (which falls
+// back to the public URL when no internal host is configured).
+import { API_INTERNAL_URL as apiUrl } from "./app-urls";
 
 type Role = "owner" | "admin" | "agent" | "viewer" | "platform_admin";
 
@@ -134,16 +136,26 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (account?.provider === "google" && account.id_token) {
         const email = profile?.email ?? user?.email;
         const name = profile?.name ?? user?.name ?? email;
-        const res = await fetch(`${apiUrl}/auth/google`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ idToken: account.id_token, email, name }),
-        });
+        let res: Response;
+        try {
+          res = await fetch(`${apiUrl}/auth/google`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ idToken: account.id_token, email, name }),
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error(`[auth] Google exchange could not reach API at ${apiUrl}/auth/google:`, (err as Error).message);
+          throw new Error("Google sign-in failed: the API is unreachable.");
+        }
         if (!res.ok) {
           // Surface the backend rejection instead of swallowing it: silently
           // accepting the sign-in leaves the session without an accessToken,
           // which then crashes the dashboard with "Missing or malformed
           // Authorization header" on the first protected API call.
+          const detail = await res.text().catch(() => "");
+          // eslint-disable-next-line no-console
+          console.error(`[auth] Google exchange failed (${res.status}) at ${apiUrl}/auth/google: ${detail}`);
           throw new Error(`Google sign-in exchange failed (${res.status})`);
         }
         const body = (await res.json()) as {

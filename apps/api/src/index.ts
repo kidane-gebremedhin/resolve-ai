@@ -21,6 +21,14 @@ async function main() {
   // real client address (from X-Forwarded-For) instead of the proxy's.
   app.set("trust proxy", true);
   app.use(helmet());
+  // Public widget endpoints are embedded on arbitrary customer sites, so they
+  // must accept ANY origin (the embed loader calls /widget/appearance from the
+  // host page). They authenticate via bearer session tokens, not cookies, so
+  // credentialless reflect-any-origin CORS is safe. Registered BEFORE the
+  // global allowlist so it owns the widget routes' preflight.
+  app.use("/api/v1/widget", cors({ origin: true }));
+  // Everything else (dashboard/admin, cookie-authed) uses the configured
+  // allowlist with credentials.
   app.use(cors({ origin: env.corsOrigins, credentials: true }));
   app.use(express.json({ limit: "1mb" }));
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));

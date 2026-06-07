@@ -135,6 +135,8 @@
     border-color: var(--color-border);
   }
   html {
+    /* Base type scale bumped ~12% (16px → 18px) — keep in sync with web/widget. */
+    font-size: 112.5%;
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;

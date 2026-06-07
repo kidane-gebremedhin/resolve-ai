@@ -3,8 +3,6 @@
 import { Router, type Request, type Response, type NextFunction, type RequestHandler } from "express";
 import { z } from "zod";
 import crypto from "node:crypto";
-import multer from "multer";
-import { getStorage } from "../config/storage.js";
 import {
   ContactSession,
   Website,
@@ -20,7 +18,13 @@ import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { generateAiReply } from "../services/ai/agent.service.js";
-import { parseFile } from "../services/kb/parsers.js";
+import {
+  attachmentUpload,
+  isAllowedAttachmentMime,
+  storeAttachment,
+  extractAttachmentText,
+  streamStoredAttachment,
+} from "../services/attachments.service.js";
 import geoip from "geoip-lite";
 import { logger } from "../config/logger.js";
 
@@ -514,70 +518,18 @@ router.post(
 );
 
 // ---------- Attachments ----------
-// Storage is delegated to the adapter returned by `getStorage()` (MinIO when
-// MINIO_* env vars are configured, local disk otherwise). Object keys are
-// tenant-scoped — `org/<orgId>/<sha>.bin` — so future bucket-policy isolation
-// can rely on the prefix. We still verify `metadata.organizationId` on every
-// download as defence-in-depth.
-const ALLOWED_MIME_PREFIXES = ["image/"];
-// Widened to match what `parseFile` can extract (PDF/DOCX/Excel/CSV/text/markdown/HTML).
-const ALLOWED_MIME_EXACT = new Set([
-  "application/pdf",
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "text/html",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-]);
-
-// Best-effort text extraction so the AI can read the attachment. Never throws —
-// an unreadable/oversized file just yields no text (the upload still succeeds).
-async function extractAttachmentText(
-  buffer: Buffer,
-  mimetype: string,
-  filename: string,
-): Promise<string | undefined> {
-  if (mimetype.startsWith("image/")) return undefined; // no OCR in this bundle
-  if (buffer.length > env.attachmentExtractMaxBytes) return "[file too large to read]";
-  try {
-    const { text } = await parseFile({ buffer, mimetype, filename });
-    const trimmed = (text ?? "").trim();
-    if (!trimmed) return undefined;
-    return trimmed.length > env.attachmentExtractMaxChars
-      ? trimmed.slice(0, env.attachmentExtractMaxChars)
-      : trimmed;
-  } catch (err) {
-    logger.warn("[widget] attachment extraction failed", {
-      filename,
-      mimetype,
-      err: (err as Error).message,
-    });
-    return undefined;
-  }
-}
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
-
-function attachmentKey(orgId: string, sha: string): string {
-  return `org/${orgId}/${sha}.bin`;
-}
+// Storage, MIME allow-list, text extraction, and streaming live in
+// attachments.service.ts (shared with the operator inbox upload/serve routes).
 
 router.post(
   "/conversations/:id/attachments",
   requireWidgetSession,
-  upload.single("file"),
+  attachmentUpload.single("file"),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) throw new ValidationError("No file uploaded (field name: 'file').");
     const { buffer, originalname, mimetype, size } = req.file;
 
-    const allowed =
-      ALLOWED_MIME_PREFIXES.some((p) => mimetype.startsWith(p)) || ALLOWED_MIME_EXACT.has(mimetype);
-    if (!allowed) {
+    if (!isAllowedAttachmentMime(mimetype)) {
       throw new ValidationError(`MIME type '${mimetype}' is not allowed.`);
     }
 
@@ -589,16 +541,12 @@ router.post(
     });
     if (!conversation) throw new NotFoundError("Conversation not found.");
 
-    const sha = crypto.createHash("sha256").update(buffer).digest("hex");
-    const key = attachmentKey(String(req.orgId), sha);
-
-    await getStorage().putObject({
-      key,
+    const sha = await storeAttachment({
       buffer,
-      contentType: mimetype,
+      mimetype,
+      orgId: String(req.orgId),
       metadata: {
         fileName: originalname,
-        organizationId: String(req.orgId),
         contactSessionId: String(req.contactSessionId),
         conversationId: conversation._id.toString(),
         size: String(size),
@@ -632,33 +580,7 @@ router.get(
   "/attachments/:hash",
   requireWidgetSession,
   asyncHandler(async (req: Request, res: Response) => {
-    const shaParam = req.params.hash;
-    const sha = Array.isArray(shaParam) ? shaParam[0] : shaParam;
-    if (!sha || !/^[a-f0-9]{64}$/i.test(sha)) {
-      throw new ValidationError("Invalid attachment hash.");
-    }
-
-    const key = attachmentKey(String(req.orgId), sha);
-    const obj = await getStorage().getObject(key);
-    if (!obj) throw new NotFoundError("Attachment not found.");
-
-    // Cross-tenant guard. MinIO lowercases user-metadata keys on read; the disk
-    // adapter preserves the case we wrote. Check both spellings to be safe.
-    const meta = obj.metadata ?? {};
-    const metaOrg = meta.organizationId ?? meta.organizationid;
-    if (!metaOrg || metaOrg !== String(req.orgId)) {
-      throw new NotFoundError("Attachment not found.");
-    }
-    const fileName = meta.fileName ?? meta.filename;
-
-    res.setHeader("Content-Type", obj.contentType ?? "application/octet-stream");
-    if (fileName) {
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${fileName.replace(/"/g, "")}"`,
-      );
-    }
-    obj.stream.pipe(res);
+    await streamStoredAttachment(res, String(req.orgId), req.params.hash);
   }),
 );
 

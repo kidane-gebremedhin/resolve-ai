@@ -15,10 +15,43 @@ import {
   Subscription,
   User,
 } from "../models/index.js";
+import {
+  DEFAULT_PAGE_SIZE,
+  dateRangeFilter,
+  mergeFilters,
+  paginate,
+  paginateAggregate,
+  parseListParams,
+  searchFilter,
+} from "../utils/list-query.js";
 
-// Curated font keys (must match apps/web/src/app/fonts.ts).
-const SANS_KEYS = ["inter", "open-sans", "montserrat"] as const;
-const DISPLAY_KEYS = ["inter-tight", "lora", "montserrat"] as const;
+// Curated font keys (must match apps/web/src/app/fonts.ts — vendored via
+// @fontsource/next-font-local).
+// Body and heading accept the SAME keys (see apps/web/src/app/fonts.ts FONT_OPTIONS).
+const FONT_KEYS = [
+  "inter",
+  "inter-tight",
+  "geist",
+  "dm-sans",
+  "plus-jakarta-sans",
+  "manrope",
+  "sora",
+  "space-grotesk",
+  "ibm-plex-sans",
+  "roboto",
+  "open-sans",
+  "lato",
+  "montserrat",
+  "poppins",
+  "nunito",
+  "work-sans",
+  "lora",
+  "merriweather",
+  "playfair",
+  "oswald",
+] as const;
+const SANS_KEYS = FONT_KEYS;
+const DISPLAY_KEYS = FONT_KEYS;
 import { requireAuth, requirePlatformAdmin } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import {
@@ -73,18 +106,58 @@ router.get("/stats", async (_req: Request, res: Response) => {
 });
 
 router.get("/users", async (req: Request, res: Response) => {
-  const { q, limit = "50" } = req.query as Record<string, string>;
-  const filter: Record<string, unknown> = {};
-  if (q) filter.email = { $regex: q, $options: "i" };
-  const users = await User.find(filter)
-    .select("email name role provider createdAt lastLoginAt")
-    .limit(Math.min(Number(limit), 200));
-  res.json(users);
+  const params = parseListParams(req.query, { defaultPageSize: DEFAULT_PAGE_SIZE });
+  const { role } = req.query as Record<string, string>;
+  const filter = mergeFilters(
+    searchFilter(params.q, ["email", "name"]),
+    dateRangeFilter("createdAt", params.from, params.to),
+    role === "platform_admin" || role === "user" ? { role } : {},
+  );
+  const page = await paginate(User, filter, {
+    params,
+    sort: { createdAt: -1 },
+    select: "email name role provider createdAt lastLoginAt",
+  });
+  res.json(page);
 });
 
-router.get("/subscriptions", async (_req: Request, res: Response) => {
-  const subs = await Subscription.find().sort({ createdAt: -1 }).limit(200);
-  res.json(subs);
+router.get("/subscriptions", async (req: Request, res: Response) => {
+  const params = parseListParams(req.query, { defaultPageSize: DEFAULT_PAGE_SIZE });
+  const { plan, status } = req.query as Record<string, string | undefined>;
+  const match = mergeFilters(
+    searchFilter(params.q, ["paddleSubscriptionId", "paddleCustomerId"]),
+    dateRangeFilter("createdAt", params.from, params.to),
+    plan && ["starter", "pro", "enterprise"].includes(plan) ? { plan } : {},
+    status && ["active", "trialing", "past_due", "canceled", "paused"].includes(status) ? { status } : {},
+  ) as Record<string, unknown>;
+
+  const page = await paginateAggregate(
+    Subscription,
+    match,
+    [
+      { $lookup: { from: "organizations", localField: "organizationId", foreignField: "_id", as: "_org" } },
+      { $set: { organizationName: { $arrayElemAt: ["$_org.name", 0] } } },
+      { $project: { _org: 0 } },
+    ],
+    { params, sort: { createdAt: -1 } },
+  );
+
+  // MRR over ALL active/trialing subscriptions (not just this page), priced from
+  // the admin-editable plan catalog so the header stat stays accurate.
+  const setting = await PlatformSetting.findOne({ singleton: "global" }).lean();
+  const priceByPlan = new Map(
+    ((setting?.plans ?? []) as Array<{ plan?: string; priceMonthlyUsd?: number | null }>).map((p) => [
+      p.plan,
+      Number(p.priceMonthlyUsd) || 0,
+    ]),
+  );
+  const grouped = await Subscription.aggregate([
+    { $match: { status: { $in: ["active", "trialing"] } } },
+    { $group: { _id: "$plan", n: { $sum: 1 } } },
+  ]);
+  const mrr = grouped.reduce((sum, g) => sum + (priceByPlan.get(g._id) ?? 0) * g.n, 0);
+
+  res.json({ ...page, mrr });
 });
 
 // Reconcile a subscription from Paddle (replaces the old no-op "Refresh status").
@@ -99,159 +172,140 @@ router.post("/subscriptions/:id/sync", async (req: Request, res: Response) => {
   res.json(updated);
 });
 
-// Paginated listing of organizations with aggregated counts. Uses a single
-// $lookup pipeline so each row is one DB round trip overall.
+// Paginated listing of organizations with aggregated counts. Supports search
+// (name/slug), a plan filter, and a createdAt UTC date range.
 router.get("/organizations", async (req: Request, res: Response) => {
-  const { cursor, limit: rawLimit } = req.query as Record<string, string | undefined>;
-  const limit = Math.min(Math.max(Number(rawLimit ?? "50") || 50, 1), 100);
+  const params = parseListParams(req.query, { defaultPageSize: DEFAULT_PAGE_SIZE });
+  const { plan } = req.query as Record<string, string | undefined>;
+  const match = mergeFilters(
+    searchFilter(params.q, ["name", "slug"]),
+    dateRangeFilter("createdAt", params.from, params.to),
+    plan && ["free", "starter", "pro", "enterprise"].includes(plan) ? { plan } : {},
+  ) as Record<string, unknown>;
 
-  const match: Record<string, unknown> = {};
-  if (cursor && mongoose.isValidObjectId(cursor)) {
-    match._id = { $lt: new mongoose.Types.ObjectId(cursor) };
-  }
-
-  const items = await Organization.aggregate([
-    { $match: match },
-    { $sort: { _id: -1 } },
-    { $limit: limit + 1 },
-    {
-      $lookup: {
-        from: "memberships",
-        let: { orgId: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $and: [{ $eq: ["$organizationId", "$$orgId"] }, { $eq: ["$status", "active"] }] } } },
-          { $count: "n" },
-        ],
-        as: "_members",
-      },
-    },
-    {
-      $lookup: {
-        from: "subscriptions",
-        let: { orgId: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$organizationId", "$$orgId"] } } },
-          { $project: { plan: 1, status: 1 } },
-          { $limit: 1 },
-        ],
-        as: "_sub",
-      },
-    },
-    {
-      $lookup: {
-        from: "conversations",
-        let: { orgId: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$organizationId", "$$orgId"] } } },
-          { $count: "n" },
-        ],
-        as: "_conv",
-      },
-    },
-    {
-      $lookup: {
-        from: "knowledgesources",
-        let: { orgId: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$organizationId", "$$orgId"] } } },
-          { $count: "n" },
-        ],
-        as: "_kb",
-      },
-    },
-    {
-      $project: {
-        _id: 1,
-        name: 1,
-        slug: 1,
-        plan: 1,
-        createdAt: 1,
-        memberCount: { $ifNull: [{ $arrayElemAt: ["$_members.n", 0] }, 0] },
-        conversationCount: { $ifNull: [{ $arrayElemAt: ["$_conv.n", 0] }, 0] },
-        knowledgeSourceCount: { $ifNull: [{ $arrayElemAt: ["$_kb.n", 0] }, 0] },
-        subscriptionPlan: {
-          $ifNull: [{ $arrayElemAt: ["$_sub.plan", 0] }, "$plan"],
-        },
-        subscriptionStatus: { $arrayElemAt: ["$_sub.status", 0] },
-      },
-    },
-  ]);
-
-  // Membership/KS counts above use $lookup so MongoDB returns counts even when 0.
-  // The Membership ref above lets us reuse model registration:
+  // The Membership ref keeps the model registered for the $lookup below.
   void Membership;
 
-  const hasMore = items.length > limit;
-  const page = hasMore ? items.slice(0, limit) : items;
-  const nextCursor = hasMore ? String(page[page.length - 1]._id) : null;
-  res.json({ items: page, nextCursor });
+  const page = await paginateAggregate(
+    Organization,
+    match,
+    [
+      {
+        $lookup: {
+          from: "memberships",
+          let: { orgId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ["$organizationId", "$$orgId"] }, { $eq: ["$status", "active"] }] } } },
+            { $count: "n" },
+          ],
+          as: "_members",
+        },
+      },
+      {
+        $lookup: {
+          from: "subscriptions",
+          let: { orgId: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $eq: ["$organizationId", "$$orgId"] } } },
+            { $project: { plan: 1, status: 1 } },
+            { $limit: 1 },
+          ],
+          as: "_sub",
+        },
+      },
+      {
+        $lookup: {
+          from: "conversations",
+          let: { orgId: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$organizationId", "$$orgId"] } } }, { $count: "n" }],
+          as: "_conv",
+        },
+      },
+      {
+        $lookup: {
+          from: "knowledgesources",
+          let: { orgId: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$organizationId", "$$orgId"] } } }, { $count: "n" }],
+          as: "_kb",
+        },
+      },
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          slug: 1,
+          plan: 1,
+          createdAt: 1,
+          memberCount: { $ifNull: [{ $arrayElemAt: ["$_members.n", 0] }, 0] },
+          conversationCount: { $ifNull: [{ $arrayElemAt: ["$_conv.n", 0] }, 0] },
+          knowledgeSourceCount: { $ifNull: [{ $arrayElemAt: ["$_kb.n", 0] }, 0] },
+          subscriptionPlan: { $ifNull: [{ $arrayElemAt: ["$_sub.plan", 0] }, "$plan"] },
+          subscriptionStatus: { $arrayElemAt: ["$_sub.status", 0] },
+        },
+      },
+    ],
+    { params, sort: { _id: -1 } },
+  );
+  res.json(page);
 });
 
 // Paginated cross-tenant listing of agents with org name, website domain, and
-// conversation count. Same cursor pattern as /organizations.
+// conversation count. Supports search (name), org/website/active filters, date.
 router.get("/agents", async (req: Request, res: Response) => {
-  const { cursor, limit: rawLimit } = req.query as Record<string, string | undefined>;
-  const limit = Math.min(Math.max(Number(rawLimit ?? "50") || 50, 1), 100);
+  const params = parseListParams(req.query, { defaultPageSize: DEFAULT_PAGE_SIZE });
+  const { organizationId, websiteId, active } = req.query as Record<string, string | undefined>;
+  const match = mergeFilters(
+    searchFilter(params.q, ["name"]),
+    dateRangeFilter("createdAt", params.from, params.to),
+    organizationId && mongoose.isValidObjectId(organizationId)
+      ? { organizationId: new mongoose.Types.ObjectId(organizationId) }
+      : {},
+    websiteId && mongoose.isValidObjectId(websiteId)
+      ? { websiteId: new mongoose.Types.ObjectId(websiteId) }
+      : {},
+    active === "true" || active === "false" ? { isActive: active === "true" } : {},
+  ) as Record<string, unknown>;
 
-  const match: Record<string, unknown> = {};
-  if (cursor && mongoose.isValidObjectId(cursor)) {
-    match._id = { $lt: new mongoose.Types.ObjectId(cursor) };
-  }
-
-  const items = await Agent.aggregate([
-    { $match: match },
-    { $sort: { _id: -1 } },
-    { $limit: limit + 1 },
-    {
-      $lookup: {
-        from: "organizations",
-        localField: "organizationId",
-        foreignField: "_id",
-        as: "_org",
+  const page = await paginateAggregate(
+    Agent,
+    match,
+    [
+      { $lookup: { from: "organizations", localField: "organizationId", foreignField: "_id", as: "_org" } },
+      { $lookup: { from: "websites", localField: "websiteId", foreignField: "_id", as: "_site" } },
+      {
+        $lookup: {
+          from: "conversations",
+          let: { agentId: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$agentId", "$$agentId"] } } }, { $count: "n" }],
+          as: "_conv",
+        },
       },
-    },
-    {
-      $lookup: {
-        from: "websites",
-        localField: "websiteId",
-        foreignField: "_id",
-        as: "_site",
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          model: 1,
+          isActive: 1,
+          createdAt: 1,
+          organizationId: 1,
+          organizationName: { $arrayElemAt: ["$_org.name", 0] },
+          websiteDomain: { $arrayElemAt: ["$_site.domain", 0] },
+          conversationCount: { $ifNull: [{ $arrayElemAt: ["$_conv.n", 0] }, 0] },
+        },
       },
-    },
-    {
-      $lookup: {
-        from: "conversations",
-        let: { agentId: "$_id" },
-        pipeline: [
-          { $match: { $expr: { $eq: ["$agentId", "$$agentId"] } } },
-          { $count: "n" },
-        ],
-        as: "_conv",
-      },
-    },
-    {
-      $project: {
-        _id: 1,
-        name: 1,
-        model: 1,
-        isActive: 1,
-        createdAt: 1,
-        organizationId: 1,
-        organizationName: { $arrayElemAt: ["$_org.name", 0] },
-        websiteDomain: { $arrayElemAt: ["$_site.domain", 0] },
-        conversationCount: { $ifNull: [{ $arrayElemAt: ["$_conv.n", 0] }, 0] },
-      },
-    },
-  ]);
-
-  const hasMore = items.length > limit;
-  const page = hasMore ? items.slice(0, limit) : items;
-  const nextCursor = hasMore ? String(page[page.length - 1]._id) : null;
-  res.json({ items: page, nextCursor });
+    ],
+    { params, sort: { _id: -1 } },
+  );
+  res.json(page);
 });
 
 router.get("/timeseries", async (req: Request, res: Response) => {
-  const { metric = "signups", days: rawDays } = req.query as Record<string, string | undefined>;
+  const {
+    metric = "signups",
+    days: rawDays,
+    organizationId: rawOrg,
+    agentId: rawAgent,
+  } = req.query as Record<string, string | undefined>;
   const allowed = ["signups", "conversations", "messages", "mrr_snapshot"] as const;
   type Metric = (typeof allowed)[number];
   if (!(allowed as readonly string[]).includes(metric)) {
@@ -261,7 +315,12 @@ router.get("/timeseries", async (req: Request, res: Response) => {
     return;
   }
   const days = Math.min(Math.max(Number(rawDays ?? "30") || 30, 1), 180);
-  const points = await adminTimeSeries(metric as Metric, days);
+  // Only accept well-formed ObjectId strings (ignore otherwise).
+  const isObjectId = (v?: string) => !!v && /^[a-f0-9]{24}$/i.test(v);
+  const points = await adminTimeSeries(metric as Metric, days, {
+    organizationId: isObjectId(rawOrg) ? rawOrg : undefined,
+    agentId: isObjectId(rawAgent) ? rawAgent : undefined,
+  });
   res.json({ points });
 });
 

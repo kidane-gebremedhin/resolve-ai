@@ -19,21 +19,9 @@ import { emitKnowledgeUpdate } from "../services/kb/ingestion.service.js";
 
 type CrawlPage = { metadata?: Record<string, unknown> | null };
 
-// Extract the first non-empty string value from the given metadata keys.
-function firstMetaString(pages: CrawlPage[], ...keys: string[]): string | undefined {
-  for (const p of pages) {
-    const m = p.metadata ?? {};
-    for (const k of keys) {
-      const v = m[k];
-      if (typeof v === "string" && v.trim().length > 0) return v.trim();
-    }
-  }
-  return undefined;
-}
-
-// Best-effort: store the site favicon on the source, adopt it as the agent's
-// default widget avatar when the agent has no avatar yet, AND set the website's
-// <title> as the Agent name when the operator hasn't customized it.
+// Best-effort: store the site favicon on the source and adopt it as the agent's
+// default widget avatar when the agent has no avatar yet. The agent's *name* is
+// never touched — the widget shows only the operator-configured Agent Name.
 // Never throws — must not regress the synced status.
 async function applySiteDefaults(sourceId: Types.ObjectId, pages: CrawlPage[]): Promise<void> {
   try {
@@ -69,26 +57,10 @@ async function applySiteDefaults(sourceId: Types.ObjectId, pages: CrawlPage[]): 
       });
     }
 
-    // --- Agent name: adopt the website <title> when the agent still has the
-    //     default auto-generated name. ---
-    if (agent) {
-      const isDefaultName =
-        !agent.name ||
-        /^(my\s+)?agent$/i.test(agent.name.trim()) ||
-        /^new\s+agent$/i.test(agent.name.trim()) ||
-        /^agent\s*\d*$/i.test(agent.name.trim());
-      if (isDefaultName) {
-        const siteTitle = firstMetaString(pages, "title", "og:title", "ogTitle");
-        if (siteTitle) {
-          agent.name = siteTitle;
-          await agent.save();
-          logger.info("[firecrawl-job] set agent name from website title", {
-            agentId: source.agentId.toString(),
-            name: siteTitle,
-          });
-        }
-      }
-    }
+    // NOTE: we intentionally do NOT derive the agent's name from the website
+    // <title>. The widget must refer only to the agent's own identity (the
+    // "Agent Name" configured in Widget Studio), never the organization or
+    // website name — so scraping never touches `agent.name`.
   } catch (err) {
     logger.warn("[firecrawl-job] site-defaults step failed (non-fatal)", {
       sourceId: sourceId.toString(),
