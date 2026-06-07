@@ -716,12 +716,12 @@ function PoweredBy() {
   return (
     <div className="shrink-0 border-t border-neutral-100 bg-white py-1.5 text-center dark:border-neutral-800 dark:bg-neutral-900">
       <a
-        href="https://helio.chat"
+        href={process.env.NEXT_PUBLIC_APP_URL || "https://helio.chat"}
         target="_blank"
         rel="noopener noreferrer"
         className="text-[10px] text-neutral-400 transition hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300"
       >
-        Powered by Helio
+        Powered by {process.env.NEXT_PUBLIC_APP_NAME || "Helio"}
       </a>
     </div>
   );

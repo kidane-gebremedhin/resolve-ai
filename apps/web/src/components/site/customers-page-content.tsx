@@ -2,6 +2,7 @@
 
 import { Quote } from 'lucide-react';
 import { MarketingShell } from '@/components/site/MarketingShell';
+import { APP_NAME } from '@/lib/app-config';
 
 const stories = [
   {
@@ -15,7 +16,7 @@ const stories = [
   {
     co: 'Lumen Health',
     industry: 'Healthcare',
-    quote: "Helio handles intake at 3am so our nurses don't have to. Game-changing.",
+    quote: `${APP_NAME} handles intake at 3am so our nurses don't have to. Game-changing.`,
     who: 'Dr. Idris Khan, COO',
     metric: '24/7',
     metricLabel: 'automated triage',
@@ -45,7 +46,7 @@ export default function CustomersPageContent() {
         <div className="container-page py-20">
           <div className="text-xs font-semibold uppercase tracking-wider text-primary">Customers</div>
           <h1 className="mt-3 max-w-3xl text-balance font-display text-4xl font-semibold tracking-tight md:text-5xl">
-            Teams shipping calmer support with Helio.
+            Teams shipping calmer support with {APP_NAME}.
           </h1>
         </div>
       </section>

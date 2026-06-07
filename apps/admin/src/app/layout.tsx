@@ -3,7 +3,7 @@ import { cookies } from 'next/headers';
 import { ThemeProvider } from '@/components/theme-provider';
 import { parseTheme, type Theme } from '@/lib/theme';
 import { sansFont, displayFont } from './fonts';
-import { API_URL } from '@/lib/app-urls';
+import { API_INTERNAL_URL } from '@/lib/app-urls';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -13,10 +13,14 @@ export const metadata: Metadata = {
 
 // Global app font is a platform setting; read it from the public theming
 // endpoint so the admin portal uses the same font as /app and public pages.
+// Server-side fetch → use API_INTERNAL_URL (compose network), not the public
+// localhost API_URL which resolves to this container from inside it.
 async function getTheming(): Promise<{ fontSans?: string; fontDisplay?: string }> {
   try {
-    const res = await fetch(`${API_URL}/public/theming`, {
-      next: { revalidate: 60, tags: ['platform-theming'] },
+    // no-store: always read the current admin-set font at request time (a cached
+    // build baked the build-time font into static pages and never updated).
+    const res = await fetch(`${API_INTERNAL_URL}/public/theming`, {
+      cache: 'no-store',
     });
     if (!res.ok) return {};
     return (await res.json()) as { fontSans?: string; fontDisplay?: string };

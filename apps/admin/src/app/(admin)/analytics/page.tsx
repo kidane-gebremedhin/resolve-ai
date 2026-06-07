@@ -98,13 +98,15 @@ export default async function AnalyticsPage({
 
   return (
     <div className="container-page py-8">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">Analytics</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {rangeLabel} · {scopeLabel || 'across all tenants'}
-          </p>
-        </div>
+      <div>
+        <h1 className="font-display text-2xl font-semibold tracking-tight">Analytics</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {rangeLabel} · {scopeLabel || 'across all tenants'}
+        </p>
+      </div>
+      {/* Filters on their own row so a longer subtitle (when an org/agent is
+          selected) can't push them onto a new line. */}
+      <div className="mt-4">
         <AnalyticsFilters
           days={daysParam}
           metric={metric}

@@ -54,7 +54,7 @@ function formatBytes(n?: number): string {
 function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   if (attachments.length === 0) return null;
   return (
-    <ul className="mt-2 space-y-2">
+    <ul className="mt-2 space-y-2.5">
       {attachments.map((a, i) => {
         const href = attachmentHref(a);
         if (!href) return null;

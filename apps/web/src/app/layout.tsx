@@ -5,16 +5,23 @@ import { AttributionCapture } from '@/components/marketing/attribution-capture';
 import { parseTheme, type Theme } from '@/lib/theme';
 import { APP_NAME, APP_TAGLINE } from '@/lib/app-config';
 import { sansFont, displayFont } from './fonts';
-import { API_URL } from '@/lib/app-urls';
+import { API_INTERNAL_URL } from '@/lib/app-urls';
 import './globals.css';
 
 // Global app font is a platform setting (admin → Settings → Theming). Read it
 // from the public theming endpoint server-side; falls back to the Inter default
 // when unreachable so the app always renders.
+// NOTE: this runs on the server, so it must use API_INTERNAL_URL (the api service
+// over the compose network) — the public API_URL is `localhost:4000`, which from
+// inside the web container points at the web container itself, not the API.
 async function getTheming(): Promise<{ fontSans?: string; fontDisplay?: string }> {
   try {
-    const res = await fetch(`${API_URL}/public/theming`, {
-      next: { revalidate: 60, tags: ['platform-theming'] },
+    // no-store: always read the current admin-set font at request time. With
+    // ISR caching (revalidate) a production build baked the build-time font into
+    // static pages and a later change never showed. This opts routes into
+    // dynamic rendering — acceptable for a global, admin-controlled font.
+    const res = await fetch(`${API_INTERNAL_URL}/public/theming`, {
+      cache: 'no-store',
     });
     if (!res.ok) return {};
     return (await res.json()) as { fontSans?: string; fontDisplay?: string };

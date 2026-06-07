@@ -144,7 +144,7 @@ export function MessageList({
             >
               {m.content}
               {m.attachments && m.attachments.length > 0 ? (
-                <ul className="mt-1.5 space-y-1.5">
+                <ul className="mt-1.5 space-y-2.5">
                   {m.attachments.map((a, i) => {
                     const href = authedUrl(a.url ?? a.fileUrl, sessionToken);
                     const label = a.fileName ?? "Attachment";
