@@ -15,10 +15,33 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 FROM deps AS build
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Public URLs are inlined into the client bundle at build time (NEXT_PUBLIC_*),
+# so they must be present as build args here (.env is .dockerignore'd). Defaults
+# target a local `docker-compose.full` run with host-published ports; override
+# `--build-arg`/compose `build.args` per deploy (e.g. https://api.example.com/api/v1).
+ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1
+ARG NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
+ARG NEXT_PUBLIC_WIDGET_URL=http://localhost:3001
+ARG NEXT_PUBLIC_EMBED_URL=http://localhost:3002/widget.js
+ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ARG NEXT_PUBLIC_APP_NAME=Helio
+ARG NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=
+ARG NEXT_PUBLIC_PADDLE_ENV=sandbox
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL \
+    NEXT_PUBLIC_WIDGET_URL=$NEXT_PUBLIC_WIDGET_URL \
+    NEXT_PUBLIC_EMBED_URL=$NEXT_PUBLIC_EMBED_URL \
+    NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL \
+    NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME \
+    NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=$NEXT_PUBLIC_PADDLE_CLIENT_TOKEN \
+    NEXT_PUBLIC_PADDLE_ENV=$NEXT_PUBLIC_PADDLE_ENV
 RUN pnpm --filter @csb/web build
 
 FROM node:20-alpine AS runtime
-ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
+# HOSTNAME=0.0.0.0 so the Next standalone server binds all interfaces (Docker
+# otherwise sets HOSTNAME to the container id, and the in-container healthcheck
+# hits localhost).
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 HOSTNAME=0.0.0.0
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app && apk add --no-cache wget
 COPY --from=build --chown=app:app /repo/apps/web/.next/standalone ./

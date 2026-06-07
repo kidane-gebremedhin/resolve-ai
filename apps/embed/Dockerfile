@@ -6,6 +6,11 @@ COPY apps/embed/package.json apps/embed/
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile --filter @csb/embed
 COPY apps/embed apps/embed
+# VITE_* are inlined into widget.js at build time as fallbacks for the loader
+# (the host page's data-widget-url/data-api-url still override per install).
+ARG VITE_WIDGET_URL=http://localhost:3001
+ARG VITE_API_URL=http://localhost:4000
+ENV VITE_WIDGET_URL=$VITE_WIDGET_URL VITE_API_URL=$VITE_API_URL
 RUN pnpm --filter @csb/embed build
 
 FROM nginx:1.27-alpine AS runtime

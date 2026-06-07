@@ -1,5 +1,6 @@
 import { cn } from '@/utils/ns-cn';
 import RevealAnimation from '../animation/RevealAnimation';
+import { PlanCta } from '@/components/billing/plan-cta';
 
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={10} height={8} viewBox="0 0 11 8" fill="none" className={cn('shrink-0', className)}>
@@ -12,9 +13,9 @@ const featureLabels = ['Pages included', 'Custom design', 'SEO optimization', 'B
 const pricingPlans = [
   {
     id: 'essential',
-    name: 'Essential',
-    price: 'Free',
-    description: 'Free plan for all users',
+    name: 'Basic',
+    price: '$19',
+    description: 'For small teams getting started',
     buttonText: 'Get started',
     planType: 'basic' as const,
     features: [
@@ -27,9 +28,9 @@ const pricingPlans = [
   },
   {
     id: 'advanced',
-    name: 'Advanced',
+    name: 'Business',
     price: '$99',
-    description: 'Plans for advanced users',
+    description: 'For growing businesses',
     buttonText: 'Get started',
     planType: 'featured' as const,
     features: [
@@ -43,8 +44,8 @@ const pricingPlans = [
   {
     id: 'enterprise',
     name: 'Enterprise',
-    price: 'Enterprise',
-    description: 'Contact us for enterprise users',
+    price: '$199',
+    description: 'For large teams at scale',
     buttonText: 'Get started',
     planType: 'premium' as const,
     features: [
@@ -57,7 +58,19 @@ const pricingPlans = [
   },
 ];
 
-const Pricing = () => {
+type CatalogPlan = { plan: string; name: string; priceMonthlyUsd: number | null };
+
+// Maps the marketing template's plan ids to billing catalog tiers, so an admin
+// editing names/prices in the admin panel is reflected here while the template's
+// design + feature matrix stay intact.
+const TIER_BY_ID: Record<string, string> = {
+  essential: 'starter',
+  advanced: 'pro',
+  enterprise: 'enterprise',
+};
+
+const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
+  const byTier = new Map(catalog.map((c) => [c.plan, c]));
   return (
     <RevealAnimation delay={0.1}>
       <section className="lg:py-[100px] py-16 md:py-20 bg-background-2 dark:bg-background-5">
@@ -94,7 +107,15 @@ const Pricing = () => {
                 </RevealAnimation>
               </div>
 
-              {pricingPlans.map((plan, index) => (
+              {pricingPlans.map((plan, index) => {
+                const override = byTier.get(TIER_BY_ID[plan.id]);
+                const displayName = override?.name ?? plan.name;
+                const displayPrice = override
+                  ? override.priceMonthlyUsd == null
+                    ? 'Custom'
+                    : `$${override.priceMonthlyUsd}`
+                  : plan.price;
+                return (
                 <div key={plan.id} className="col-span-12 xl:col-span-3 md:col-span-6">
                   <RevealAnimation delay={0.4 + index * 0.1}>
                     <div>
@@ -105,16 +126,16 @@ const Pricing = () => {
                           </div>
                         )}
                         <div>
-                          <p className={cn('text-[1rem] leading-[150%] font-medium mb-3', plan.planType === 'featured' ? 'text-accent/60' : 'text-secondary/60 dark:text-accent/60')}>{plan.name}</p>
-                          <h3 className={cn('text-[1.5rem] leading-[140%] font-normal', plan.planType === 'featured' && 'text-accent')}>{plan.price}</h3>
+                          <p className={cn('text-[1rem] leading-[150%] font-medium mb-3', plan.planType === 'featured' ? 'text-accent/60' : 'text-secondary/60 dark:text-accent/60')}>{displayName}</p>
+                          <h3 className={cn('text-[1.5rem] leading-[140%] font-normal', plan.planType === 'featured' && 'text-accent')}>{displayPrice}</h3>
                           <p className={cn(plan.planType === 'featured' && 'text-accent/60')}>{plan.description}</p>
                         </div>
-                        <a
-                          href="/register"
+                        <PlanCta
+                          tier={TIER_BY_ID[plan.id] ?? ''}
                           className={cn('btn btn-md w-full', plan.planType === 'featured' ? 'btn-primary hover:btn-white border-0' : 'btn-white dark:btn-white-dark hover:btn-primary')}
                         >
                           <span>{plan.buttonText}</span>
-                        </a>
+                        </PlanCta>
                       </div>
                       <div className="rounded-b-[20px] bg-white dark:bg-black">
                         <ul>
@@ -134,7 +155,8 @@ const Pricing = () => {
                     </div>
                   </RevealAnimation>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

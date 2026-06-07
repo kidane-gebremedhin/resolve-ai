@@ -6,8 +6,13 @@ import { useRouter } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import RevealAnimation from '../animation/RevealAnimation';
 import SocialAuth from './SocialAuth';
+import { API_URL as apiUrl } from '@/lib/app-urls';
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api/v1';
+function readCookie(name: string): string | undefined {
+  if (typeof document === 'undefined') return undefined;
+  const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : undefined;
+}
 
 const SignupHero = () => {
   const router = useRouter();
@@ -28,10 +33,19 @@ const SignupHero = () => {
     }
     setPending(true);
     try {
+      // Capture affiliate (?ref=), marketing campaign (?campaign=), and the plan
+      // (?plan=) the visitor picked on the pricing page. ref/campaign fall back to
+      // the attribution cookies set on landing (AttributionCapture), so they
+      // survive navigating pricing → register.
+      const params =
+        typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+      const referralCode = params?.get('ref') ?? readCookie('csb_ref') ?? undefined;
+      const campaignCode = params?.get('campaign') ?? readCookie('csb_campaign') ?? undefined;
+      const plan = params?.get('plan') ?? undefined;
       const res = await fetch(`${apiUrl}/auth/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, email, password, organizationName: name }),
+        body: JSON.stringify({ name, email, password, organizationName: name, referralCode, campaignCode }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -46,7 +60,10 @@ const SignupHero = () => {
         router.push('/login');
         return;
       }
-      router.push('/app');
+      // New accounts have no subscription yet — go straight to checkout (the
+      // /app dashboard is gated until a plan is active). Carry the chosen plan
+      // so checkout opens that plan's Paddle overlay directly.
+      router.push(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : '/checkout');
     } catch {
       setError('Network error. Try again.');
       setPending(false);

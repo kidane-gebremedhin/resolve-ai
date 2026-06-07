@@ -10,6 +10,8 @@ const userSchema = new Schema(
     provider: { type: String, enum: ["credentials", "google"], required: true },
     providerId: { type: String },
     role: { type: String, enum: ["user", "platform_admin"], required: true, default: "user" },
+    // Affiliate referral code — the `?ref=` key in share links. Generated lazily.
+    referralCode: { type: String, unique: true, sparse: true },
     emailVerifiedAt: { type: Date },
     lastLoginAt: { type: Date },
     // 2FA / TOTP. `totpSecret` is the base32 secret used to derive 6-digit

@@ -41,6 +41,41 @@ const platformSettingSchema = new Schema(
       },
       { _id: false },
     ),
+    // Admin-editable plan catalog overrides (display fields only; quota limits
+    // stay code-driven). Empty → code defaults from config/plans.ts.
+    plans: {
+      type: [
+        new Schema(
+          {
+            plan: { type: String, enum: ["free", "starter", "pro", "enterprise"], required: true },
+            name: { type: String },
+            priceMonthlyUsd: { type: Number, default: null },
+            features: { type: [String], default: undefined },
+            priceId: { type: String },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
+    // Affiliate / referral program config.
+    affiliate: new Schema(
+      {
+        enabled: { type: Boolean, default: true },
+        ratePercent: { type: Number, default: 20 },
+        cookieDays: { type: Number, default: 60 },
+      },
+      { _id: false },
+    ),
+    // Global app typography. Keys map to the curated next/font registry in
+    // apps/web/src/app/fonts.ts. Defaults reproduce the current Inter look.
+    theming: new Schema(
+      {
+        fontSans: { type: String, default: "inter" },
+        fontDisplay: { type: String, default: "inter-tight" },
+      },
+      { _id: false },
+    ),
     updatedBy: { type: Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true },

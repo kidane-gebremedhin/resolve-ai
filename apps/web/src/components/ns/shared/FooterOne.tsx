@@ -27,8 +27,9 @@ const FooterOne = () => {
           <div className="col-span-12 xl:col-span-4">
             <RevealAnimation delay={0.3}>
               <div className="max-w-[306px]">
-                <figure>
-                  <img src="/images/shared/dark-logo.svg" alt={`${APP_NAME} Logo`} />
+                <figure className="inline-flex items-center gap-2.5">
+                  <img src="/images/shared/dark-logo.svg" alt="" className="h-9 w-9" />
+                  <figcaption className="font-display text-xl font-semibold tracking-tight text-accent">{APP_NAME}</figcaption>
                 </figure>
                 <p className="text-accent/60 text-[1rem] leading-[150%] mt-4 mb-7 font-normal">
                   Turpis tortor nunc sed amet et faucibus vitae morbi congue sed id mauris.

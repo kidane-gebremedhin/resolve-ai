@@ -2,10 +2,12 @@ import { api, ApiError } from "@/lib/api";
 import { getActiveWebsiteId } from "@/lib/website-scope";
 import {
   AgentEditor,
-  CreateAgentForm,
   type AgentDoc,
   type AgentDefaults,
 } from "@/components/ai/agent-editor";
+import { ConversationSettings } from "@/components/settings/conversation-settings";
+import { ListPreferences } from "@/components/settings/list-preferences";
+import type { Org } from "@/components/settings/tab-inlines";
 
 export const dynamic = "force-dynamic";
 
@@ -28,20 +30,37 @@ function PickWebsite() {
 async function Page() {
   const websiteId = await getActiveWebsiteId();
 
+  // No website selected — show the same empty state as /app/widget (just the
+  // heading + "pick a website" message, no form/subtitle), not an agent form.
+  if (!websiteId) {
+    return (
+      <div className="container-page py-8">
+        <h1 className="font-display text-2xl font-semibold tracking-tight">AI agent</h1>
+        <PickWebsite />
+      </div>
+    );
+  }
+
   let agent: AgentDoc | null = null;
   let defaults: AgentDefaults = FALLBACK_DEFAULTS;
   let loadError: string | null = null;
-  if (websiteId) {
-    try {
-      const [agents, d] = await Promise.all([
-        api.get<AgentDoc[]>(`/agents?websiteId=${websiteId}`),
-        api.get<AgentDefaults>("/agents/defaults"),
-      ]);
-      agent = agents[0] ?? null;
-      defaults = d;
-    } catch (e) {
-      loadError = e instanceof ApiError ? e.message : "Failed to load agent.";
-    }
+  try {
+    const [agents, d] = await Promise.all([
+      api.get<AgentDoc[]>(`/agents?websiteId=${websiteId}`),
+      api.get<AgentDefaults>("/agents/defaults"),
+    ]);
+    agent = agents[0] ?? null;
+    defaults = d;
+  } catch (e) {
+    loadError = e instanceof ApiError ? e.message : "Failed to load agent.";
+  }
+
+  // Org-level conversation behavior (escalation toggle + ask-before-resolve).
+  let org: Org | null = null;
+  try {
+    org = await api.get<Org>("/orgs/current");
+  } catch {
+    org = null;
   }
 
   return (
@@ -59,12 +78,21 @@ async function Page() {
         </div>
       )}
 
-      {!websiteId ? (
-        <PickWebsite />
-      ) : !agent && !loadError ? (
-        <CreateAgentForm websiteId={websiteId} />
-      ) : agent ? (
+      {agent ? (
         <AgentEditor agent={agent} defaults={defaults} />
+      ) : !loadError ? (
+        // Every website auto-provisions its agent (ensureWebsiteAgent); if none
+        // is found it's still being set up — no manual "create agent" form.
+        <div className="mt-6 rounded-xl border border-dashed border-border bg-surface/40 p-8 text-center text-sm text-muted-foreground">
+          Setting up this website&apos;s agent… reload in a moment.
+        </div>
+      ) : null}
+
+      {agent ? (
+        <div className="mt-8 space-y-6">
+          <ConversationSettings org={org} />
+          <ListPreferences org={org} />
+        </div>
       ) : null}
     </div>
   );

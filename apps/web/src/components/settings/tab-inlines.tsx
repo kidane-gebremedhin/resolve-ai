@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Badge, Button, Input, Label, Slider, Textarea } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { WIDGET_URL } from "@/lib/app-urls";
 
 export type Agent = {
   _id: string;
@@ -36,6 +37,16 @@ export type Org = {
   name: string;
   slug: string;
   plan: string;
+  settings?: {
+    conversation?: {
+      allowHumanEscalation?: boolean;
+      requireResolveConfirmation?: boolean;
+    };
+    pagination?: {
+      pageSize?: number;
+    };
+    [key: string]: unknown;
+  };
 };
 
 export type Member = {
@@ -253,7 +264,7 @@ export function AgentInline({ initialAgent }: { initialAgent: Agent | null }) {
 // --------------------------------------------------------------- Widget
 export function WidgetInline() {
   const [copied, setCopied] = useState(false);
-  const snippet = `<script src="${process.env.NEXT_PUBLIC_WIDGET_URL ?? "http://localhost:3001"}/widget.js" async></script>`;
+  const snippet = `<script src="${WIDGET_URL}/widget.js" async></script>`;
 
   async function copy() {
     try {

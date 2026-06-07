@@ -26,6 +26,7 @@ export type EmbedConfig = {
   agentId: string;
   embedUrl: string;
   widgetUrl?: string;
+  apiUrl?: string;
   position?: string;
   primaryColor?: string;
   theme?: string;
@@ -40,15 +41,16 @@ type Props = {
 // is the order attributes appear in every snippet.
 //
 // Only `data-agent` identifies the install — the API derives the organization
-// and website from the agent (one agent maps to one website), so no org/website
-// IDs are needed. The cosmetic attributes mirror the saved Widget Studio config
-// so the launcher renders correctly before the iframe loads.
+// and website from the agent (one agent maps to one website). Appearance
+// (position / primary color / theme) is fetched live by agentId from
+// GET /widget/appearance on load, so it is NOT baked into the snippet: operators
+// can change it in Widget Studio without re-copying or re-deploying the script.
+// `data-api-url` tells the loader where that appearance endpoint lives, so the
+// live fetch works on any host page (it can't be inferred from the widget URL).
 const ATTR_DEFS: { attr: string; ds: string; key: keyof EmbedConfig }[] = [
   { attr: "data-agent", ds: "agent", key: "agentId" },
   { attr: "data-widget-url", ds: "widgetUrl", key: "widgetUrl" },
-  { attr: "data-position", ds: "position", key: "position" },
-  { attr: "data-primary-color", ds: "primaryColor", key: "primaryColor" },
-  { attr: "data-theme", ds: "theme", key: "theme" },
+  { attr: "data-api-url", ds: "apiUrl", key: "apiUrl" },
 ];
 
 function CodeBlock({ code }: { code: string }) {
@@ -190,7 +192,7 @@ ${nextAttrLines}
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Embed URL</div>
           <div className="mt-1 truncate font-mono text-sm">{config.embedUrl}</div>
           <p className="mt-2 text-[11px] text-muted-foreground">
-            Configured via <code className="font-mono">NEXT_PUBLIC_EMBED_URL</code>.
+            Configured via <code className="font-mono">EMBED_BASE_URL</code>.
           </p>
         </div>
       </div>

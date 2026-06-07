@@ -48,7 +48,7 @@ const STYLE_ID = "csb-widget-style";
 const IFRAME_ID = "csb-widget-iframe";
 const LAUNCHER_ID = "csb-widget-launcher";
 
-(function bootstrap(): void {
+(async function bootstrap(): Promise<void> {
   const currentScript = (document.currentScript as HTMLScriptElement | null) ?? null;
   if (!currentScript) {
     console.warn("[csb-widget] could not locate currentScript; skipping inject.");
@@ -56,10 +56,12 @@ const LAUNCHER_ID = "csb-widget-launcher";
   }
 
   const ds = currentScript.dataset;
+  // Widget origin: explicit data-widget-url wins, else the build-time
+  // VITE_WIDGET_URL. No host is hardcoded; if neither is set we abort below.
   const widgetUrl =
     ds.widgetUrl ??
     (typeof import.meta !== "undefined" && import.meta.env?.VITE_WIDGET_URL) ??
-    "http://localhost:3001";
+    "";
   const agentKey = ds.agent ?? ds.agentId ?? "";
   if (!agentKey) {
     console.warn("[csb-widget] missing data-agent / data-agent-id; aborting.");
@@ -78,9 +80,29 @@ const LAUNCHER_ID = "csb-widget-launcher";
     return;
   }
 
-  const position = normalizePosition(ds.position);
-  const primaryColor = ds.primaryColor ?? "";
-  const theme = ds.theme ?? "auto";
+  // Resolve the API origin (distinct from the widget origin): explicit attribute,
+  // then build-time env, then fall back to the widget origin (and warn).
+  const apiUrl =
+    ds.apiUrl ??
+    (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ??
+    "";
+  let apiOrigin: string;
+  try {
+    apiOrigin = apiUrl ? new URL(apiUrl).origin : widgetOrigin;
+    if (!apiUrl) {
+      console.warn("[csb-widget] no data-api-url / VITE_API_URL; using widget origin for appearance.");
+    }
+  } catch {
+    apiOrigin = widgetOrigin;
+  }
+
+  // Fetch saved appearance by agentId so launcher styling reflects the operator's
+  // studio settings WITHOUT re-copying the snippet. data-* attributes still win.
+  const fetched = await fetchAppearance(apiOrigin, agentKey);
+
+  const position = normalizePosition(ds.position ?? fetched?.position);
+  const primaryColor = ds.primaryColor ?? fetched?.primaryColor ?? "";
+  const theme = ds.theme ?? fetched?.theme ?? "auto";
 
   injectStyles(position);
 
@@ -99,6 +121,7 @@ const LAUNCHER_ID = "csb-widget-launcher";
   const iframeSrc = `${widgetUrl}${widgetUrl.includes("?") ? "&" : "?"}${params.toString()}`;
 
   const launcher = createLauncher();
+  if (primaryColor) launcher.style.background = primaryColor;
   document.body.appendChild(launcher);
 
   let iframe: HTMLIFrameElement | null = null;
@@ -203,6 +226,28 @@ function normalizePosition(raw: string | undefined): Position {
   return "bottom-right";
 }
 
+interface Appearance {
+  position?: string;
+  primaryColor?: string;
+  theme?: string;
+}
+
+// Best-effort: never blocks the launcher for long, never throws. A failed fetch
+// just means we fall back to data-* attributes + built-in defaults.
+async function fetchAppearance(apiOrigin: string, agentKey: string): Promise<Appearance | null> {
+  try {
+    const url = `${apiOrigin}/api/v1/widget/appearance?agentId=${encodeURIComponent(agentKey)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(url, { signal: ctrl.signal, credentials: "omit" });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    return (await res.json()) as Appearance;
+  } catch {
+    return null;
+  }
+}
+
 function safeLocationHref(): string {
   try {
     return window.location.href;
@@ -219,22 +264,27 @@ function injectStyles(position: Position): void {
     #${IFRAME_ID} {
       position: fixed;
       ${positionCss(position)}
-      width: 380px;
-      height: 600px;
+      width: 400px;
+      height: min(680px, calc(100dvh - 48px));
       max-width: calc(100vw - 24px);
-      max-height: calc(100vh - 40px);
+      max-height: calc(100dvh - 40px);
       border: 0;
-      border-radius: 16px;
-      box-shadow: 0 12px 32px rgba(0,0,0,0.18);
+      border-radius: 18px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.20);
       z-index: 2147483647;
       background: transparent;
       color-scheme: light dark;
+      animation: csb-pop 160ms cubic-bezier(0.16,1,0.3,1);
+    }
+    @keyframes csb-pop {
+      from { opacity: 0; transform: translateY(8px) scale(0.98); }
+      to   { opacity: 1; transform: translateY(0) scale(1); }
     }
     #${LAUNCHER_ID} {
       position: fixed;
       ${positionCss(position)}
-      width: 56px;
-      height: 56px;
+      width: 60px;
+      height: 60px;
       border-radius: 9999px;
       border: 0;
       cursor: pointer;
@@ -243,11 +293,13 @@ function injectStyles(position: Position): void {
       justify-content: center;
       background: #111827;
       color: #ffffff;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.24);
       z-index: 2147483647;
+      transition: transform 140ms ease, box-shadow 140ms ease;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    #${LAUNCHER_ID}:hover { transform: translateY(-1px); }
+    #${LAUNCHER_ID}:hover { transform: scale(1.06); box-shadow: 0 14px 34px rgba(0,0,0,0.28); }
+    #${LAUNCHER_ID}:active { transform: scale(0.96); }
     @media (max-width: 480px) {
       #${IFRAME_ID} {
         width: calc(100vw - 16px);

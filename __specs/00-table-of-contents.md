@@ -44,6 +44,18 @@ This specification describes the complete implementation plan for a production-r
 | 20 | [20-coolify-deployment.md](./20-coolify-deployment.md) | Coolify Deployment |
 | 21 | [21-mcp-tooling.md](./21-mcp-tooling.md) | MCP Tooling (`.mcp.json`) |
 
+### Post-v1 enhancement specs
+
+| # | File | Section | Backlog item |
+|---|------|---------|--------------|
+| 22 | [22-widget-enhancements.md](./22-widget-enhancements.md) | Widget Enhancements (send icon, appearance-by-agentId, attachment preview + extraction) | #5, #6, #7 |
+| 23 | [23-admin-and-system-preferences.md](./23-admin-and-system-preferences.md) | Admin Panel Completion & Global System Preferences (font) | #1, #2 |
+| 24 | [24-paddle-subscriptions.md](./24-paddle-subscriptions.md) | Paddle.js Subscription System — Completion & Hardening | #4 |
+| 25 | [25-affiliate-system.md](./25-affiliate-system.md) | Affiliate / Referral System (+ Mailer) | #3 |
+| 26 | [26-conversation-controls.md](./26-conversation-controls.md) | Conversation Resolution Consent & Human-Escalation Toggle | #9, #10 |
+| 27 | [27-website-kb-crawl-favicon.md](./27-website-kb-crawl-favicon.md) | Website KB Full-Crawl & Favicon-as-Avatar | #11 |
+| 28 | [28-phone-country-code.md](./28-phone-country-code.md) | Visitor Phone Country-Code from IP | #8 |
+
 ---
 
 ## Key Architectural Decisions (Quick Reference)

@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
+import type { WidgetAttachment } from "../lib/api-client";
 
 // emoji-mart is heavy (~picker UI + data). Load it lazily so it stays out of
 // the widget's initial bundle and only downloads when the user opens it.
@@ -24,6 +25,12 @@ function autoResize(el: HTMLTextAreaElement | null): void {
   el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_HEIGHT)}px`;
 }
 
+type PendingAttachment = {
+  attachment: WidgetAttachment;
+  previewUrl?: string; // local object URL for image thumbnails
+  isImage: boolean;
+};
+
 export function Composer({
   onSend,
   onAttach,
@@ -31,15 +38,18 @@ export function Composer({
   disabled = false,
   placeholder = "Type a message…",
 }: {
-  onSend: (content: string) => Promise<void> | void;
-  /** Optional — when provided the paperclip button is rendered. */
-  onAttach?: (file: File) => Promise<void> | void;
+  onSend: (content: string, attachments?: WidgetAttachment[]) => Promise<void> | void;
+  /** Optional — when provided the paperclip button is rendered. Uploads the file
+   *  and returns its metadata; the composer queues it as a preview until send. */
+  onAttach?: (file: File) => Promise<WidgetAttachment>;
   primaryColor: string;
   disabled?: boolean;
   placeholder?: string;
 }) {
   const [value, setValue] = useState("");
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
   // emoji-mart data is fetched on first open and cached for the session.
   const [emojiData, setEmojiData] = useState<unknown>(null);
@@ -55,20 +65,21 @@ export function Composer({
   }, [showEmoji]);
 
   const busy = disabled || sending;
+  const canSend = (value.trim().length > 0 || pending.length > 0) && !busy && !uploading;
 
   async function handleSubmit() {
     const trimmed = value.trim();
-    if (!trimmed || busy) return;
-    // Optimistically clear so the textarea is empty while the send is in-flight.
-    // If the caller throws we keep the cleared state (caller is expected to
-    // surface its own error UI).
+    if ((!trimmed && pending.length === 0) || busy || uploading) return;
+    const attachments = pending.map((p) => p.attachment);
+    // Optimistically clear so the composer is empty while the send is in-flight.
     setValue("");
     setShowEmoji(false);
-    // Collapse back to a single row now that the field is empty.
+    pending.forEach((p) => p.previewUrl && URL.revokeObjectURL(p.previewUrl));
+    setPending([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
     setSending(true);
     try {
-      await onSend(trimmed);
+      await onSend(trimmed, attachments.length ? attachments : undefined);
     } finally {
       setSending(false);
     }
@@ -86,7 +97,27 @@ export function Composer({
     // Reset so picking the same file twice still fires `change`.
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (!file || !onAttach) return;
-    await onAttach(file);
+    const isImage = file.type.startsWith("image/");
+    const previewUrl = isImage ? URL.createObjectURL(file) : undefined;
+    setUploading(true);
+    try {
+      // Upload now (to get the URL + extracted text) but DON'T send — queue it
+      // as a preview so the visitor can add more or type a message first.
+      const attachment = await onAttach(file);
+      setPending((prev) => [...prev, { attachment, previewUrl, isImage }]);
+    } catch {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function removePending(index: number) {
+    setPending((prev) => {
+      const target = prev[index];
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((_, i) => i !== index);
+    });
   }
 
   async function toggleEmoji() {
@@ -122,7 +153,7 @@ export function Composer({
   }
 
   return (
-    <footer ref={footerRef} className="relative flex items-end gap-2 border-t border-neutral-100 p-3 dark:border-neutral-800">
+    <footer ref={footerRef} className="relative flex flex-col gap-2 border-t border-neutral-100 p-3 dark:border-neutral-800">
       {/* Emoji picker popover + click-away backdrop */}
       {showEmoji ? (
         <>
@@ -148,6 +179,48 @@ export function Composer({
         </>
       ) : null}
 
+      {/* Queued attachment previews — sent (with optional text) on the next send. */}
+      {pending.length > 0 || uploading ? (
+        <div className="flex flex-wrap gap-2">
+          {pending.map((p, i) => (
+            <div
+              key={i}
+              className="relative flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50 p-1 pr-6 dark:border-neutral-700 dark:bg-neutral-800"
+            >
+              {p.isImage && p.previewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.previewUrl} alt={p.attachment.fileName ?? "image"} className="h-10 w-10 rounded object-cover" />
+              ) : (
+                <span className="flex h-10 items-center gap-1.5 px-1.5 text-[11px] text-neutral-700 dark:text-neutral-200">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden className="opacity-70">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  <span className="max-w-[120px] truncate">{p.attachment.fileName ?? "file"}</span>
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => removePending(i)}
+                aria-label="Remove attachment"
+                className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-neutral-900/70 text-white hover:bg-neutral-900"
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden>
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          ))}
+          {uploading ? (
+            <div className="grid h-12 w-12 place-items-center rounded-lg border border-dashed border-neutral-300 dark:border-neutral-600">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-transparent" />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="flex items-end gap-2">
       {onAttach ? (
         <>
           <input
@@ -155,12 +228,12 @@ export function Composer({
             type="file"
             className="hidden"
             onChange={handleFile}
-            disabled={busy}
+            disabled={busy || uploading}
           />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={busy}
+            disabled={busy || uploading}
             aria-label="Attach a file"
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-800"
           >
@@ -204,16 +277,17 @@ export function Composer({
       <button
         type="button"
         onClick={() => void handleSubmit()}
-        disabled={busy || value.trim().length === 0}
+        disabled={!canSend}
         aria-label="Send message"
-        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white transition disabled:opacity-50"
+        className="group inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-all duration-150 hover:brightness-95 hover:shadow active:scale-95 disabled:opacity-45 disabled:shadow-none disabled:hover:brightness-100"
         style={{ background: primaryColor }}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <line x1="22" y1="2" x2="11" y2="13" />
-          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        {/* Filled paper-plane — modern, well-filled send glyph. */}
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden className="translate-x-px">
+          <path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z" />
         </svg>
       </button>
+      </div>
     </footer>
   );
 }

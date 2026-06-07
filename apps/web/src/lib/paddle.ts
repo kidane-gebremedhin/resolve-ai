@@ -14,6 +14,11 @@ type PaddleInstance = any;
 let paddleInstance: PaddleInstance | undefined;
 let paddleInitPromise: Promise<PaddleInstance | undefined> | undefined;
 
+// The active checkout's completion handler. Set by openCheckout, invoked by the
+// global Paddle eventCallback when `checkout.completed` fires.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let onCheckoutCompleted: ((data: any) => void) | null = null;
+
 export function isPaddleConfigured(): boolean {
   return Boolean(process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN);
 }
@@ -34,6 +39,11 @@ export async function getPaddle(): Promise<PaddleInstance | undefined> {
         environment:
           (process.env.NEXT_PUBLIC_PADDLE_ENV as "sandbox" | "production" | undefined) ?? "sandbox",
         token: process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN as string,
+        eventCallback: (event: { name?: string; data?: unknown }) => {
+          if (event?.name === "checkout.completed" && onCheckoutCompleted) {
+            onCheckoutCompleted(event.data);
+          }
+        },
       }).then((p) => {
         paddleInstance = p;
         return p;
@@ -47,6 +57,12 @@ export type OpenCheckoutArgs = {
   priceId: string;
   customData: { organizationId: string } & Record<string, unknown>;
   successUrl?: string;
+  /** Pre-fills the email field in the Paddle overlay (the logged-in user). */
+  customerEmail?: string;
+  /** Invoked when Paddle reports `checkout.completed`. Receives the event data
+   *  (includes `transaction_id`) so the caller can activate + redirect. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onCompleted?: (data: any) => void;
 };
 
 /**
@@ -60,9 +76,11 @@ export async function openCheckout(args: OpenCheckoutArgs): Promise<void> {
       "Paddle is not configured. Set NEXT_PUBLIC_PADDLE_CLIENT_TOKEN to enable checkout.",
     );
   }
+  onCheckoutCompleted = args.onCompleted ?? null;
   paddle.Checkout.open({
     items: [{ priceId: args.priceId, quantity: 1 }],
     customData: args.customData,
+    customer: args.customerEmail ? { email: args.customerEmail } : undefined,
     settings: args.successUrl ? { successUrl: args.successUrl } : undefined,
   });
 }

@@ -24,8 +24,8 @@ export function SectionsScreen({
   onStartNew: () => void;
   busy: boolean;
 }) {
-  const title = settings?.title ?? "Welcome back";
-  const subtitle = settings?.subtitle ?? "Pick a topic or start a new conversation.";
+  const title = "Welcome back";
+  const subtitle = "Pick a topic or start a new conversation.";
 
   return (
     <div className="flex h-full w-full flex-col bg-white dark:bg-neutral-900">

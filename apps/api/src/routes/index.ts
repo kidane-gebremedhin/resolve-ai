@@ -15,8 +15,13 @@ import billing from "./billing.routes.js";
 import tts from "./tts.routes.js";
 import apiKeys from "./api-keys.routes.js";
 import audit from "./audit.routes.js";
+import publicRoutes from "./public.routes.js";
+import referrals from "./referral.routes.js";
 
 const router = Router();
+
+router.use("/public", publicRoutes);
+router.use("/referrals", referrals);
 
 router.use("/auth", auth);
 router.use("/orgs", org);

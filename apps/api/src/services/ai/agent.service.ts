@@ -9,7 +9,8 @@ import {
 } from "../../models/index.js";
 import { env } from "../../config/env.js";
 import { buildSystemPrompt } from "./prompts.js";
-import { AGENT_TOOLS, FINAL_REPLY_SCHEMA, type ToolCall } from "./tools.js";
+import { AGENT_TOOLS, buildAgentTools, FINAL_REPLY_SCHEMA, type ToolCall } from "./tools.js";
+import type { ConversationControls } from "./prompts.js";
 import { searchKb } from "../kb/search.service.js";
 import { logger } from "../../config/logger.js";
 
@@ -69,6 +70,7 @@ async function callLlm(args: {
   requireJson: boolean;
   model: string;
   temperature: number;
+  tools?: unknown[];
 }): Promise<LlmChoice> {
   if (!process.env.OPENROUTER_API_KEY) {
     return {
@@ -91,7 +93,7 @@ async function callLlm(args: {
     temperature: args.temperature,
   };
   if (args.toolMode === "auto") {
-    body.tools = AGENT_TOOLS;
+    body.tools = args.tools ?? AGENT_TOOLS;
     body.tool_choice = "auto";
   }
   if (args.requireJson) {
@@ -223,6 +225,42 @@ function parseFinalReply(content: string | null | undefined): {
   }
 }
 
+// Append extracted attachment text to a customer turn so the model can answer
+// from the file contents (PDFs, docs, sheets). Images carry no extracted text.
+function withAttachmentText(
+  content: string,
+  attachments?: { fileName?: string | null; extractedText?: string | null }[] | null,
+): string {
+  if (!attachments || attachments.length === 0) return content;
+  const blocks = attachments
+    .filter((a) => a.extractedText && a.extractedText.trim().length > 0)
+    .map((a) => `\n\n[Attachment: ${a.fileName ?? "file"}]\n${a.extractedText}`);
+  return blocks.length ? content + blocks.join("") : content;
+}
+
+// Org-level conversation controls (escalation toggle, ask-before-resolve) live
+// in the freeform Organization.settings.conversation block. Defaults preserve
+// today's behavior (escalation allowed, confirm-before-resolve on).
+function readConversationControls(org: { settings?: unknown } | null): ConversationControls {
+  const c =
+    (org?.settings && typeof org.settings === "object"
+      ? (org.settings as Record<string, unknown>).conversation
+      : undefined) as Record<string, unknown> | undefined;
+  return {
+    allowHumanEscalation: c?.allowHumanEscalation !== false,
+    requireResolveConfirmation: c?.requireResolveConfirmation !== false,
+  };
+}
+
+// Lightweight affirmation check used to gate AI-driven resolution when
+// ask-before-resolve is on: the resolve only goes through if the customer's
+// latest message reads as a confirmation.
+const AFFIRMATION_RE =
+  /\b(yes|yep|yeah|yup|sure|ok|okay|correct|confirmed?|please do|go ahead|that('s| is)? (right|correct)|(it|that) (worked|works|helped|fixed|solved)|all good|sounds good|perfect|great|thanks|thank you|done)\b/i;
+function isAffirmation(text: string): boolean {
+  return AFFIRMATION_RE.test(text.trim());
+}
+
 export async function generateAiReply(
   conversation: ConvoDoc,
   customerMessage: string,
@@ -243,6 +281,11 @@ export async function generateAiReply(
     action: "escalate",
   };
   const toolCallLog: { name: string; args: unknown; result: unknown }[] = [];
+  // Default controls (used if the try below throws before org is loaded).
+  let controls: ConversationControls = {
+    allowHumanEscalation: true,
+    requireResolveConfirmation: true,
+  };
 
   try {
     const agent = await Agent.findById(conversation.agentId);
@@ -254,10 +297,14 @@ export async function generateAiReply(
       .limit(20)
       .lean();
 
+    controls = readConversationControls(organization);
+    const agentTools = buildAgentTools({ allowEscalation: controls.allowHumanEscalation });
+
     const systemPrompt = buildSystemPrompt({
       agent,
       organization,
       conversation,
+      controls,
     });
 
     const messages: ChatMessage[] = [
@@ -265,7 +312,7 @@ export async function generateAiReply(
       ...history.map<ChatMessage>((m) =>
         m.role === "ai"
           ? { role: "assistant", content: m.content }
-          : { role: "user", content: m.content },
+          : { role: "user", content: withAttachmentText(m.content, m.attachments) },
       ),
       { role: "user", content: customerMessage },
     ];
@@ -287,6 +334,7 @@ export async function generateAiReply(
           requireJson: false,
           model,
           temperature,
+          tools: agentTools,
         });
       } catch (err) {
         logger.error("[ai] tool-loop LLM call failed, proceeding to final", {
@@ -381,13 +429,46 @@ export async function generateAiReply(
     // `reply` keeps the safe fallback initialized above.
   }
 
-  const action = reply.action;
+  // Enforce org conversation controls (defense-in-depth beyond the prompt + tool
+  // gating). Escalation: never hand off when disabled. Resolution: a strict
+  // TWO-STEP confirmation when ask-before-resolve is on — the AI must first ask
+  // ("shall I close this?") and only resolve after the visitor affirmatively
+  // replies on the NEXT turn. This stops it auto-resolving on pleasantries.
+  let action = reply.action;
+  let replyText = reply.reply;
+  if (action === "escalate" && !controls.allowHumanEscalation) {
+    action = "reply";
+  }
+
+  const wasPendingResolve = Boolean(conversation.pendingResolveConfirmation);
+  let nextPendingResolve = wasPendingResolve;
+  if (controls.requireResolveConfirmation) {
+    if (action === "resolve") {
+      if (wasPendingResolve && isAffirmation(customerMessage)) {
+        // Visitor confirmed on the turn after we asked → resolve for real.
+        nextPendingResolve = false;
+      } else {
+        // First resolve attempt (or not-yet-confirmed): ask instead of resolving.
+        action = "reply";
+        nextPendingResolve = true;
+        if (!replyText.includes("?")) {
+          replyText =
+            replyText.replace(/[.!\s]+$/, "") + " — shall I close this conversation now?";
+        }
+      }
+    } else {
+      // Conversation moved on without resolving — drop any pending confirmation.
+      nextPendingResolve = false;
+    }
+  }
+  conversation.pendingResolveConfirmation = nextPendingResolve;
+
   const aiMessage = await Message.create({
     conversationId: conversation._id,
     organizationId: conversation.organizationId,
     role: "ai",
     senderType: "ai",
-    content: reply.reply,
+    content: replyText,
     confidence: reply.confidence,
     toolCalls: toolCallLog.length > 0 ? toolCallLog : undefined,
   });
@@ -404,7 +485,7 @@ export async function generateAiReply(
     conversationChanged = true;
   }
   conversation.lastMessageAt = aiMessage.createdAt as Date;
-  conversation.lastMessagePreview = reply.reply.slice(0, 140);
+  conversation.lastMessagePreview = replyText.slice(0, 140);
   conversation.messageCount = (conversation.messageCount ?? 0) + 1;
   await conversation.save();
 

@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { Organization, User, Membership } from "../models/index.js";
 import { signAccessToken, signRefreshToken } from "../utils/jwt.js";
 import { ConflictError, UnauthorizedError } from "../utils/errors.js";
+import { bindReferralOnSignup } from "./affiliate.service.js";
 
 const BCRYPT_COST = 12;
 
@@ -20,6 +21,8 @@ export async function registerUser(input: {
   password: string;
   name: string;
   organizationName: string;
+  referralCode?: string;
+  campaignCode?: string;
 }) {
   const existing = await User.findOne({ email: input.email });
   if (existing) throw new ConflictError("Email already in use.");
@@ -46,6 +49,7 @@ export async function registerUser(input: {
     name: input.organizationName,
     slug,
     plan: "free",
+    campaignCode: input.campaignCode?.toLowerCase().trim() || undefined,
   });
 
   await Membership.create({
@@ -54,6 +58,13 @@ export async function registerUser(input: {
     role: "owner",
     status: "active",
     acceptedAt: new Date(),
+  });
+
+  // Best-effort referral attribution (never blocks signup).
+  await bindReferralOnSignup({
+    code: input.referralCode,
+    organizationId: org._id,
+    referredUserId: user._id,
   });
 
   return issueTokens(user, org._id.toString(), "owner");

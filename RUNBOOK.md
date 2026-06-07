@@ -2,6 +2,37 @@
 
 Step-by-step instructions for setting up, running, and operating the Customer Service Chatbot monorepo (4 apps + shared packages, orchestrated by Turborepo + pnpm, with Docker-backed infrastructure).
 
+## 0. Apps
+
+| App | Path | Tech | Dev port | Responsibility |
+|---|---|---|---|---|
+| **API** | [`apps/api`](apps/api) | Express + TS + Mongoose + Socket.io | `4000` | All data access, auth (JWT), the AI agent + tools, KB ingestion (Firecrawl/Pinecone), widget endpoints, billing + webhooks, admin. Serves `/api/v1/*`, `/health`, Socket.io. |
+| **Web** | [`apps/web`](apps/web) | Next.js 16 (App Router) | `3000` | Three surfaces in one app via route groups: `(marketing)` public site, `(dashboard)/app` operator dashboard, `(admin)/admin` platform admin. NextAuth (Google + credentials). |
+| **Widget** | [`apps/widget`](apps/widget) | Next.js 16 | `3001` | The customer chat UI rendered inside the embed iframe (state machine, Socket.io, pre-chat/contact capture, attachments). |
+| **Embed** | [`apps/embed`](apps/embed) | Vite (vanilla TS) | `3002` | `widget.js` loader: reads `data-*`, fetches appearance by `agentId`, injects the widget iframe + postMessage bridge. Library build → only `dist/widget.js`. |
+| **Admin** | [`apps/admin`](apps/admin) | Next.js 16 | `3003` | Standalone **platform-admin portal** (dashboard, organizations, agents, users, subscriptions, analytics, marketing campaigns, system preferences). Same design as `/app`; talks to the same API. Gated to `platform_admin`. |
+
+**Data stores:** MongoDB (`customer-support` db) · Pinecone (`customer-support-chatbot` index — KB vectors) · local disk or MinIO (uploads) · optional Redis (socket scaling).
+
+**Per-environment URLs:** no host is hardcoded in source — every URL comes from env. Local values live in `.env`/`.env.local`; deployed environments copy [`.env.development.example`](.env.development.example) / [`.env.staging.example`](.env.staging.example) / [`.env.production.example`](.env.production.example). `NEXT_PUBLIC_*`/`VITE_*` are inlined at **build** time (rebuild web/widget/embed after changing them); API vars are runtime.
+
+**Access model:** new signups are sent to `/checkout`; the `/app` dashboard is hard-gated until a Paddle subscription is `active` (`GET /billing/subscription` → `active`). Platform admin = `User.role === "platform_admin"`. Plans are admin-editable (System Preferences → Plans, served by `GET /billing/plans`).
+
+### Accessing the admin portal
+
+The platform-admin portal is the standalone **`apps/admin`** app (dev: **http://localhost:3003**, prod: the `admin.<host>` you configure). It's gated to users whose `User.role` is `platform_admin`; everyone else gets a 404.
+
+1. **Run it:** included in `pnpm dev`, or `pnpm --filter @csb/admin dev` (port 3003). It needs the API (`apps/api`) running.
+2. **Grant yourself admin** — the DB ships with no admins, so promote a registered user once via Mongo:
+   ```bash
+   mongosh "$MONGODB_URI" --eval 'db.users.updateOne({ email: "you@example.com" }, { $set: { role: "platform_admin" } })'
+   ```
+   (Register the account first through the normal web signup, or `POST /api/v1/auth/register`.)
+3. **Sign in** at http://localhost:3003/login with that account (credentials or Google). You land on the admin dashboard.
+4. **Sections:** Dashboard · Analytics · Organizations · Agents · Users · Subscriptions · **Campaigns** (create marketing campaigns; share signup links with `?campaign=<code>` and track attributed signups + paid conversions) · **System Preferences** (global app font, plans, SMTP, security, limits, affiliate program).
+
+> The admin portal calls the same `/admin/*` API endpoints (all `requireAuth + requirePlatformAdmin`). The legacy in-`apps/web` `/admin` routes still exist; the standalone app is the primary admin surface.
+
 ## 1. Prerequisites
 
 Install the following on your machine before you begin:
@@ -123,6 +154,7 @@ API calls fail CORS.
       src="http://localhost:3002/widget.js"
       data-agent="YOUR_AGENT_ID"
       data-widget-url="http://localhost:3001"
+      data-api-url="http://localhost:4000"
     ></script>
   </body>
 </html>
@@ -141,9 +173,11 @@ Requirements:
   `@csb/api` :4000), plus `pnpm dev:infra`.
 - A **real `data-agent`** copied from `/app/developers`. The database ships empty,
   so register an account and create a website + agent first (see §5). The generated
-  snippet also bakes in the saved Widget Studio cosmetics
-  (`data-position` / `data-primary-color` / `data-theme`); only `data-agent` and
-  `data-widget-url` are required — the org and website are derived from the agent.
+  snippet emits `data-agent`, `data-widget-url`, and `data-api-url` only — the org
+  and website are derived from the agent, and cosmetics (position/colour/theme) are
+  fetched live from `GET /widget/appearance` so Studio changes apply without
+  re-copying the snippet. `data-api-url` is what lets that live fetch reach the API
+  from the host page (the public widget endpoints accept any origin via CORS).
 
 ## 8. Verify the install
 
@@ -177,7 +211,174 @@ pnpm --filter @csb/embed preview   # serves dist/widget.js on http://localhost:3
 > (`http://localhost:3002/widget.js`) or via a `<script>` tag on a host page.
 > It uses `preview`, not `start`.
 
-## 10. Common operations
+### 9.1 Full containerized stack (`docker-compose.full.yml`)
+
+To verify the **built Docker images** end-to-end locally (the same images Coolify
+runs) before deploying:
+
+```bash
+pnpm dev:full     # docker compose -f docker-compose.full.yml up --build
+```
+
+This builds + runs everything in containers: `mongo`, `redis`, `mailhog` + **api**
+:4000, **web** :3000, **widget** :3001, **admin** :3003, **embed** :3002.
+
+Prerequisites and gotchas:
+
+- **Stop any `pnpm dev` / `pnpm dev:infra` first** — they hold the same ports
+  (`pkill -f "turbo dev"`, and `pnpm dev:infra:stop`).
+- The app containers use the **root `.env`** (`env_file: ['.env']`), not
+  `apps/api/.env`. Point infra at the compose service names:
+  `MONGODB_URI=mongodb://<appuser>:<pass>@mongo:27017/customer-support?authSource=customer-support`,
+  Redis host `redis`, `SMTP_HOST=mailhog`. Also set `NEXTAUTH_URL=http://localhost:3000`
+  and include the three localhost origins in `CORS_ORIGINS`.
+- **Everything is read from `.env` — no hidden defaults.** The compose
+  interpolates every `NEXT_PUBLIC_*` (and `API_INTERNAL_URL`) from `.env` using
+  `${VAR:?…}`, so a missing required value **fails fast** with a clear error
+  (e.g. `required variable NEXT_PUBLIC_API_URL is missing a value`) instead of
+  silently building the wrong thing. `.env.example` ships working localhost
+  values, so `cp .env.example .env` (then fill secrets) is enough.
+- **The browser/server URL split is handled for you.** `NEXT_PUBLIC_*` are
+  **build-time** (inlined into the browser bundle), so they're passed as
+  `build.args` — set them to URLs the host browser can reach (`localhost:*`).
+  `.env` is `.dockerignore`'d, so a runtime `environment:` value can't re-bake
+  them; the build args are the source of truth. Server-side fetches inside the
+  web/admin containers use the **runtime** `API_INTERNAL_URL`
+  (`http://api:4000/api/v1`) over the compose network. (`API_INTERNAL_URL` falls
+  back to the public URL in app code when unset, so `pnpm dev` and proxy-based
+  deploys are unaffected — it's only *required by the compose*.)
+- **Paddle checkout** is optional: set `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` (your
+  sandbox client-side token) in `.env` and rebuild web
+  (`up --build web`) to enable the overlay; otherwise checkout shows
+  "not configured".
+- After it's up, sync indexes once:
+  `docker compose -f docker-compose.full.yml exec api pnpm db:migrate`.
+- **Google sign-in 500 (`POST /auth/google → internal_error`) = the mongo app
+  user is missing.** [`scripts/mongo-init.js`](scripts/mongo-init.js) creates the
+  `csb` user **only on a fresh/empty mongo volume**. If the volume predates the
+  script (or used different creds), the API can't authenticate to mongo and the
+  first write (first-time Google sign-in creating User+Org+Membership) 500s.
+  Fix: recreate the volume — `docker compose -f docker-compose.full.yml down -v`
+  then `up`. Verify: `docker exec csb-mongo mongosh
+  "mongodb://csb:csb-dev@localhost:27017/customer-support?authSource=customer-support"
+  --quiet --eval 'db.runCommand({ping:1})'` should print `{ ok: 1 }`.
+
+Open http://localhost:3000 (dashboard) · :3003 (admin) · MailHog :8025. Rebuild a
+single app after a code change with
+`docker compose -f docker-compose.full.yml up --build admin`.
+
+> This is a single-host topology for local verification; it is **Docker-bridge**
+> networking, distinct from Coolify's reverse-proxy networking (§10) — but it
+> exercises the same Dockerfiles, build args, and standalone runtime, so a green
+> `pnpm dev:full` is a strong pre-deploy signal.
+
+## 10. Production deployment (Coolify)
+
+[Coolify](https://coolify.io) is a self-hosted PaaS that builds from your Git
+repo (Nixpacks or a Dockerfile) and runs the result behind a managed Traefik
+reverse proxy with automatic Let's Encrypt TLS. This stack ships a Dockerfile
+per app plus [`docker-compose.full.yml`](docker-compose.full.yml), so it maps
+onto Coolify cleanly.
+
+### 10.1 Services & ports
+
+| Service | App | Dockerfile | Container port | Suggested domain |
+|---------|-----|------------|----------------|------------------|
+| API | `@csb/api` | [`apps/api/Dockerfile`](apps/api/Dockerfile) | `4000` | `api.example.com` |
+| Web (dashboard + public) | `@csb/web` | [`apps/web/Dockerfile`](apps/web/Dockerfile) | `3000` | `app.example.com` |
+| Admin portal | `@csb/admin` | [`apps/admin/Dockerfile`](apps/admin/Dockerfile) | `3003` | `admin.example.com` |
+| Widget | `@csb/widget` | [`apps/widget/Dockerfile`](apps/widget/Dockerfile) | `3001` | `widget.example.com` |
+| Embed (`widget.js`) | `@csb/embed` | [`apps/embed/Dockerfile`](apps/embed/Dockerfile) | `80` | `embed.example.com` |
+| MongoDB | — | Coolify one-click (or Atlas) | `27017` | internal |
+| Redis | — | Coolify one-click | `6379` | internal |
+
+### 10.2 Prerequisites
+
+- A server (VPS) with Coolify installed — see the [Coolify install docs](https://coolify.io/docs/installation).
+- DNS records for each subdomain above pointing at the server's IP.
+- The same external service credentials used locally (Google OAuth, OpenRouter,
+  Pinecone, Firecrawl, Paddle, SMTP) — see [§3](#3-configure-environment-variables).
+
+### 10.3 Choose a deployment style
+
+**Option A — one Docker Compose resource (fastest).** In Coolify, create a new
+resource → **Docker Compose**, point it at this repo, and use
+`docker-compose.full.yml`. Coolify builds every service (api, web, admin,
+widget, embed) and provisions Mongo + Redis from the `docker-compose.yml`
+service definitions. Best for a single-server "everything together" deployment.
+
+**Option B — one resource per app.** Create a
+separate **Dockerfile** resource per app (api, web, admin, widget, embed) from
+the same repo, each pointed at its `apps/<app>/Dockerfile`. This lets each app
+scale, redeploy, and get its own domain independently. Add Coolify's one-click
+**MongoDB** and **Redis** databases (or use MongoDB Atlas) and wire their
+connection strings into the API's env.
+
+### 10.4 Environment variables
+
+Copy your production values into each resource's **Environment Variables** tab
+(Coolify has a bulk "paste .env" import). Start from
+[`.env.example`](.env.example) and set production values, in particular:
+
+- `NODE_ENV=production`
+- `MONGODB_URI`, `REDIS_*` — point at the Coolify-managed DBs (use the internal
+  service hostnames, e.g. `mongodb://…@mongo:27017`) or Atlas.
+- `JWT_SECRET`, `NEXTAUTH_SECRET` — fresh `openssl rand -base64 32` values.
+- `API_BASE_URL=https://api.example.com`, `NEXTAUTH_URL=https://app.example.com`.
+- `CORS_ORIGINS` — comma-separated list of every front-end origin
+  (`https://app.example.com,https://admin.example.com,https://widget.example.com`,
+  plus any customer site that embeds the widget).
+- `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` — and add the production
+  `https://app.example.com/api/auth/callback/google` redirect URI in Google
+  Cloud Console.
+
+> ⚠️ **`NEXT_PUBLIC_*` vars are baked in at build time.** The web, admin, and
+> widget images read `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SOCKET_URL`,
+> `NEXT_PUBLIC_WIDGET_URL`, `NEXT_PUBLIC_EMBED_URL`, `NEXT_PUBLIC_APP_URL`, and
+> `NEXT_PUBLIC_PADDLE_*` during `next build`, so they must be set as **Build
+> Variables** (not just runtime) before deploying, and a change to any of them
+> requires a rebuild. Set these to the public HTTPS domains (e.g.
+> `NEXT_PUBLIC_API_URL=https://api.example.com/api/v1`,
+> `NEXT_PUBLIC_SOCKET_URL=https://api.example.com`). The Dockerfiles accept these
+> as **build args** (`ARG NEXT_PUBLIC_*` → baked before `next build`); Coolify's
+> Build Variables are passed through automatically.
+>
+> `API_INTERNAL_URL` is **optional** in Coolify: leave it unset and server-side
+> fetches use the public URL (which resolves through the proxy). Set it only if
+> you want web/admin server components to reach the API over a private/internal
+> hostname instead.
+
+### 10.5 Domains, TLS & WebSockets
+
+- Assign each resource its domain in Coolify's **Domains** field; Coolify's
+  Traefik proxy terminates TLS and issues Let's Encrypt certificates
+  automatically. Set the proxy port to each service's container port from the
+  table in [§10.1](#101-services--ports).
+- The API serves Socket.IO; Coolify's proxy forwards WebSocket upgrades by
+  default, so `NEXT_PUBLIC_SOCKET_URL` can use the `https://` API domain.
+
+### 10.6 First deploy & migrations
+
+1. Deploy the **API** resource first (front-ends depend on it).
+2. Run the index sync once against the production DB. Either open a terminal on
+   the API container in Coolify and run `pnpm db:migrate`, or run it as a
+   one-off command/pre-deploy hook:
+   ```bash
+   pnpm --filter @csb/api db:migrate
+   ```
+3. Deploy **web**, **admin**, **widget**, and **embed**.
+4. The database starts empty — create the first account via the dashboard
+   sign-up flow, then promote a user to platform admin (see
+   [§0 “Accessing the admin portal”](#accessing-the-admin-portal)).
+
+### 10.7 Health checks
+
+Each app Dockerfile defines a `HEALTHCHECK` (API → `/api/health`, web →
+`/api/health`, admin → `/login`), so Coolify shows per-container health and will
+restart unhealthy containers (`restart: unless-stopped`). Verify a deploy with
+`curl https://api.example.com/api/health`.
+
+## 11. Common operations
 
 | Task | Command |
 |------|---------|
@@ -186,8 +387,9 @@ pnpm --filter @csb/embed preview   # serves dist/widget.js on http://localhost:3
 | Tail API logs (Docker) | `docker compose logs -f api` |
 | Open Mongo shell | `docker exec -it csb-mongo mongosh -u admin -p password` |
 | Reset everything (empty DB) | `pnpm dev:infra:reset && pnpm db:migrate` |
+| Scrub website names off old agents | `pnpm --filter @csb/api agents:clean-names` (add `-- --apply` to write) |
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 - **`pnpm install` fails on lifecycle scripts** — run `pnpm approve-builds` to whitelist native deps, then retry.
 - **API can't reach Mongo** — confirm `pnpm dev:infra` is up and `MONGODB_URI` in `.env` points to `localhost:27017` (or `mongo:27017` inside the full stack).
@@ -197,7 +399,7 @@ pnpm --filter @csb/embed preview   # serves dist/widget.js on http://localhost:3
 - **Embed test page shows the error screen** — the `data-agent` is stale or missing. Copy a fresh snippet from `/app/developers` (the DB ships empty, so create an agent first), and serve the HTML over HTTP, not `file://` (see §7).
 - **Phase-specific failures** — consult the matching plan in [`__plans/`](__plans/) and the procedure in [`__skills/`](__skills/).
 
-## 11. Where to go next
+## 13. Where to go next
 
 - Architecture & rationale: [`__specs/00-table-of-contents.md`](__specs/00-table-of-contents.md)
 - Phased implementation plan: [`__plans/00-overview.md`](__plans/00-overview.md)

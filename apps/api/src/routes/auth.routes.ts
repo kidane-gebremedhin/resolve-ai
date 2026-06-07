@@ -23,6 +23,8 @@ const registerSchema = z.object({
   password: z.string().min(8).max(200),
   name: z.string().min(1).max(120),
   organizationName: z.string().min(1).max(120),
+  referralCode: z.string().min(1).max(64).optional(),
+  campaignCode: z.string().min(1).max(64).optional(),
 });
 
 const loginSchema = z.object({

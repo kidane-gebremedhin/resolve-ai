@@ -41,18 +41,21 @@ const TOOL_INSTRUCTIONS = `Tool use:
 - resolve_conversation: call only when the customer confirms their issue is fixed.
 - After calling tools, produce a JSON object matching the agent_reply schema with your final user-facing message, your honest confidence (0.0-1.0), and the action.`;
 
-function orgLayer(org: HydratedDocument<OrganizationDocType> | null): string {
-  if (!org) return "";
-  return `Organization context:
-- Name: ${org.name}
-- Plan: ${org.plan ?? "starter"}`;
+// Deliberately does NOT expose the organization / company / website name. The
+// assistant's identity is the AGENT (see agentLayer) — leaking the org name here
+// makes the model answer "who are you?" with the company name, which the
+// operator's configured Agent Name is meant to replace.
+function orgLayer(_org: HydratedDocument<OrganizationDocType> | null): string {
+  return "";
 }
 
 function agentLayer(agent: HydratedDocument<AgentDocType>): string {
+  const name = agent.name?.trim() || "Assistant";
   const persona = [
-    `Agent persona:`,
-    `- Name: ${agent.name ?? "Assistant"}`,
-    agent.description ? `- Description: ${agent.description}` : null,
+    `Your identity:`,
+    `- You are "${name}". That is the only name you go by.`,
+    `- When the customer asks who you are, your name, or who they're talking to, answer as "${name}". NEVER identify yourself by the organization's, company's, business's, or website's name — do not reveal that name as your identity even if it appears in the knowledge base.`,
+    agent.description ? `- About you: ${agent.description}` : null,
     agent.welcomeMessage ? `- Default greeting: ${agent.welcomeMessage}` : null,
   ]
     .filter(Boolean)
@@ -69,10 +72,35 @@ function conversationLayer(conversation: HydratedDocument<ConversationDocType>):
   return bits.join("\n");
 }
 
+export type ConversationControls = {
+  allowHumanEscalation: boolean;
+  requireResolveConfirmation: boolean;
+};
+
+// Per-org behavior overrides (escalation toggle, ask-before-resolve). These are
+// placed AFTER the base policy so they win on conflict, and paired with tool
+// gating (escalate_conversation removed when disabled) for hard enforcement.
+function controlsLayer(controls: ConversationControls | undefined): string {
+  if (!controls) return "";
+  const lines: string[] = [];
+  if (!controls.allowHumanEscalation) {
+    lines.push(
+      `Human handoff is DISABLED for this organization. Do NOT offer to connect the customer with a human, and never set action = "escalate". If you genuinely cannot help, apologize, suggest rephrasing, and keep action = "reply".`,
+    );
+  }
+  if (controls.requireResolveConfirmation) {
+    lines.push(
+      `Before resolving you MUST first ask the customer to confirm their issue is fully resolved (e.g. "Did that solve it — shall I close this conversation?"). Only set action = "resolve" AFTER the customer replies affirmatively. Never resolve unilaterally.`,
+    );
+  }
+  return lines.length ? `Conversation policy overrides (highest priority):\n- ${lines.join("\n- ")}` : "";
+}
+
 export function buildSystemPrompt(args: {
   agent: HydratedDocument<AgentDocType>;
   organization: HydratedDocument<OrganizationDocType> | null;
   conversation: HydratedDocument<ConversationDocType>;
+  controls?: ConversationControls;
 }): string {
   return [
     BASE,
@@ -80,6 +108,7 @@ export function buildSystemPrompt(args: {
     agentLayer(args.agent),
     conversationLayer(args.conversation),
     TOOL_INSTRUCTIONS,
+    controlsLayer(args.controls),
     SAFETY,
   ]
     .filter(Boolean)

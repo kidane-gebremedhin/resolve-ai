@@ -14,7 +14,7 @@ process.env.JWT_SECRET ??= "test-secret-32-chars-long-xxxxxx";
 process.env.JWT_ACCESS_EXPIRY ??= "15m";
 process.env.JWT_REFRESH_EXPIRY ??= "7d";
 process.env.SESSION_TOKEN_EXPIRY_HOURS ??= "1"; // 1 hour — we assert TTL is in the future + < 2h
-process.env.AI_CONFIDENCE_THRESHOLD ??= "0.6";
+process.env.AI_CONFIDENCE_THRESHOLD ??= "0.7";
 // Tests can't reach OpenRouter, but the env loader requires these knobs
 // regardless of whether the LLM is actually called.
 process.env.AI_MODEL ??= "openai/gpt-4o-mini";
@@ -24,6 +24,7 @@ process.env.AI_SUGGESTIONS_TEMPERATURE ??= "0.4";
 process.env.AI_KB_SEARCH_TOP_K ??= "8";
 process.env.AI_KB_SEARCH_MIN_SCORE ??= "0.2";
 process.env.CORS_ORIGINS ??= "http://localhost:3000";
+process.env.API_BASE_URL ??= "http://localhost:4000";
 
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";

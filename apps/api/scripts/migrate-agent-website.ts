@@ -45,7 +45,7 @@ async function main() {
   for (const s of websites) {
     const has = await Agent.findOne({ websiteId: s._id });
     if (!has) {
-      await ensureWebsiteAgent(s.organizationId.toString(), s._id.toString(), `${s.name} agent`);
+      await ensureWebsiteAgent(s.organizationId.toString(), s._id.toString());
       created++;
       // eslint-disable-next-line no-console
       console.log(`[migrate-agent] created agent for website ${s.domain}`);

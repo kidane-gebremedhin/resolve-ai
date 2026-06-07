@@ -3,13 +3,15 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { LayoutDashboard, Users, CreditCard, Settings, Menu, BarChart3, Receipt } from 'lucide-react';
+import { LayoutDashboard, Users, CreditCard, Settings, Menu, BarChart3, Receipt, Building2, Bot } from 'lucide-react';
 import { Logo } from '@/components/site/Logo';
 import { ThemeToggle } from '@/components/theme-toggle';
 
 type AdminNav = {
   href:
     | '/admin'
+    | '/admin/organizations'
+    | '/admin/agents'
     | '/admin/users'
     | '/admin/subscribers'
     | '/admin/subscriptions'
@@ -22,6 +24,8 @@ type AdminNav = {
 
 const nav: AdminNav[] = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+  { href: '/admin/organizations', label: 'Organizations', icon: Building2 },
+  { href: '/admin/agents', label: 'Agents', icon: Bot },
   { href: '/admin/users', label: 'Users', icon: Users },
   { href: '/admin/subscribers', label: 'Subscribers', icon: CreditCard },
   { href: '/admin/subscriptions', label: 'Subscriptions', icon: Receipt },

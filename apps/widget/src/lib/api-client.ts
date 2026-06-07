@@ -3,8 +3,14 @@
 // a session token explicitly so the call sites can't accidentally hit an
 // authed endpoint with stale storage.
 
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api/v1";
+// API base comes from the environment (set per env via .env files). No host is
+// hardcoded — a missing value fails fast rather than defaulting to a wrong host.
+function requireApiUrl(): string {
+  const v = process.env.NEXT_PUBLIC_API_URL;
+  if (!v) throw new Error("Missing NEXT_PUBLIC_API_URL — set it for this environment.");
+  return v;
+}
+export const API_URL = requireApiUrl();
 
 export type WidgetAgent = {
   id: string;
@@ -18,8 +24,6 @@ export type WidgetSettings = {
   _id?: string;
   organizationId?: string;
   agentId?: string;
-  title?: string;
-  subtitle?: string;
   welcomeMessage?: string;
   suggestedQuestions?: string[];
   primaryColor?: string;
@@ -49,6 +53,8 @@ export type InitResponse = {
   agent: WidgetAgent;
   settings: WidgetSettings;
   sections: WidgetSection[];
+  /** ISO country resolved from the visitor's IP (offline geo). Defaults the phone field. */
+  countryCode?: string;
 };
 
 export type SettingsResponse = {
@@ -76,6 +82,8 @@ export type WidgetAttachment = {
   mimeType?: string;
   size?: number;
   url?: string;
+  /** Server-extracted text (PDF/doc/sheet/text) — passed back on send so the AI reads it. */
+  extractedText?: string;
 };
 
 export type WidgetMessage = {
@@ -250,4 +258,40 @@ export function uploadAttachment(
     `/widget/conversations/${encodeURIComponent(conversationId)}/attachments`,
     { method: "POST", formData: fd, sessionToken },
   );
+}
+
+// Client-side country detection — fallback for the phone-field default country
+// when the server didn't resolve one (e.g. on localhost the API's IP is private,
+// and on resumed sessions /init isn't called). Runs in the VISITOR's browser, so
+// it sees the visitor's real public IP in every environment (no reverse-proxy
+// caveats). Uses GeoJS: free, keyless, HTTPS, CORS-enabled. Cached in
+// localStorage so we hit it at most once per visitor.
+const COUNTRY_CACHE_KEY = "csb_widget_country";
+
+export async function detectVisitorCountry(): Promise<string | undefined> {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const cached = window.localStorage.getItem(COUNTRY_CACHE_KEY);
+    if (cached) return cached;
+  } catch {
+    /* localStorage blocked — fall through to network */
+  }
+  try {
+    const res = await fetch("https://get.geojs.io/v1/ip/country.json", {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (!res.ok) return undefined;
+    const j = (await res.json()) as { country?: string };
+    const code = j.country && /^[A-Za-z]{2}$/.test(j.country) ? j.country.toUpperCase() : undefined;
+    if (code) {
+      try {
+        window.localStorage.setItem(COUNTRY_CACHE_KEY, code);
+      } catch {
+        /* ignore cache write failure */
+      }
+    }
+    return code;
+  } catch {
+    return undefined;
+  }
 }

@@ -29,6 +29,7 @@ import {
 } from "@csb/ui";
 import Link from "next/link";
 import { clientApi, ApiError } from "@/lib/api";
+import { WIDGET_URL } from "@/lib/app-urls";
 
 export type Agent = {
   _id: string;
@@ -316,7 +317,7 @@ function SliderRow({
 // ------------------------------------------------------------ Widget tab
 function WidgetTab() {
   const [copied, setCopied] = useState(false);
-  const snippet = `<script src="${process.env.NEXT_PUBLIC_WIDGET_URL ?? "http://localhost:3001"}/widget.js" async></script>`;
+  const snippet = `<script src="${WIDGET_URL}/widget.js" async></script>`;
 
   async function copy() {
     try {

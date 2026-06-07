@@ -1,12 +1,16 @@
 'use client';
 
-// Leads / contact-sessions browser. Receives a server-fetched list and applies
-// pill filters + free-text search on the client. CSV export runs entirely in the
-// browser via a Blob download — no extra API round-trip needed.
+// Leads / contact-sessions browser. Search, date range, the has-contact filter,
+// and pagination are server-side (URL-driven via <ListToolbar>); this renders the
+// current page plus org-scope stats. CSV export pulls the full filtered set in
+// one call, then downloads in-browser.
 
-import { useMemo, useState } from "react";
-import { Download, Mail, Phone, Search, Copy, MessageSquare } from "lucide-react";
-import { Button, Input, Badge } from "@csb/ui";
+import { useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Download, Mail, Phone, Copy, MessageSquare, Loader2 } from "lucide-react";
+import { Button, Badge } from "@csb/ui";
+import { clientApi } from "@/lib/api";
+import { ListToolbar, FilterSelect } from "@/components/lists/list-toolbar";
 
 export type Lead = {
   _id: string;
@@ -21,38 +25,20 @@ export type Lead = {
 
 export type Website = { _id: string; domain: string };
 
-type Filter = "all" | "email" | "phone" | "none";
-
-const filterPills: { id: Filter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "email", label: "Has email" },
-  { id: "phone", label: "Has phone" },
-  { id: "none", label: "No contact info" },
-];
-
-function matchesFilter(lead: Lead, filter: Filter): boolean {
-  switch (filter) {
-    case "email":
-      return Boolean(lead.email);
-    case "phone":
-      return Boolean(lead.phone);
-    case "none":
-      return !lead.email && !lead.phone;
-    default:
-      return true;
-  }
-}
+export type LeadsEnvelope = {
+  items: Lead[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  stats: { total: number; withEmail: number; withPhone: number; thisWeek: number };
+};
 
 function formatDate(iso?: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function downloadCsv(rows: Lead[], websites: Website[]): void {
@@ -65,15 +51,7 @@ function downloadCsv(rows: Lead[], websites: Website[]): void {
   const lines = [
     header.join(","),
     ...rows.map((r) =>
-      [
-        r.email ?? "",
-        r.phone ?? "",
-        r.name ?? "",
-        r.websiteId ? domainById.get(r.websiteId) ?? r.websiteId : "",
-        r.lastActiveAt ?? "",
-        r.createdAt ?? "",
-        r._id,
-      ]
+      [r.email ?? "", r.phone ?? "", r.name ?? "", r.websiteId ? domainById.get(r.websiteId) ?? r.websiteId : "", r.lastActiveAt ?? "", r.createdAt ?? "", r._id]
         .map(escape)
         .join(","),
     ),
@@ -89,45 +67,37 @@ function downloadCsv(rows: Lead[], websites: Website[]): void {
   URL.revokeObjectURL(url);
 }
 
-export function LeadsClient({
-  initialLeads,
+export function LeadsView({
+  envelope,
   websites,
+  websiteId,
 }: {
-  initialLeads: Lead[];
+  envelope: LeadsEnvelope;
   websites: Website[];
+  /** Active sidebar website scope (cookie-resolved server-side), if any. */
+  websiteId?: string;
 }) {
-  const [filter, setFilter] = useState<Filter>("all");
-  const [query, setQuery] = useState("");
+  const { items, total, page, pageSize, totalPages, stats } = envelope;
+  const sp = useSearchParams();
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const domainById = new Map(websites.map((w) => [w._id, w.domain]));
 
-  const domainById = useMemo(
-    () => new Map(websites.map((w) => [w._id, w.domain])),
-    [websites],
-  );
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return initialLeads.filter((lead) => {
-      if (!matchesFilter(lead, filter)) return false;
-      if (!q) return true;
-      return (
-        (lead.email ?? "").toLowerCase().includes(q) ||
-        (lead.phone ?? "").toLowerCase().includes(q) ||
-        (lead.name ?? "").toLowerCase().includes(q)
-      );
-    });
-  }, [initialLeads, filter, query]);
-
-  const stats = useMemo(() => {
-    const total = initialLeads.length;
-    const withEmail = initialLeads.filter((l) => l.email).length;
-    const withPhone = initialLeads.filter((l) => l.phone).length;
-    const week = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const thisWeek = initialLeads.filter(
-      (l) => l.createdAt && new Date(l.createdAt).getTime() > week,
-    ).length;
-    return { total, withEmail, withPhone, thisWeek };
-  }, [initialLeads]);
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      const params = new URLSearchParams(sp.toString());
+      params.delete("page");
+      params.set("pageSize", "100000");
+      if (websiteId) params.set("websiteId", websiteId);
+      const data = await clientApi.get<{ items: Lead[] }>(`/contacts?${params.toString()}`);
+      downloadCsv(data.items, websites);
+    } catch {
+      // surface nothing — the button just re-enables
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function copySessionId(id: string) {
     try {
@@ -135,7 +105,7 @@ export function LeadsClient({
       setCopiedId(id);
       setTimeout(() => setCopiedId(null), 1500);
     } catch {
-      // clipboard may be unavailable on insecure contexts; fail quietly.
+      /* clipboard unavailable on insecure contexts */
     }
   }
 
@@ -145,20 +115,12 @@ export function LeadsClient({
         <div>
           <h1 className="font-display text-2xl font-semibold tracking-tight">Leads</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Contact sessions captured by your widget. Filter, search and export to CSV.
+            Contact sessions captured by your widget. Search, filter and export to CSV.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-2"
-            onClick={() => downloadCsv(filtered, websites)}
-            disabled={filtered.length === 0}
-          >
-            <Download className="h-4 w-4" /> Export CSV
-          </Button>
-        </div>
+        <Button size="sm" variant="outline" className="gap-2" onClick={exportCsv} disabled={exporting || total === 0}>
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export CSV
+        </Button>
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-4">
@@ -175,31 +137,25 @@ export function LeadsClient({
         ))}
       </div>
 
-      <div className="mt-6 flex flex-wrap items-center gap-2">
-        {filterPills.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => setFilter(p.id)}
-            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-              filter === p.id
-                ? "border-foreground bg-foreground text-background"
-                : "border-border bg-background hover:bg-muted"
-            }`}
-          >
-            {p.label}
-          </button>
-        ))}
-        <div className="ml-auto w-full sm:w-64">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search by email / phone / name…"
-              className="h-9 pl-8"
-            />
-          </div>
-        </div>
+      <div className="mt-6">
+        <ListToolbar
+          total={total}
+          page={page}
+          pageSize={pageSize}
+          totalPages={totalPages}
+          searchPlaceholder="Search email / phone / name…"
+          dateField="Created"
+        >
+          <FilterSelect
+            param="has"
+            label="Contact info"
+            options={[
+              { value: "email", label: "Has email" },
+              { value: "phone", label: "Has phone" },
+              { value: "none", label: "No contact info" },
+            ]}
+          />
+        </ListToolbar>
       </div>
 
       <div className="mt-4 overflow-hidden rounded-xl border border-border bg-card">
@@ -214,16 +170,15 @@ export function LeadsClient({
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {filtered.length === 0 && (
+            {items.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-5 py-10 text-center text-sm text-muted-foreground">
-                  No leads match the current filters yet.
+                  No leads match these filters.
                 </td>
               </tr>
             )}
-            {filtered.map((l) => {
-              const initial =
-                (l.name?.[0] ?? l.email?.[0] ?? l.phone?.[0] ?? "?").toUpperCase();
+            {items.map((l) => {
+              const initial = (l.name?.[0] ?? l.email?.[0] ?? l.phone?.[0] ?? "?").toUpperCase();
               const domain = l.websiteId ? domainById.get(l.websiteId) ?? "—" : "—";
               return (
                 <tr key={l._id} className="hover:bg-surface">
@@ -248,28 +203,18 @@ export function LeadsClient({
                             </span>
                           )}
                           {!l.email && !l.phone && (
-                            <Badge variant="secondary" className="text-[10px]">
-                              No contact info
-                            </Badge>
+                            <Badge variant="secondary" className="text-[10px]">No contact info</Badge>
                           )}
                         </div>
                       </div>
                     </div>
                   </td>
                   <td className="hidden px-5 py-3 text-muted-foreground md:table-cell">{domain}</td>
-                  <td className="hidden px-5 py-3 text-muted-foreground lg:table-cell">
-                    {formatDate(l.lastActiveAt)}
-                  </td>
+                  <td className="hidden px-5 py-3 text-muted-foreground lg:table-cell">{formatDate(l.lastActiveAt)}</td>
                   <td className="px-5 py-3 text-muted-foreground">{formatDate(l.createdAt)}</td>
                   <td className="px-5 py-3 text-right">
                     <div className="inline-flex gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="gap-1.5"
-                        onClick={() => copySessionId(l._id)}
-                        title="Copy session id"
-                      >
+                      <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => copySessionId(l._id)} title="Copy session id">
                         <Copy className="h-3.5 w-3.5" />
                         {copiedId === l._id ? "Copied" : "ID"}
                       </Button>
@@ -286,10 +231,6 @@ export function LeadsClient({
             })}
           </tbody>
         </table>
-      </div>
-
-      <div className="mt-3 text-xs text-muted-foreground">
-        Showing {filtered.length} of {initialLeads.length} sessions.
       </div>
     </div>
   );

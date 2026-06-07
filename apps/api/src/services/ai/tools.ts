@@ -64,6 +64,15 @@ export const AGENT_TOOLS = [
   },
 ];
 
+// Tool list for a conversation, gated by org settings. When human escalation is
+// disabled, the escalate_conversation tool is removed entirely so the model
+// cannot signal a handoff.
+export function buildAgentTools(opts: { allowEscalation: boolean }) {
+  return AGENT_TOOLS.filter(
+    (t) => opts.allowEscalation || t.function.name !== "escalate_conversation",
+  );
+}
+
 export const FINAL_REPLY_SCHEMA = {
   type: "json_schema" as const,
   json_schema: {

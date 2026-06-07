@@ -3,6 +3,7 @@ import { z } from "zod";
 import { Website } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { enforceWebsiteQuota } from "../middleware/plan-limit.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
 import { ensureWebsiteAgent } from "../services/agent-provisioning.js";
 
@@ -21,11 +22,13 @@ router.get("/", async (req: Request, res: Response) => {
   res.json(websites);
 });
 
-router.post("/", validateBody(websiteSchema), async (req: Request, res: Response) => {
+router.post("/", enforceWebsiteQuota, validateBody(websiteSchema), async (req: Request, res: Response) => {
   const website = await Website.create({ ...req.body, organizationId: req.orgId });
   // Every website gets its own agent (per-website config). Created here so the
-  // widget can resolve an agent for the new site immediately.
-  await ensureWebsiteAgent(req.orgId!, website._id, `${website.name} agent`);
+  // widget can resolve an agent for the new site immediately. We do NOT seed the
+  // name from the website — the agent's identity must be operator-chosen, not the
+  // site/brand name (it defaults to a generic "Support agent").
+  await ensureWebsiteAgent(req.orgId!, website._id);
   res.status(201).json(website);
 });
 

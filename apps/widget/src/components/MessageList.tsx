@@ -34,15 +34,46 @@ function TypingIndicator() {
   );
 }
 
+function formatBytes(n?: number): string {
+  if (!n || n <= 0) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Attachment download/preview URLs are API-origin and session-guarded. An <img>
+// or link can't send the x-session-token header, so we append it as `?t=`.
+// Operator-sent attachments are stored against the operator-only
+// `/messages/attachments/<sha>` route; the customer can only authenticate the
+// widget route, so we rewrite the path to `/widget/attachments/<sha>` (same
+// org-scoped storage key) before appending the session token.
+function authedUrl(raw: string | undefined, sessionToken?: string): string | undefined {
+  if (!raw) return undefined;
+  const widgetUrl = raw.replace("/api/v1/messages/attachments/", "/api/v1/widget/attachments/");
+  if (!sessionToken) return widgetUrl;
+  return widgetUrl + (widgetUrl.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(sessionToken);
+}
+
+// Detect images by MIME type, falling back to the file name/URL extension —
+// mimeType can be absent on a re-fetched/socket-delivered message.
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|heic|heif)(\?|#|$)/i;
+function isImageAttachment(a: { mimeType?: string; fileName?: string; fileUrl?: string; url?: string }): boolean {
+  if ((a.mimeType ?? "").startsWith("image/")) return true;
+  return IMAGE_EXT_RE.test(a.fileName ?? "") || IMAGE_EXT_RE.test(a.fileUrl ?? a.url ?? "");
+}
+
 export function MessageList({
   messages,
   primaryColor,
   typing = false,
+  sessionToken,
 }: {
   messages: WidgetMessage[];
   primaryColor: string;
   /** Show the animated "AI is typing" bubble at the bottom of the transcript. */
   typing?: boolean;
+  /** Used to authenticate attachment preview/download URLs (?t=). */
+  sessionToken?: string;
 }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -113,20 +144,41 @@ export function MessageList({
             >
               {m.content}
               {m.attachments && m.attachments.length > 0 ? (
-                <ul className="mt-1.5 space-y-1">
+                <ul className="mt-1.5 space-y-2.5">
                   {m.attachments.map((a, i) => {
-                    const href = a.url ?? a.fileUrl;
+                    const href = authedUrl(a.url ?? a.fileUrl, sessionToken);
                     const label = a.fileName ?? "Attachment";
                     if (!href) return null;
+                    const isImage = isImageAttachment(a);
+                    if (isImage) {
+                      return (
+                        <li key={i}>
+                          <a href={href} target="_blank" rel="noopener noreferrer" aria-label={label}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={href}
+                              alt={label}
+                              className="max-h-40 max-w-full rounded-lg border border-black/5 object-cover"
+                              loading="lazy"
+                            />
+                          </a>
+                        </li>
+                      );
+                    }
                     return (
                       <li key={i}>
                         <a
                           href={href}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[11px] underline opacity-90 hover:opacity-100"
+                          className="flex items-center gap-2 rounded-lg border border-black/10 bg-white/60 px-2.5 py-1.5 text-[11px] text-current no-underline transition hover:bg-white/90 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                         >
-                          {label}
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 opacity-70">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                          </svg>
+                          <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
+                          {a.size ? <span className="shrink-0 opacity-60">{formatBytes(a.size)}</span> : null}
                         </a>
                       </li>
                     );

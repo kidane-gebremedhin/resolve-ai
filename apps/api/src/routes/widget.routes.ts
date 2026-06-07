@@ -3,8 +3,6 @@
 import { Router, type Request, type Response, type NextFunction, type RequestHandler } from "express";
 import { z } from "zod";
 import crypto from "node:crypto";
-import multer from "multer";
-import { getStorage } from "../config/storage.js";
 import {
   ContactSession,
   Website,
@@ -20,7 +18,71 @@ import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { generateAiReply } from "../services/ai/agent.service.js";
+import {
+  attachmentUpload,
+  isAllowedAttachmentMime,
+  storeAttachment,
+  extractAttachmentText,
+  streamStoredAttachment,
+} from "../services/attachments.service.js";
+import geoip from "geoip-lite";
 import { logger } from "../config/logger.js";
+
+// Resolve the visitor's ISO country to default the phone-input country code.
+// Public IPs use the offline geoip-lite DB (fast, no network). For local/private
+// IPs (e.g. localhost dev) geoip can't resolve, so we fall back to an external
+// lookup that uses the SERVER's public IP — which on localhost is the developer's
+// own location. The local result is cached for the process.
+function isPrivateOrLocal(ip: string): boolean {
+  return (
+    !ip ||
+    ip === "127.0.0.1" ||
+    ip === "::1" ||
+    /^10\./.test(ip) ||
+    /^192\.168\./.test(ip) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip) ||
+    /^169\.254\./.test(ip) ||
+    /^fc00:/i.test(ip) ||
+    /^fe80:/i.test(ip)
+  );
+}
+
+let cachedLocalCountry: string | null | undefined; // undefined = not yet looked up
+
+async function resolveCountry(ip?: string): Promise<string | undefined> {
+  const clean = (ip ?? "").replace(/^::ffff:/, "");
+  const local = isPrivateOrLocal(clean);
+
+  if (!local) {
+    try {
+      const c = geoip.lookup(clean)?.country;
+      if (c) return c;
+    } catch {
+      /* fall through to external lookup */
+    }
+  } else if (cachedLocalCountry !== undefined) {
+    return cachedLocalCountry ?? undefined;
+  }
+
+  // External fallback. For local IPs omit the IP so the service uses the
+  // server's public IP (the dev's location). Best-effort, short timeout.
+  try {
+    const target = local ? "" : clean;
+    const res = await fetch(`http://ip-api.com/json/${target}?fields=status,countryCode`, {
+      signal: AbortSignal.timeout(2500),
+    });
+    if (res.ok) {
+      const j = (await res.json()) as { status?: string; countryCode?: string };
+      const code = j.status === "success" && j.countryCode ? j.countryCode : undefined;
+      if (local) cachedLocalCountry = code ?? null;
+      return code;
+    }
+  } catch {
+    /* ignore — country stays undefined */
+  }
+  if (local) cachedLocalCountry = null;
+  return undefined;
+}
 
 const router = Router();
 
@@ -153,7 +215,42 @@ router.post(
       agentId: req.body.agentId as string | undefined,
     });
     const session = await createWidgetSession(ctx, req);
-    res.json(widgetInitPayload(ctx, session));
+    res.json({ ...widgetInitPayload(ctx, session), countryCode: await resolveCountry(req.ip) });
+  }),
+);
+
+// ---------- GET /widget/appearance ----------
+// Public, unauthenticated, side-effect-free. Returns only cosmetic appearance
+// fields resolved by agentId so the embed loader can style the launcher (and
+// seed iframe params) BEFORE a session exists — and so operators never need to
+// re-copy the embed snippet when they change position/color/theme in the studio.
+// Creates NO session (contrast POST /init).
+const appearanceQuerySchema = z.object({
+  agentId: z.string().regex(/^[0-9a-fA-F]{24}$/, "agentId must be a 24-char hex id"),
+});
+
+router.get(
+  "/appearance",
+  asyncHandler(async (req: Request, res: Response) => {
+    const parsed = appearanceQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ValidationError("agentId must be a 24-char hex id.");
+    }
+    const agent = await Agent.findOne({ _id: parsed.data.agentId, isActive: true });
+    if (!agent) throw new NotFoundError("No active agent for this id.");
+
+    const settings = await WidgetSettings.findOne({
+      organizationId: agent.organizationId,
+      agentId: agent._id,
+    });
+
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.json({
+      position: settings?.position ?? "bottom-right",
+      primaryColor: settings?.primaryColor ?? "#7c3aed",
+      theme: settings?.theme ?? "auto",
+      launcherIcon: null,
+    });
   }),
 );
 
@@ -168,7 +265,7 @@ router.post(
       agentId: req.body.agentId as string | undefined,
     });
     const session = await createWidgetSession(ctx, req);
-    res.status(201).json(widgetInitPayload(ctx, session));
+    res.status(201).json({ ...widgetInitPayload(ctx, session), countryCode: await resolveCountry(req.ip) });
   }),
 );
 
@@ -348,8 +445,10 @@ const sendMessageSchema = z.object({
       z.object({
         fileName: z.string(),
         fileUrl: z.string(),
+        url: z.string().optional(),
         mimeType: z.string(),
         size: z.number().int().nonnegative(),
+        extractedText: z.string().optional(),
       }),
     )
     .optional(),
@@ -419,34 +518,18 @@ router.post(
 );
 
 // ---------- Attachments ----------
-// Storage is delegated to the adapter returned by `getStorage()` (MinIO when
-// MINIO_* env vars are configured, local disk otherwise). Object keys are
-// tenant-scoped — `org/<orgId>/<sha>.bin` — so future bucket-policy isolation
-// can rely on the prefix. We still verify `metadata.organizationId` on every
-// download as defence-in-depth.
-const ALLOWED_MIME_PREFIXES = ["image/"];
-const ALLOWED_MIME_EXACT = new Set(["application/pdf", "text/plain"]);
-
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
-
-function attachmentKey(orgId: string, sha: string): string {
-  return `org/${orgId}/${sha}.bin`;
-}
+// Storage, MIME allow-list, text extraction, and streaming live in
+// attachments.service.ts (shared with the operator inbox upload/serve routes).
 
 router.post(
   "/conversations/:id/attachments",
   requireWidgetSession,
-  upload.single("file"),
+  attachmentUpload.single("file"),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) throw new ValidationError("No file uploaded (field name: 'file').");
     const { buffer, originalname, mimetype, size } = req.file;
 
-    const allowed =
-      ALLOWED_MIME_PREFIXES.some((p) => mimetype.startsWith(p)) || ALLOWED_MIME_EXACT.has(mimetype);
-    if (!allowed) {
+    if (!isAllowedAttachmentMime(mimetype)) {
       throw new ValidationError(`MIME type '${mimetype}' is not allowed.`);
     }
 
@@ -458,16 +541,12 @@ router.post(
     });
     if (!conversation) throw new NotFoundError("Conversation not found.");
 
-    const sha = crypto.createHash("sha256").update(buffer).digest("hex");
-    const key = attachmentKey(String(req.orgId), sha);
-
-    await getStorage().putObject({
-      key,
+    const sha = await storeAttachment({
       buffer,
-      contentType: mimetype,
+      mimetype,
+      orgId: String(req.orgId),
       metadata: {
         fileName: originalname,
-        organizationId: String(req.orgId),
         contactSessionId: String(req.contactSessionId),
         conversationId: conversation._id.toString(),
         size: String(size),
@@ -475,12 +554,20 @@ router.post(
       },
     });
 
+    const extractedText = await extractAttachmentText(buffer, mimetype, originalname);
+
+    // Absolute URL (API origin), so the widget — served from a different origin —
+    // resolves it correctly. The caller appends `?t=<sessionToken>` to authenticate
+    // the <img>/link request (see requireWidgetSession query-token fallback).
+    const fileUrl = `${env.apiBaseUrl}/api/v1/widget/attachments/${sha}`;
     res.status(201).json({
       attachment: {
-        url: `/api/v1/widget/attachments/${sha}`,
+        url: fileUrl,
+        fileUrl,
         fileName: originalname,
         mimeType: mimetype,
         size,
+        ...(extractedText ? { extractedText } : {}),
       },
     });
   }),
@@ -493,33 +580,7 @@ router.get(
   "/attachments/:hash",
   requireWidgetSession,
   asyncHandler(async (req: Request, res: Response) => {
-    const shaParam = req.params.hash;
-    const sha = Array.isArray(shaParam) ? shaParam[0] : shaParam;
-    if (!sha || !/^[a-f0-9]{64}$/i.test(sha)) {
-      throw new ValidationError("Invalid attachment hash.");
-    }
-
-    const key = attachmentKey(String(req.orgId), sha);
-    const obj = await getStorage().getObject(key);
-    if (!obj) throw new NotFoundError("Attachment not found.");
-
-    // Cross-tenant guard. MinIO lowercases user-metadata keys on read; the disk
-    // adapter preserves the case we wrote. Check both spellings to be safe.
-    const meta = obj.metadata ?? {};
-    const metaOrg = meta.organizationId ?? meta.organizationid;
-    if (!metaOrg || metaOrg !== String(req.orgId)) {
-      throw new NotFoundError("Attachment not found.");
-    }
-    const fileName = meta.fileName ?? meta.filename;
-
-    res.setHeader("Content-Type", obj.contentType ?? "application/octet-stream");
-    if (fileName) {
-      res.setHeader(
-        "Content-Disposition",
-        `inline; filename="${fileName.replace(/"/g, "")}"`,
-      );
-    }
-    obj.stream.pipe(res);
+    await streamStoredAttachment(res, String(req.orgId), req.params.hash);
   }),
 );
 

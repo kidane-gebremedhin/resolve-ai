@@ -19,8 +19,6 @@ router.use(requireAuth, requireOrg);
 // is persisted by the WidgetSettings schema and surfaced to the widget via the
 // public /widget/init payload, so studio changes apply on embedded sites.
 const widgetSettingsSchema = z.object({
-  title: z.string().max(120).optional(),
-  subtitle: z.string().max(240).optional(),
   welcomeMessage: z.string().max(1000).optional(),
   suggestedQuestions: z.array(z.string().min(1).max(200)).max(20).optional(),
   primaryColor: z

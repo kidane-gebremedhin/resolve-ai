@@ -62,17 +62,19 @@ export type WidgetState = {
 
 export type WidgetEvent =
   | {
-      type: "BOOTSTRAPPED";
-      agent: WidgetAgent;
-      settings: WidgetSettings;
-      sections: WidgetSection[];
-      // What to render next based on stored session + conversation.
-      next: "pre_chat" | "sections" | "chat_active" | "escalated" | "resolved";
-      conversationId?: string;
-      conversationStatus?: ConversationStatus;
-      messages?: WidgetMessage[];
-      contact?: { email?: string; phone?: string; name?: string };
-    }
+    type: "BOOTSTRAPPED";
+    agent: WidgetAgent;
+    settings: WidgetSettings;
+    sections: WidgetSection[];
+    // What to render next based on stored session + conversation.
+    next: "pre_chat" | "sections" | "chat_active" | "escalated" | "resolved";
+    conversationId?: string;
+    conversationStatus?: ConversationStatus;
+    messages?: WidgetMessage[];
+    contact?: { email?: string; phone?: string; name?: string };
+    /** When true, the contact_prompt overlay is shown immediately on resume. */
+    showContactPrompt?: boolean;
+  }
   | { type: "BOOT_FAILED"; message: string }
   | { type: "RETRY" }
   | { type: "CONVERSATION_CREATED"; conversationId: string; status: ConversationStatus }
@@ -132,9 +134,13 @@ function appendMessage(messages: WidgetMessage[], next: WidgetMessage): WidgetMe
 export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
   switch (event.type) {
     case "BOOTSTRAPPED": {
+      const shouldPromptOnResume =
+        event.showContactPrompt === true &&
+        event.next === "chat_active" &&
+        !event.contact?.email;
       return {
         state: event.next,
-        overlay: null,
+        overlay: shouldPromptOnResume ? "contact_prompt" : null,
         context: {
           ...state.context,
           agent: event.agent,
@@ -146,6 +152,7 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
           contact: event.contact ?? state.context.contact,
           isInitializing: false,
           errorMessage: null,
+          hasPromptedForContact: shouldPromptOnResume ? true : (event.contact?.email ? true : false),
         },
       };
     }
@@ -248,11 +255,8 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
       };
 
     case "CONTACT_SKIPPED":
-      // The post-reply overlay is optional and can be closed. The hard
-      // "contact required" rule is enforced earlier, at pre_chat: when
-      // settings.requireContactBeforeChat is set, PreChatScreen blocks the
-      // first message until a valid email is supplied (so the overlay never
-      // appears without contact already captured).
+      // The post-reply overlay can be closed. Contact capture is best-effort
+      // — if the user dismisses the prompt, the conversation continues.
       return {
         ...state,
         overlay: null,

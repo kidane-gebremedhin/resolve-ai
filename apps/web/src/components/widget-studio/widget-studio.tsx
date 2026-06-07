@@ -54,14 +54,13 @@ export type Agent = {
   temperature?: number;
   confidenceThreshold?: number;
   isActive?: boolean;
+  avatarUrl?: string;
 };
 
 export type WidgetSettings = {
   _id?: string;
   organizationId?: string;
   agentId?: string;
-  title?: string;
-  subtitle?: string;
   welcomeMessage?: string;
   primaryColor?: string;
   position?: "bottom-right" | "bottom-left" | "centered";
@@ -112,8 +111,6 @@ type AgentEditable = {
 };
 
 type SettingsEditable = {
-  title: string;
-  subtitle: string;
   primaryColor: string;
   position: "bottom-right" | "bottom-left" | "centered";
   theme: "light" | "dark" | "auto";
@@ -140,14 +137,17 @@ function toAgentEditable(agent: Agent, defaults: AgentDefaults): AgentEditable {
   };
 }
 
-function toSettingsEditable(s: WidgetSettings | null): SettingsEditable {
+function toSettingsEditable(
+  s: WidgetSettings | null,
+  agentAvatarUrl?: string,
+): SettingsEditable {
   return {
-    title: s?.title ?? "",
-    subtitle: s?.subtitle ?? "",
     primaryColor: s?.primaryColor ?? COLORS[0],
     position: s?.position ?? "bottom-right",
     theme: s?.theme ?? "light",
-    avatarUrl: s?.avatarUrl ?? "",
+    // Pre-fill with the agent's configured avatar (e.g. the favicon captured on
+    // website-KB sync) when the widget settings don't override it.
+    avatarUrl: s?.avatarUrl || agentAvatarUrl || "",
     showBranding: s?.showBranding ?? true,
   };
 }
@@ -203,8 +203,8 @@ export function WidgetStudio({
     [agent, agentDefaults],
   );
   const settingsBaseline = useMemo(
-    () => toSettingsEditable(savedSettings),
-    [savedSettings],
+    () => toSettingsEditable(savedSettings, agent?.avatarUrl),
+    [savedSettings, agent?.avatarUrl],
   );
 
   const [agentDraft, setAgentDraft] = useState<AgentEditable | null>(agentBaseline);
@@ -236,7 +236,6 @@ export function WidgetStudio({
 
   async function save() {
     if (!agent || !agentBaseline || !agentDraft) return;
-    if (!dirty) return;
     setBusy(true);
     setError(null);
     try {
@@ -246,15 +245,15 @@ export function WidgetStudio({
         const next = await clientApi.patch<Agent>(`/agents/${agent._id}`, agentPatch);
         setAgent(next);
       }
-      if (Object.keys(settingsPatch).length > 0) {
-        // PUT always upserts — even if the doc didn't exist before, the API
-        // creates it from the body.
-        const next = await clientApi.put<WidgetSettings>(
-          `/widget-settings/${agent._id}`,
-          settingsDraft,
-        );
-        setSavedSettings(next);
-      }
+      // Always PUT the full settings so the WidgetSettings document is created
+      // (upsert) even on the first save with defaults. Without this the
+      // appearance endpoint falls back to hard-coded defaults and config
+      // like position never takes effect.
+      const next = await clientApi.put<WidgetSettings>(
+        `/widget-settings/${agent._id}`,
+        settingsDraft,
+      );
+      setSavedSettings(next);
       setSavedAt(Date.now());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -281,7 +280,6 @@ export function WidgetStudio({
     u.searchParams.set("primaryColor", settingsDraft.primaryColor);
     u.searchParams.set("position", settingsDraft.position);
     u.searchParams.set("theme", settingsDraft.theme);
-    if (settingsDraft.title) u.searchParams.set("title", settingsDraft.title);
     return u.toString();
   })();
 
@@ -306,7 +304,7 @@ export function WidgetStudio({
               Discard
             </Button>
           )}
-          <Button size="sm" onClick={save} disabled={!dirty || busy}>
+          <Button size="sm" onClick={save} disabled={busy}>
             {busy ? "Saving…" : "Save changes"}
           </Button>
         </div>
@@ -366,24 +364,6 @@ export function WidgetStudio({
 
               <div className="rounded-xl border border-border bg-card p-5 space-y-3">
                 <div>
-                  <Label className="text-xs">Widget title</Label>
-                  <Input
-                    className="mt-1.5"
-                    value={settingsDraft.title}
-                    onChange={(e) => updateSettings("title", e.target.value)}
-                    placeholder="Support"
-                  />
-                </div>
-                <div>
-                  <Label className="text-xs">Widget subtitle</Label>
-                  <Input
-                    className="mt-1.5"
-                    value={settingsDraft.subtitle}
-                    onChange={(e) => updateSettings("subtitle", e.target.value)}
-                    placeholder="We typically reply in a few minutes."
-                  />
-                </div>
-                <div>
                   <Label className="text-xs">Avatar URL</Label>
                   <Input
                     className="mt-1.5"
@@ -391,6 +371,9 @@ export function WidgetStudio({
                     onChange={(e) => updateSettings("avatarUrl", e.target.value)}
                     placeholder="https://…/avatar.png"
                   />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Defaults to the website&apos;s icon captured during knowledge-base sync.
+                  </p>
                 </div>
               </div>
 
@@ -507,21 +490,19 @@ export function WidgetStudio({
               <div className="inline-flex rounded-md border border-border bg-card p-0.5">
                 <button
                   onClick={() => setDevice("desktop")}
-                  className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs ${
-                    device === "desktop"
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs ${device === "desktop"
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <Monitor className="h-3.5 w-3.5" /> Desktop
                 </button>
                 <button
                   onClick={() => setDevice("mobile")}
-                  className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs ${
-                    device === "mobile"
-                      ? "bg-foreground text-background"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
+                  className={`inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs ${device === "mobile"
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                    }`}
                 >
                   <Smartphone className="h-3.5 w-3.5" /> Mobile
                 </button>
@@ -548,9 +529,8 @@ export function WidgetStudio({
                 }}
               >
                 <div
-                  className={`mx-auto h-full ${
-                    device === "mobile" ? "max-w-[380px]" : ""
-                  }`}
+                  className={`mx-auto h-full ${device === "mobile" ? "max-w-[380px]" : ""
+                    }`}
                   style={{ height: "100%" }}
                 >
                   <iframe
@@ -596,11 +576,10 @@ function ColorPickerCard({
           <button
             key={c}
             onClick={() => onChange(c)}
-            className={`relative aspect-square rounded-md transition ${
-              value === c
-                ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
-                : "hover:scale-105"
-            }`}
+            className={`relative aspect-square rounded-md transition ${value === c
+              ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
+              : "hover:scale-105"
+              }`}
             style={{ backgroundColor: c }}
             aria-label={c}
           >
@@ -642,11 +621,10 @@ function RadioCard<T extends string>({
             key={opt.id}
             type="button"
             onClick={() => onChange(opt.id)}
-            className={`rounded-md border px-3 py-2 text-xs font-medium transition ${
-              value === opt.id
-                ? "border-foreground bg-foreground text-background"
-                : "border-border bg-background hover:bg-muted"
-            }`}
+            className={`rounded-md border px-3 py-2 text-xs font-medium transition ${value === opt.id
+              ? "border-foreground bg-foreground text-background"
+              : "border-border bg-background hover:bg-muted"
+              }`}
           >
             {opt.label}
           </button>

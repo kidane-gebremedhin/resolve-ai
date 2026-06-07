@@ -134,8 +134,12 @@ export interface Subscription {
   _id: ObjectIdString;
   organizationId: ObjectIdString;
   paddleSubscriptionId: string;
+  paddleCustomerId: string;
   plan: Plan;
-  status: "active" | "trialing" | "past_due" | "canceled";
+  status: "active" | "trialing" | "past_due" | "canceled" | "paused";
+  currentPeriodStart?: ISODateString;
   currentPeriodEnd: ISODateString;
+  canceledAt?: ISODateString;
+  trialEndAt?: ISODateString;
   createdAt: ISODateString;
 }

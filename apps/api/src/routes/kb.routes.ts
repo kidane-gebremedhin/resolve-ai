@@ -13,25 +13,6 @@ import { parseFile, sourceTypeFor } from "../services/kb/parsers.js";
 import { logger } from "../config/logger.js";
 import type { Server as IoServer } from "socket.io";
 
-function emitKbStatus(req: Request, source: {
-  _id: { toString(): string };
-  organizationId: { toString(): string };
-  embeddingStatus?: string | null;
-  chunkCount?: number | null;
-  lastSyncedAt?: Date | null;
-  embeddingError?: string | null;
-}): void {
-  const io = req.app.get("io") as IoServer | undefined;
-  if (!io) return;
-  io.to(`org:${source.organizationId.toString()}`).emit("knowledge:updated", {
-    sourceId: source._id.toString(),
-    embeddingStatus: source.embeddingStatus ?? undefined,
-    chunkCount: source.chunkCount ?? undefined,
-    lastSyncedAt: source.lastSyncedAt ?? undefined,
-    embeddingError: source.embeddingError ?? undefined,
-  });
-}
-
 const router = Router();
 router.use(requireAuth, requireOrg);
 
@@ -276,27 +257,22 @@ router.delete("/:id", async (req: Request, res: Response) => {
   if (!source) throw new NotFoundError("Knowledge source not found.");
   const id = source._id.toString();
 
-  // Purge the Pinecone vectors and drop the document synchronously so the
-  // deletion completes within the request (no lingering "deleting" state).
-  // `purgeSourceVectors` batches the delete, so large sources are handled too.
-  // Only if the purge fails do we fall back to the "deleting" status, which the
-  // reconcile job retries — that's what previously left sources stuck forever.
+  // Vector purge is BEST-EFFORT and must never block deletion. Failed/processing
+  // sources may have no vectors (or Pinecone may be briefly unreachable); either
+  // way the document must always be removed so the UI drops it. Any orphaned
+  // vectors get cleaned up by the reconcile job.
   try {
     await purgeSourceVectors(id);
-    await KnowledgeSource.deleteOne({ _id: source._id });
-    const io = req.app.get("io") as IoServer | undefined;
-    io?.to(`org:${req.orgId}`).emit("knowledge:deleted", { sourceId: id });
-    res.json({ _id: id, deleted: true });
   } catch (err) {
-    logger.error("[kb] inline vector purge failed; deferring to reconcile job", {
+    logger.warn("[kb] vector purge failed during delete (continuing)", {
       sourceId: id,
       err: (err as Error).message,
     });
-    source.embeddingStatus = "deleting";
-    await source.save();
-    emitKbStatus(req, source);
-    res.json(source);
   }
+  await KnowledgeSource.deleteOne({ _id: source._id });
+  const io = req.app.get("io") as IoServer | undefined;
+  io?.to(`org:${req.orgId}`).emit("knowledge:deleted", { sourceId: id });
+  res.json({ _id: id, deleted: true });
 });
 
 export default router;

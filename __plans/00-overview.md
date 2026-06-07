@@ -18,6 +18,14 @@
 | 2 | [`03-phase2-widget-sockets.md`](./03-phase2-widget-sockets.md) | Socket.io + widget iframe + embed loader + AI agent | Customer chats end-to-end with AI responses; embed script works on any HTML page | 04(partial), 05, 08, 09, 10§Phase2 |
 | 3 | [`04-phase3-inbox-kb.md`](./04-phase3-inbox-kb.md) | Operator inbox + KB CRUD with Pinecone + Firecrawl + Widget Studio + enhancement LLM | Operators reply in real time; KB syncs to Pinecone; Firecrawl crawls websites | 04, 06, 10§Phase3 |
 | 4 | [`05-phase4-billing-polish.md`](./05-phase4-billing-polish.md) | Paddle billing + admin panel + analytics + production deploy | Plan limits enforced; admin panel live; production deployed via Coolify | 10§Phase4, 16, 20 |
+| 5 | [`06-widget-polish.md`](./06-widget-polish.md) | **Post-v1.** Modern send icon + sizing, appearance fetched by `agentId`, attachment preview + content extraction | Snippet-free preference updates; AI reads uploaded files | 22 |
+| 6 | [`07-admin-and-system-prefs.md`](./07-admin-and-system-prefs.md) | **Post-v1.** Admin Organizations + Agents pages; global app-font system preference | Admin gaps filled; consistent app-wide font | 23 |
+| 7 | [`08-paddle-subscriptions.md`](./08-paddle-subscriptions.md) | **Post-v1.** Paddle.js completion: env creds, idempotency, plan catalog, quota coverage, reconcile | Runnable sandbox checkout; hardened billing | 24 |
+| 8 | [`09-affiliate-system.md`](./09-affiliate-system.md) | **Post-v1.** Referral attribution + commissions + mailer | Referral funnel + earned commissions + emails | 25 |
+| 9 | [`10-conversation-controls.md`](./10-conversation-controls.md) | **Post-v1.** Human-escalation toggle + ask-before-resolve (org settings gate prompt/tools/UI) | Org-configurable conversation behavior | 26 |
+| 10 | [`11-kb-crawl-and-phone.md`](./11-kb-crawl-and-phone.md) | **Post-v1.** Same-domain website crawl + favicon avatar; visitor phone country-code from IP | Scoped crawls + auto avatar; geo-defaulted phone code | 27, 28 |
+
+> **Post-v1 phases (5–10)** are independent enhancement tracks from the product backlog, not strictly sequential like Phases 0–4. Phase 8 (affiliate) benefits from Phase 7 (plan catalog) landing first.
 
 ## Skill ↔ phase invocation map
 

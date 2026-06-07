@@ -135,6 +135,10 @@
     border-color: var(--color-border);
   }
   html {
+    /* Base type scale bumped ~12% (16px → 18px) for readability. Scales all
+       rem-based sizing proportionally across the public, dashboard, and
+       operator UIs; px-based widths (e.g. .container-page) stay fixed. */
+    font-size: 112.5%;
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -192,7 +196,8 @@
 
 /* NS Theme variables — override Tailwind color tokens inside landing pages */
 .ns-theme {
-  font-family: var(--font-inter-tight), sans-serif;
+  /* Follow the platform body font (admin → System Preferences), like /app. */
+  font-family: var(--font-sans), sans-serif;
   --color-primary-50: #f4f2fe;
   --color-primary-100: #ece8ff;
   --color-primary-200: #dcd4ff;
@@ -320,7 +325,7 @@
 
 /* NS Typography inside .ns-theme */
 .ns-theme h1, .ns-theme h2, .ns-theme h3, .ns-theme h4, .ns-theme h5, .ns-theme h6 {
-  font-family: var(--font-inter-tight), sans-serif;
+  font-family: var(--font-display), sans-serif;
   color: #1a1a1c;
 }
 .ns-theme.dark h1, .ns-theme.dark h2, .ns-theme.dark h3, .ns-theme.dark h4, .ns-theme.dark h5, .ns-theme.dark h6,

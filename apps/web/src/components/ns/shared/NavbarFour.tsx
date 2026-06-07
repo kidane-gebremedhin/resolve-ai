@@ -32,9 +32,10 @@ const NavbarFour = () => {
       >
         <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between">
           <div>
-            <a href="/">
+            <a href="/" className="inline-flex items-center gap-2.5">
               <span className="sr-only">Home</span>
-              <img src="/images/shared/logo-green.svg" alt={APP_NAME} className="h-8" />
+              <img src="/images/shared/logo-green.svg" alt="" className="h-8 w-8" />
+              <span className="font-display text-[17px] font-semibold tracking-tight text-white">{APP_NAME}</span>
             </a>
           </div>
           <div className="flex items-center gap-[76px]">
@@ -50,8 +51,8 @@ const NavbarFour = () => {
               </ul>
             </nav>
             <div className="flex items-center gap-2">
-              <a href="/register" className="btn btn-primary hover:btn-white-dark btn-md hidden sm:inline-block">
-                <span>Get started</span>
+              <a href="/login" className="btn btn-primary hover:btn-white-dark btn-md hidden sm:inline-block">
+                <span>Login</span>
               </a>
               {/* Mobile menu button */}
               <button
@@ -74,8 +75,9 @@ const NavbarFour = () => {
           <div className="absolute inset-0 bg-black/60" />
           <aside className="absolute top-0 right-0 h-full w-80 bg-background-7 dark:bg-background-6 p-8 space-y-6 scroll-bar overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <a href="/" onClick={() => setMobileOpen(false)}>
-                <img src="/images/shared/logo-green.svg" alt={APP_NAME} className="h-8" />
+              <a href="/" onClick={() => setMobileOpen(false)} className="inline-flex items-center gap-2.5">
+                <img src="/images/shared/logo-green.svg" alt="" className="h-8 w-8" />
+                <span className="font-display text-[17px] font-semibold tracking-tight text-accent">{APP_NAME}</span>
               </a>
               <button onClick={() => setMobileOpen(false)} className="text-accent/60 hover:text-accent text-2xl" aria-label="Close">✕</button>
             </div>
@@ -90,8 +92,8 @@ const NavbarFour = () => {
                 ))}
               </ul>
             </nav>
-            <a href="/register" className="btn btn-primary btn-md w-full">
-              <span>Get started</span>
+            <a href="/login" className="btn btn-primary btn-md w-full">
+              <span>Login</span>
             </a>
           </aside>
         </div>

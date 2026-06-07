@@ -7,18 +7,73 @@
 // `POST /knowledge/website` route (see `extractCrawlId` in firecrawl.service).
 
 import type { Types } from "mongoose";
-import { KnowledgeSource } from "../models/index.js";
+import { Agent, KnowledgeSource, WidgetSettings } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import {
   extractCrawlId,
   ingestCrawlResults,
   pollCrawl,
 } from "../services/kb/firecrawl.service.js";
+import { resolveFaviconUrl } from "../services/kb/favicon.service.js";
+import { emitKnowledgeUpdate } from "../services/kb/ingestion.service.js";
+
+type CrawlPage = { metadata?: Record<string, unknown> | null };
+
+// Best-effort: store the site favicon on the source and adopt it as the agent's
+// default widget avatar when the agent has no avatar yet. The agent's *name* is
+// never touched — the widget shows only the operator-configured Agent Name.
+// Never throws — must not regress the synced status.
+async function applySiteDefaults(sourceId: Types.ObjectId, pages: CrawlPage[]): Promise<void> {
+  try {
+    const source = await KnowledgeSource.findById(sourceId)
+      .select({ sourceUrl: 1, agentId: 1, organizationId: 1 })
+      .lean();
+    if (!source) return;
+    const favicon = resolveFaviconUrl(pages, source.sourceUrl);
+
+    // Persist favicon on the knowledge-source document regardless.
+    if (favicon) {
+      await KnowledgeSource.updateOne({ _id: sourceId }, { $set: { faviconUrl: favicon } });
+    }
+
+    const [agent, settings] = await Promise.all([
+      Agent.findById(source.agentId).select({ avatarUrl: 1, name: 1 }),
+      WidgetSettings.findOne({
+        organizationId: source.organizationId,
+        agentId: source.agentId,
+      }).select({ avatarUrl: 1 }),
+    ]);
+
+    // --- Avatar: only set when no avatar is configured anywhere ---
+    const hasAvatar =
+      (agent?.avatarUrl && agent.avatarUrl.length > 0) ||
+      (settings?.avatarUrl && settings.avatarUrl.length > 0);
+    if (agent && !hasAvatar && favicon) {
+      agent.avatarUrl = favicon;
+      await agent.save();
+      logger.info("[firecrawl-job] set default agent avatar from favicon", {
+        agentId: source.agentId.toString(),
+        favicon,
+      });
+    }
+
+    // NOTE: we intentionally do NOT derive the agent's name from the website
+    // <title>. The widget must refer only to the agent's own identity (the
+    // "Agent Name" configured in Widget Studio), never the organization or
+    // website name — so scraping never touches `agent.name`.
+  } catch (err) {
+    logger.warn("[firecrawl-job] site-defaults step failed (non-fatal)", {
+      sourceId: sourceId.toString(),
+      err: (err as Error).message,
+    });
+  }
+}
 
 const BATCH = 20;
 
 type ProcessingSource = {
   _id: Types.ObjectId;
+  organizationId: Types.ObjectId;
   embeddingError?: string | null;
   retryCount?: number | null;
 };
@@ -31,7 +86,7 @@ export async function firecrawlPollOnce(): Promise<void> {
       embeddingStatus: "processing",
     })
       .limit(BATCH)
-      .select({ _id: 1, embeddingError: 1, retryCount: 1 })
+      .select({ _id: 1, organizationId: 1, embeddingError: 1, retryCount: 1 })
       .lean()) as ProcessingSource[];
   } catch (err) {
     logger.error("[firecrawl-job] query failed", { err: (err as Error).message });
@@ -55,13 +110,17 @@ export async function firecrawlPollOnce(): Promise<void> {
       }
 
       if (status.status === "failed") {
+        const errMsg = `firecrawl crawl failed (${crawlId})`;
         await KnowledgeSource.updateOne(
           { _id: src._id },
-          {
-            $set: { embeddingStatus: "error", embeddingError: `firecrawl crawl failed (${crawlId})` },
-            $inc: { retryCount: 1 },
-          },
+          { $set: { embeddingStatus: "error", embeddingError: errMsg }, $inc: { retryCount: 1 } },
         );
+        emitKnowledgeUpdate({
+          _id: src._id,
+          organizationId: src.organizationId,
+          embeddingStatus: "error",
+          embeddingError: errMsg,
+        });
         logger.error("[firecrawl-job] crawl failed", { sourceId: id, crawlId });
         continue;
       }
@@ -69,6 +128,8 @@ export async function firecrawlPollOnce(): Promise<void> {
       // status === "completed"
       const pages = status.data ?? [];
       await ingestCrawlResults(id, pages);
+      // Best-effort site defaults → widget title + agent avatar (never regresses sync status).
+      await applySiteDefaults(src._id, pages as CrawlPage[]);
     } catch (err) {
       const message = (err as Error).message;
       try {
@@ -79,6 +140,12 @@ export async function firecrawlPollOnce(): Promise<void> {
             $inc: { retryCount: 1 },
           },
         );
+        emitKnowledgeUpdate({
+          _id: src._id,
+          organizationId: src.organizationId,
+          embeddingStatus: "error",
+          embeddingError: message,
+        });
       } catch (updateErr) {
         logger.error("[firecrawl-job] failed to mark source errored", {
           sourceId: id,

@@ -274,6 +274,27 @@ Enhance operator draft message (see [§06](./06-operator-enhancement-llm.md)).
 | Body | `{ conversationId, draftText, tone? }` |
 | Response `200` | `{ enhancedText, originalText, changes }` |
 
+> **Operator send** is actually `POST /api/v1/messages` with body `{ conversationId, content, role?, attachments?, isEnhanced?, originalContent? }` (router mounted at `/messages`). `content` may be empty when `attachments[]` is present (the file names become the content/preview).
+
+### `POST /api/v1/messages/attachments`
+Operator attachment upload (mirror of the widget upload, operator JWT). _(Changelog 18.)_
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Body | `multipart/form-data`: `file`, `conversationId` |
+| Response `201` | `{ attachment: { url, fileUrl, fileName, mimeType, size, extractedText? } }` |
+| Notes | `url`/`fileUrl` → `${API_BASE_URL}/api/v1/messages/attachments/{sha}`; tenant-scoped storage key shared with widget uploads |
+
+### `GET /api/v1/messages/attachments/:hash`
+Streams a stored attachment for the operator's org (any org+sha — serves both operator- and widget-uploaded files). _(Changelog 18.)_
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Response `200` | file stream; `Cross-Origin-Resource-Policy: cross-origin` |
+| Notes | The dashboard loads these via the web app's same-origin proxy `GET /api/attachments/[hash]` (forwards with the bearer), so no token appears in URLs |
+
 ---
 
 ## Knowledge Base Routes (Dashboard — Private)

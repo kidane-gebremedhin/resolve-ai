@@ -24,10 +24,15 @@ services:
     container_name: csb-redis
     restart: unless-stopped
     ports: ['6379:6379']
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    # Evaluate in-container ($$ escapes compose interpolation) so an empty
+    # REDIS_PASSWORD means "no auth" (a bare `--requirepass` is a fatal arg),
+    # and a set one enables auth. The healthcheck auths the same way.
+    command: sh -c 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
     volumes: ['redis-data:/data']
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD-SHELL', 'redis-cli $${REDIS_PASSWORD:+-a "$$REDIS_PASSWORD"} ping | grep -q PONG']
       interval: 10s
       timeout: 5s
       retries: 10
