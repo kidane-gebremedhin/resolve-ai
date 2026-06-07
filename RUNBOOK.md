@@ -203,6 +203,7 @@ Outputs land in each workspace's `dist/` (api, embed) or `.next/` (web, widget).
 pnpm --filter @csb/api start
 pnpm --filter @csb/web start
 pnpm --filter @csb/widget start
+pnpm --filter @csb/admin start
 pnpm --filter @csb/embed preview   # serves dist/widget.js on http://localhost:3002
 ```
 

@@ -1,18 +1,49 @@
 name: csb-full
 
 services:
+  # Infra is inlined here (NOT `extends: docker-compose.yml`) so the file is
+  # self-contained: Coolify's compose preprocessing doesn't resolve cross-file
+  # `extends` volume definitions, which surfaced as
+  # "service mongo refers to undefined volume mongo-data". Keep in sync with the
+  # dev infra in docker-compose.yml. No `container_name` — the orchestrator
+  # (Coolify) manages container names.
   mongo:
-    extends:
-      file: docker-compose.yml
-      service: mongo
+    image: mongo:7
+    restart: unless-stopped
+    ports: ['27017:27017']
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE:-customer-support}
+    volumes:
+      - mongo-data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+    healthcheck:
+      test: ['CMD', 'mongosh', '--quiet', '--eval', 'db.runCommand({ ping: 1 })']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   redis:
-    extends:
-      file: docker-compose.yml
-      service: redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ['6379:6379']
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: sh -c 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
+    volumes: ['redis-data:/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli $${REDIS_PASSWORD:+-a "$$REDIS_PASSWORD"} ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   mailhog:
-    extends:
-      file: docker-compose.yml
-      service: mailhog
+    image: mailhog/mailhog:latest
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    restart: unless-stopped
 
   api:
     build:

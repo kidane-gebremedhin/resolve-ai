@@ -8,7 +8,7 @@ import { api, ApiError } from '@/lib/api';
 import { getActiveWebsiteId } from '@/lib/website-scope';
 
 export const metadata: Metadata = {
-  title: `Dashboard — ${APP_NAME}`,
+  title: `Dashboard - ${APP_NAME}`,
   description: `${APP_NAME} — ${APP_TAGLINE}.`,
 };
 
