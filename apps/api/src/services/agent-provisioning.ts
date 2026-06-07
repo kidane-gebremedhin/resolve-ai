@@ -23,6 +23,14 @@ export async function ensureWebsiteAgent(
     websiteId,
     name: agentName,
     welcomeMessage: "Hi! How can I help today?",
+    // Seed a few generic suggested questions so the widget shows them out of the
+    // box (rendered as chips on the pre-chat screen). Operators edit these in
+    // /app/widget; clearing the list hides the chips.
+    suggestedQuestions: [
+      "What can you help me with?",
+      "How do I get started?",
+      "How do I contact support?",
+    ],
     isActive: true,
   });
 }

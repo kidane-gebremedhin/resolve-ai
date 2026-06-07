@@ -7,8 +7,8 @@ import { APP_NAME, APP_TAGLINE } from '@/lib/app-config';
 export const metadata: Metadata = {
   // Root layout sets title.template = "%s — ${APP_NAME}", but the home page
   // wants its full marketing tagline, so we override the default here.
-  title: { absolute: `${APP_NAME} — ${APP_TAGLINE}` },
-  description: `${APP_NAME} — AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
+  title: { absolute: `${APP_NAME} - ${APP_TAGLINE}` },
+  description: `${APP_NAME} - AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
 };
 
 // Authenticated visitors land on the marketing home only by accident (typed URL,
