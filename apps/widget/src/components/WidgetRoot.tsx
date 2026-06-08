@@ -44,7 +44,8 @@ import { playNotification } from "../lib/audio";
 import { BootScreen } from "./BootScreen";
 import { ErrorScreen } from "./ErrorScreen";
 import { PreChatScreen } from "./PreChatScreen";
-import { SectionsBar } from "./SectionsBar";
+import { SectionsTab } from "./SectionsTab";
+import { SectionContentView } from "./SectionContentView";
 import { ChatScreen } from "./ChatScreen";
 import { ContactPromptScreen } from "./ContactPromptScreen";
 import { ResolvedScreen } from "./ResolvedScreen";
@@ -129,6 +130,13 @@ export function WidgetRoot({
   // Kept out of the state machine so the (unit-tested) reducer stays focused on
   // conversation lifecycle, not transient UI.
   const [aiTyping, setAiTyping] = useState(false);
+  // Top-level widget tab. "Sections" is a help-center tab (only shown when the
+  // org configured sections); "Chat" is the conversation experience.
+  const [tab, setTab] = useState<"chat" | "sections">("chat");
+  // The section whose linked content is being viewed inline (null = list view).
+  // Sections are a help-center feature: tapping one renders its `url` in an
+  // in-widget iframe rather than opening a new tab or starting a chat.
+  const [activeSection, setActiveSection] = useState<WidgetSection | null>(null);
   const aiTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationStatusRef = useRef<ConversationStatus | null>(null);
   useEffect(() => {
@@ -481,33 +489,16 @@ export function WidgetRoot({
     [ensureConversation, sendCustomerMessage, send],
   );
 
-  const handleSectionSelect = useCallback(
-    async (section: WidgetSection) => {
-      // Link sections are handled inside SectionCard (window.open). We only
-      // see start-chat / topic here.
-      setBusy(true);
-      try {
-        const token = sessionTokenRef.current;
-        if (!token) throw new Error("No active session.");
-        const { conversation } = await createConversation(token, section._id);
-        updateSession({ conversationId: conversation._id });
-        send({
-          type: "CONVERSATION_CREATED",
-          conversationId: conversation._id,
-          status: conversation.status,
-        });
-        // If the section carries a topicPrompt, fire it as the customer's
-        // first message so the AI has something to chew on.
-        if (section.action === "topic" && section.topicPrompt) {
-          await sendCustomerMessage(section.topicPrompt, conversation._id);
-        }
-      } catch (e) {
-        send({ type: "ERROR", message: (e as Error).message });
-      } finally {
-        setBusy(false);
-      }
+  const handleOpenSection = useCallback(
+    (section: WidgetSection) => {
+      // Sections are a help-center feature (the "Sections" tab): open the
+      // section's linked content INLINE inside the widget (see
+      // SectionContentView), not in a new tab and not as a new conversation.
+      // Sections without a url are no-ops.
+      if (!section.url) return;
+      setActiveSection(section);
     },
-    [send, sendCustomerMessage],
+    [],
   );
 
   const handleStartNew = useCallback(() => {
@@ -526,23 +517,6 @@ export function WidgetRoot({
       }
     },
     [state.context.conversationId, ensureConversation, sendCustomerMessage, send],
-  );
-
-  // Tapping a section chip from the persistent bar DURING a conversation: links
-  // open in a new tab; everything else sends the topic prompt (or the title) as
-  // the visitor's next message in the current conversation, rather than starting
-  // a brand-new one (which is what the full sections screen does).
-  const handleSectionShortcut = useCallback(
-    (section: WidgetSection) => {
-      if (section.action === "link" && section.url) {
-        window.open(section.url, "_blank", "noopener,noreferrer");
-        return;
-      }
-      const text = (section.topicPrompt ?? "").trim() || section.title;
-      if (!text) return;
-      void handleChatSend(text);
-    },
-    [handleChatSend],
   );
 
   // Upload a file and RETURN its metadata for the composer to queue as a
@@ -623,10 +597,8 @@ export function WidgetRoot({
           <PreChatScreen
             agent={state.context.agent}
             settings={state.context.settings}
-            sections={state.context.sections}
             primaryColor={primaryColor}
             onStart={handlePreChatStart}
-            onSelectSection={handleSectionSelect}
             busy={busy}
           />
         );
@@ -686,6 +658,13 @@ export function WidgetRoot({
     }
   })();
 
+  // The Chat/Sections tab bar shows only when the org configured sections AND
+  // we're on an interactive screen (not boot/error). Sections are help-center
+  // content; the Chat tab is the conversation.
+  const hasSections = state.context.sections.length > 0;
+  const showTabs = hasSections && state.state !== "boot" && state.state !== "error";
+  const onSectionsTab = showTabs && tab === "sections";
+
   return (
     <div
       className={`${isDark ? "dark " : ""}fixed inset-0 z-[2147483000] flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl dark:bg-neutral-900 sm:inset-auto sm:h-[600px] sm:max-h-[80vh] sm:w-[400px] sm:rounded-2xl ${positionClass}`}
@@ -695,33 +674,113 @@ export function WidgetRoot({
           to the widget bounds rather than the viewport. The active screen fills
           the flex-1 area; the optional branding footer sits beneath it. */}
       <div className="flex h-full w-full flex-col">
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          {screen}
-          {state.overlay === "contact_prompt" &&
-            (state.state === "chat_active" || state.state === "escalated") ? (
-            <ContactPromptScreen
-              primaryColor={primaryColor}
-              initialEmail={state.context.contact.email}
-              initialPhone={state.context.contact.phone}
-              defaultCountry={country ?? undefined}
-              onSave={handleContactSave}
-            />
-          ) : null}
-        </div>
-        {/* Persistent topic shortcuts: kept pinned at the bottom during a
-            conversation so the configured sections never disappear once the
-            visitor starts chatting. Hidden while the contact-prompt overlay is
-            forcing the composer closed. */}
-        {(state.state === "chat_active" || state.state === "escalated") &&
-        state.overlay !== "contact_prompt" &&
-        state.context.sections.length > 0 ? (
-          <SectionsBar
-            sections={state.context.sections}
+        {/* Mobile close button — top-right corner. On phones the widget is
+            fullscreen, so the embed's floating launcher is awkward to reach; this
+            posts `csb:close` to the host, which collapses back to the launcher.
+            Hidden on desktop (sm+), where the launcher toggles to a ✕. */}
+        <button
+          type="button"
+          aria-label="Close chat"
+          onClick={() => {
+            try {
+              window.parent?.postMessage({ type: "csb:close" }, "*");
+            } catch {
+              /* not embedded (e.g. studio preview) — no-op */
+            }
+          }}
+          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/10 text-neutral-700 transition hover:bg-black/20 active:scale-95 dark:bg-white/15 dark:text-neutral-100 dark:hover:bg-white/25 sm:hidden"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+        {showTabs ? (
+          <WidgetTabBar
+            tab={tab}
             primaryColor={primaryColor}
-            onSelect={handleSectionShortcut}
+            onChange={(t) => {
+              setTab(t);
+              // Returning to the Sections tab always starts at the list.
+              if (t === "sections") setActiveSection(null);
+            }}
           />
         ) : null}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {onSectionsTab ? (
+            activeSection ? (
+              <SectionContentView
+                section={activeSection}
+                primaryColor={primaryColor}
+                onBack={() => setActiveSection(null)}
+              />
+            ) : (
+              <SectionsTab
+                agent={state.context.agent}
+                sections={state.context.sections}
+                primaryColor={primaryColor}
+                onSelect={handleOpenSection}
+              />
+            )
+          ) : (
+            <>
+              {screen}
+              {state.overlay === "contact_prompt" &&
+              (state.state === "chat_active" || state.state === "escalated") ? (
+                <ContactPromptScreen
+                  primaryColor={primaryColor}
+                  initialEmail={state.context.contact.email}
+                  initialPhone={state.context.contact.phone}
+                  defaultCountry={country ?? undefined}
+                  onSave={handleContactSave}
+                />
+              ) : null}
+            </>
+          )}
+        </div>
         {showBranding ? <PoweredBy /> : null}
+      </div>
+    </div>
+  );
+}
+
+// Segmented Chat / Sections tab control pinned to the top of the widget. Shown
+// only when the org configured sections (otherwise the widget is chat-only).
+function WidgetTabBar({
+  tab,
+  primaryColor,
+  onChange,
+}: {
+  tab: "chat" | "sections";
+  primaryColor: string;
+  onChange: (tab: "chat" | "sections") => void;
+}) {
+  const tabs = [
+    { id: "chat" as const, label: "Chat" },
+    { id: "sections" as const, label: "Sections" },
+  ];
+  return (
+    <div className="shrink-0 border-b border-neutral-100 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="mx-auto flex w-full max-w-[280px] items-center gap-1 rounded-full bg-neutral-100 p-1 dark:bg-neutral-800">
+        {tabs.map((t) => {
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onChange(t.id)}
+              className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                active
+                  ? "text-white shadow-sm"
+                  : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+              }`}
+              style={active ? { background: primaryColor } : undefined}
+              aria-pressed={active}
+            >
+              {t.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

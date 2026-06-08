@@ -1,8 +1,8 @@
 "use client";
 
-// SectionCard — one clickable tile on the sections screen. Three flavours per
-// spec 09: external link, start-chat (new conversation), or topic (new
-// conversation pre-filled with section.topicPrompt — handled by parent).
+// SectionCard — one clickable tile in the Sections (help-center) tab. Clicking
+// it delegates to the parent (WidgetRoot.handleOpenSection), which renders the
+// section's linked content INLINE inside the widget (SectionContentView).
 
 import type { WidgetSection } from "../lib/api-client";
 
@@ -15,18 +15,10 @@ export function SectionCard({
   primaryColor: string;
   onSelect: (section: WidgetSection) => void;
 }) {
-  function handleClick() {
-    if (section.action === "link" && section.url) {
-      window.open(section.url, "_blank", "noopener,noreferrer");
-      return;
-    }
-    onSelect(section);
-  }
-
   return (
     <button
       type="button"
-      onClick={handleClick}
+      onClick={() => onSelect(section)}
       className="group flex w-full items-start gap-3 rounded-2xl border border-neutral-200 p-3 text-left transition hover:border-neutral-300 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:border-neutral-600 dark:hover:bg-neutral-800"
     >
       <span

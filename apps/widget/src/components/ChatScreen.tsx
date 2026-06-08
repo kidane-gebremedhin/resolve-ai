@@ -14,6 +14,7 @@ import { WidgetHeader } from "./WidgetHeader";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { EscalatedBanner } from "./EscalatedBanner";
+import { SuggestedQuestions } from "./SuggestedQuestions";
 
 export function ChatScreen({
   agent,
@@ -54,26 +55,15 @@ export function ChatScreen({
         <EscalatedBanner operatorJoined={messages.some((m) => m.role === "operator")} />
       ) : null}
       <MessageList messages={messages} primaryColor={primaryColor} typing={aiTyping} sessionToken={sessionToken} />
-      {/* Suggested questions (configured per-agent in /app/widget) — shown only
-          before the first message, right-aligned like the customer's own
-          bubbles. Clicking sends immediately. */}
-      {agent?.suggestedQuestions &&
-      agent.suggestedQuestions.length > 0 &&
-      messages.length === 0 &&
-      !composerDisabled ? (
-        <div className="flex flex-col items-end gap-1.5 px-3 pb-1.5">
-          {agent.suggestedQuestions.map((q, i) => (
-            <button
-              key={i}
-              type="button"
-              onClick={() => onSend(q)}
-              disabled={aiTyping}
-              className="max-w-[85%] rounded-full border border-neutral-200 bg-white px-3.5 py-2 text-right text-sm text-neutral-800 transition hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700"
-            >
-              {q}
-            </button>
-          ))}
-        </div>
+      {/* Suggested questions (configured per-agent in /app/widget) — a persistent
+          chip strip in the Chat tab, kept visible even after the first message.
+          Hidden only while the contact-prompt overlay forces the composer closed. */}
+      {!composerDisabled ? (
+        <SuggestedQuestions
+          questions={agent?.suggestedQuestions ?? []}
+          onSend={onSend}
+          disabled={aiTyping}
+        />
       ) : null}
       <Composer
         onSend={onSend}
