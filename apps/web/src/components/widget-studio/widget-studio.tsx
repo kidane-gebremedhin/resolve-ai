@@ -16,16 +16,21 @@
 // immediately, even before save. The widget app is responsible for reading
 // these query params — we just hand them off.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Check,
   Code2,
+  ExternalLink,
   Monitor,
   Palette,
+  Pencil,
   Plus,
   Settings2,
   Smartphone,
+  Trash2,
   Type as TypeIcon,
   X,
 } from "lucide-react";
@@ -398,6 +403,8 @@ export function WidgetStudio({
             </TabsContent>
 
             <TabsContent value="content" className="mt-4 space-y-4">
+              <SectionsManager agentId={agent._id} />
+
               <div className="rounded-xl border border-border bg-card p-5 space-y-4">
                 <div>
                   <Label className="text-xs">System prompt override</Label>
@@ -695,6 +702,281 @@ function SuggestedQuestionsEditor({
         </Button>
       </div>
     </div>
+  );
+}
+
+type SectionItem = {
+  _id: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  url?: string;
+  order?: number;
+};
+
+type SectionDraft = { title: string; description: string; icon: string; url: string };
+
+const EMPTY_SECTION: SectionDraft = { title: "", description: "", icon: "", url: "" };
+
+// Sections manager — the help-center "Sections" tab content. Each section has a
+// title + link; in the widget, tapping it renders that link inline (iframe).
+// Unlike the agent/settings panels, sections persist immediately via the
+// /sections/:agentId CRUD API (no dependency on the page's Save button).
+function SectionsManager({ agentId }: { agentId: string }) {
+  const [sections, setSections] = useState<SectionItem[] | null>(null);
+  const [draft, setDraft] = useState<SectionDraft>(EMPTY_SECTION);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    clientApi
+      .get<SectionItem[]>(`/sections/${agentId}`)
+      .then((rows) => {
+        if (!cancelled) setSections(rows);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Failed to load sections.");
+          setSections([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId]);
+
+  function resetForm() {
+    setDraft(EMPTY_SECTION);
+    setEditingId(null);
+  }
+
+  // Build the API body, dropping empty optionals so server-side validation
+  // (url must be a valid URL when present) doesn't reject empty strings.
+  function toBody(d: SectionDraft, order?: number) {
+    return {
+      title: d.title.trim(),
+      description: d.description.trim() || undefined,
+      icon: d.icon.trim() || undefined,
+      url: d.url.trim() || undefined,
+      ...(order !== undefined ? { order } : {}),
+    };
+  }
+
+  async function submit() {
+    const title = draft.title.trim();
+    if (!title) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (editingId) {
+        const updated = await clientApi.patch<SectionItem>(
+          `/sections/${editingId}`,
+          toBody(draft),
+        );
+        setSections((prev) =>
+          (prev ?? []).map((s) => (s._id === editingId ? updated : s)),
+        );
+      } else {
+        const created = await clientApi.post<SectionItem>(
+          `/sections/${agentId}`,
+          toBody(draft, sections?.length ?? 0),
+        );
+        setSections((prev) => [...(prev ?? []), created]);
+      }
+      resetForm();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed (check the URL is valid).");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await clientApi.delete(`/sections/${id}`);
+      setSections((prev) => (prev ?? []).filter((s) => s._id !== id));
+      if (editingId === id) resetForm();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function move(idx: number, dir: -1 | 1) {
+    const list = sections ?? [];
+    const j = idx + dir;
+    if (j < 0 || j >= list.length) return;
+    const next = [...list];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setSections(next);
+    setBusy(true);
+    setError(null);
+    try {
+      // Persist the two swapped items' new positions (order = new index).
+      await clientApi.patch(`/sections/${next[idx]._id}`, { order: idx });
+      await clientApi.patch(`/sections/${next[j]._id}`, { order: j });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reorder failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startEdit(s: SectionItem) {
+    setEditingId(s._id);
+    setDraft({
+      title: s.title ?? "",
+      description: s.description ?? "",
+      icon: s.icon ?? "",
+      url: s.url ?? "",
+    });
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+      <div>
+        <Label className="text-xs font-medium">Sections (help center)</Label>
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          Topics shown in the widget&apos;s <span className="font-medium">Sections</span> tab.
+          Tapping one opens its link inline inside the widget. Saved instantly.
+        </p>
+      </div>
+
+      {error && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-[11px] text-destructive">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {sections === null ? (
+          <p className="text-[11px] italic text-muted-foreground">Loading…</p>
+        ) : sections.length === 0 ? (
+          <p className="text-[11px] italic text-muted-foreground">
+            No sections yet — add one below.
+          </p>
+        ) : (
+          sections.map((s, i) => (
+            <div
+              key={s._id}
+              className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-2"
+            >
+              <span className="text-sm">{s.icon || "•"}</span>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium">{s.title}</div>
+                {s.url ? (
+                  <div className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+                    <ExternalLink className="h-2.5 w-2.5 shrink-0" />
+                    <span className="truncate">{s.url}</span>
+                  </div>
+                ) : (
+                  <div className="text-[10px] italic text-warning">No link set</div>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-0.5">
+                <IconBtn label="Move up" disabled={busy || i === 0} onClick={() => move(i, -1)}>
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </IconBtn>
+                <IconBtn
+                  label="Move down"
+                  disabled={busy || i === sections.length - 1}
+                  onClick={() => move(i, 1)}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </IconBtn>
+                <IconBtn label="Edit" disabled={busy} onClick={() => startEdit(s)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </IconBtn>
+                <IconBtn label="Delete" disabled={busy} onClick={() => remove(s._id)}>
+                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                </IconBtn>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Add / edit form */}
+      <div className="space-y-2 rounded-md border border-dashed border-border p-3">
+        <div className="text-[11px] font-medium text-muted-foreground">
+          {editingId ? "Edit section" : "Add section"}
+        </div>
+        <div className="flex gap-2">
+          <Input
+            value={draft.icon}
+            onChange={(e) => setDraft((d) => ({ ...d, icon: e.target.value }))}
+            placeholder="🔖"
+            className="h-9 w-14 text-center"
+            aria-label="Icon (emoji)"
+          />
+          <Input
+            value={draft.title}
+            onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+            placeholder="Section title (e.g. Sign-up)"
+            className="h-9 flex-1"
+          />
+        </div>
+        <Input
+          value={draft.url}
+          onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
+          placeholder="https://help.example.com/sign-up"
+          className="h-9"
+        />
+        <Input
+          value={draft.description}
+          onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+          placeholder="Short description (optional)"
+          className="h-9"
+        />
+        <div className="flex justify-end gap-2">
+          {editingId && (
+            <Button size="sm" variant="outline" onClick={resetForm} disabled={busy}>
+              Cancel
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={submit}
+            disabled={busy || !draft.title.trim()}
+            className="gap-1"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {editingId ? "Save section" : "Add section"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function IconBtn({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {children}
+    </button>
   );
 }
 

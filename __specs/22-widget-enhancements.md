@@ -46,19 +46,21 @@ Each feature is independently shippable; they share no hard ordering except that
   the iframe (`2147483647` vs `2147483646`) so it stays visible and tappable on top
   of the fullscreen panel — it toggles to a ✕ to close. (Earlier it shared the
   iframe's z-index and was painted over once the panel opened.)
-- **Persistent sections bar**: the configured section shortcuts stay pinned at the
-  bottom of the widget **during a conversation** (`SectionsBar`), so they don't
-  disappear once the visitor starts chatting. Tapping a chip opens a `link`, or
-  sends the `topicPrompt` (falling back to the title) into the **current**
-  conversation rather than starting a new one. Hidden while the contact-prompt
-  overlay is forcing the composer closed.
-- **Sections panel before the first message** _(Changelog 28)_: there is no
-  separate full-screen sections state. Before a conversation starts, the configured
-  sections render as a scrollable `SectionCard` panel **floating over the bottom of
-  the transcript, just above the composer** in `pre_chat`, so a new visitor can
-  either tap a topic or type their own message. The panel is shown until the first message is sent (then the view is
-  `chat_active`, where the compact `SectionsBar` takes over). See
-  [09-widget-state-machine.md](./09-widget-state-machine.md).
+- **Sections as a help-center TAB** _(Changelog 29 — supersedes the Changelog
+  27/28 sections bar & pre_chat panel)_: Sections are now a standalone feature, not
+  part of chat and not the same as suggested questions. When the org configures
+  sections the widget shows a top **Chat / Sections** tab bar (`WidgetTabBar`). The
+  **Sections** tab (`SectionsTab`) lists `SectionCard`s; tapping one renders that
+  section's `url` **inline inside the widget** via an iframe (`SectionContentView`,
+  with a back button + an "Open ↗" framing fallback) — not a new tab, not a chat.
+  The old `SectionsBar` (in-conversation strip) and the pre_chat sections panel
+  were removed. Managed via the Widget Studio **Sections** manager (see below).
+- **Suggested questions** stay in the **Chat** tab as a **persistent chip strip
+  above the composer** (`SuggestedQuestions`), visible even after the first message
+  — a separate feature from Sections.
+- **Mobile close button**: on phones the widget shows its own ✕ in the top-right
+  (`WidgetRoot`, posts `csb:close`); the embed hides the floating launcher while
+  open on phones to avoid a redundant control.
 
 ### Open questions (flag in plan, default if unanswered)
 - O1: Match the accent color exactly, or introduce a darker "send-pressed" shade? → Default: derive pressed shade via CSS `filter: brightness(0.92)`, no new setting.
@@ -66,9 +68,11 @@ Each feature is independently shippable; they share no hard ordering except that
 ### Files
 - [`apps/widget/src/components/Composer.tsx`](../apps/widget/src/components/Composer.tsx) — glyph + button sizing/states.
 - [`apps/embed/src/widget.ts`](../apps/embed/src/widget.ts) — `injectStyles()` iframe + launcher dimensions, offsets, transitions, mobile fullscreen + launcher z-index, `isFullscreenViewport()` resize guard.
-- [`apps/widget/src/components/SectionsBar.tsx`](../apps/widget/src/components/SectionsBar.tsx) — persistent bottom sections bar shown during a conversation.
-- [`apps/widget/src/components/PreChatScreen.tsx`](../apps/widget/src/components/PreChatScreen.tsx) — renders the sections `SectionCard` panel above the composer before the first message _(Changelog 28)_.
-- [`apps/widget/src/components/WidgetRoot.tsx`](../apps/widget/src/components/WidgetRoot.tsx) — renders `SectionsBar` on chat states; `handleSectionShortcut`. Boot routes a no-conversation visitor to `pre_chat` (the standalone `sections` state was removed in Changelog 28).
+- [`apps/widget/src/components/SectionsTab.tsx`](../apps/widget/src/components/SectionsTab.tsx) — the Sections (help-center) tab: list of `SectionCard`s _(Changelog 29)_.
+- [`apps/widget/src/components/SectionContentView.tsx`](../apps/widget/src/components/SectionContentView.tsx) — inline iframe view of a section's link, with back + "Open ↗" fallback _(Changelog 29)_.
+- [`apps/widget/src/components/SuggestedQuestions.tsx`](../apps/widget/src/components/SuggestedQuestions.tsx) — persistent suggested-question chip strip in the Chat tab _(Changelog 29)_.
+- [`apps/widget/src/components/WidgetRoot.tsx`](../apps/widget/src/components/WidgetRoot.tsx) — `WidgetTabBar` (Chat/Sections), `tab`/`activeSection` state, `handleOpenSection`, mobile ✕ close button _(Changelog 29)_.
+- [`apps/web/src/components/widget-studio/widget-studio.tsx`](../apps/web/src/components/widget-studio/widget-studio.tsx) — `SectionsManager` (dashboard CRUD for sections) _(Changelog 29)_.
 
 ---
 
@@ -177,8 +181,8 @@ Operators authenticate with a NextAuth bearer (not a widget session), so they ge
 Per-agent **Suggested questions** (set in `/app/widget`, persisted on `Agent.suggestedQuestions`, delivered to the widget as `agent.suggestedQuestions`) were rendered at the **top** of the pre-chat conversation area, left-aligned under a "Suggested" label — not matching the expected Chatbase-style placement.
 
 ### Design
-- Render them as **right-aligned outlined pills pinned to the bottom**, just above the composer (like the customer's own message bubbles). Clicking a chip **sends it immediately** (`onStart`/`onSend`), and the chips disappear after the first message. Reference: Chatbase widget UI.
-- Primary surface: [`PreChatScreen.tsx`](../apps/widget/src/components/PreChatScreen.tsx) (the first-visit entry view that also shows the welcome message). Also added to [`ChatScreen.tsx`](../apps/widget/src/components/ChatScreen.tsx) for an empty active conversation (shown only while `messages.length === 0`).
+- Render them just above the composer. On the empty `pre_chat` screen they appear as right-aligned outlined pills (Chatbase-style); in `chat_active` they appear as a compact horizontal chip strip. Clicking a chip **sends it immediately** (`onStart`/`onSend`).
+- **Persistent _(Changelog 29)_:** the chips stay visible **throughout the Chat tab, even after the first message** (no longer hidden once `messages.length > 0`) via the shared [`SuggestedQuestions.tsx`](../apps/widget/src/components/SuggestedQuestions.tsx) strip in [`ChatScreen.tsx`](../apps/widget/src/components/ChatScreen.tsx); [`PreChatScreen.tsx`](../apps/widget/src/components/PreChatScreen.tsx) keeps the prominent empty-state pills. Hidden only while the contact-prompt overlay forces the composer closed. (Pre-chat also fixes an empty `widgetSettings.suggestedQuestions` array shadowing the agent's list.)
 - Source precedence unchanged: `settings.suggestedQuestions ?? agent.suggestedQuestions`. Capped at 4.
 
 ---

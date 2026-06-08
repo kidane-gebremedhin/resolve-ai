@@ -162,11 +162,18 @@ const CLOSE_ICON_SVG =
     const el = ensureIframe();
     el.style.display = "block";
     setLauncherOpenState(true);
+    // On phones the panel is fullscreen and the widget shows its own top-right
+    // ✕ (posts csb:close); hide the floating launcher while open so there isn't
+    // a redundant close control. On desktop the launcher stays (toggles to ✕).
+    if (isFullscreenViewport()) launcher.style.display = "none";
   }
 
   function closeWidget(): void {
     if (iframe) iframe.style.display = "none";
     setLauncherOpenState(false);
+    // Restore the launcher (CSS controls its real display) so it's tappable to
+    // reopen — needed after it was hidden while open on a phone.
+    launcher.style.display = "";
   }
 
   launcher.addEventListener("click", () => {

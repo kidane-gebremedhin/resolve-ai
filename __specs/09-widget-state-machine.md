@@ -34,12 +34,11 @@ stateDiagram-v2
     error --> loading: Retry
     
     note right of pre_chat
-        Shows: greeting/welcome,
-        suggested questions,
-        the sections panel (floats
-        above the input, visible
-        until the 1st message),
-        message input.
+        Chat tab. Shows: greeting,
+        persistent suggested-question
+        chips, message input.
+        (Sections are a separate tab,
+        not part of chat.)
         Contact info is collected
         AFTER the first message
         (contact_prompt overlay).
@@ -76,20 +75,15 @@ stateDiagram-v2
     the organization name)
   - Optional welcome message (from `widgetSettings.welcomeMessage` /
     `agent.welcomeMessage`) — no hard-coded "How can we help?" greeting
-  - Suggested questions (from `agent.suggestedQuestions`)
-  - **The configured sections panel**, floating over the bottom of the transcript
-    just above the composer (see "Sections" below)
+  - Suggested questions — a **persistent chip strip just above the composer**,
+    kept visible throughout the Chat tab (not only pre-first-message). Clicking
+    one sends it. Distinct from Sections (see below).
   - Message input composer
-- **Sections + the composer coexist**: the visitor can tap a section topic OR
-  type their own message. The sections panel stays visible until the first
-  message is sent, then disappears (the state becomes `chat_active`). This
-  replaced the old full-screen `sections` state, which had no composer and so
-  forced the visitor to pick a pre-set topic.
 - **No contact form here** — conversation-first. Email/phone capture is
   deferred to the `contact_prompt` overlay, which fires after the first
   AI reply. Showing inputs up-front taxes the user before they've gotten
   any value from the chat.
-- On first message (typed, or a tapped section topic):
+- On first message (typed, or a tapped suggested question):
   1. Create new contact session: `POST /api/v1/widget/sessions`
   2. Save `{ contactSessionId, token }` to localStorage
   3. Create conversation: `POST /api/v1/widget/conversations`
@@ -128,28 +122,30 @@ stateDiagram-v2
   phone and press "Continue" (`ContactPromptScreen` has no skip affordance).
 - **Important**: Chat remains visible but not functional while prompt is shown
 
-### Sections (not a state — a panel within `pre_chat`)
-- There is **no standalone `sections` state**. The widget sections (quick
-  links/topics configured by the org) render as a scrollable panel **floating over
-  the bottom of the transcript, anchored just above the composer** in `pre_chat`
-  (`SectionCard`s; see [`PreChatScreen`](../apps/widget/src/components/PreChatScreen.tsx)).
-- Each section can:
-  - `link` → open URL in new tab
-  - `start-chat` → start a conversation → `chat_active`
-  - `topic` → start a conversation with a pre-filled message (`section.topicPrompt`)
-- **Entry surface only.** Sections are shown only before the first message is
-  sent; once the visitor is chatting the widget never re-shows the panel (a status
-  change on a resolved conversation goes to `resolved` / the ResolvedScreen — see
-  below). The persistent in-conversation section shortcuts are the separate
-  compact `SectionsBar` strip (spec 22), shown during `chat_active`/`escalated`.
+### Sections (a top-level TAB — help center, not a state)
+- There is **no standalone `sections` state**, and sections are **not** part of
+  the chat flow or the same thing as suggested questions. When the org configures
+  sections, the widget shows a top **Chat / Sections** tab bar
+  ([`WidgetTabBar`](../apps/widget/src/components/WidgetRoot.tsx)). The **Sections**
+  tab ([`SectionsTab`](../apps/widget/src/components/SectionsTab.tsx)) is a
+  help-center list of `SectionCard`s.
+- Tapping a section **renders its `url` inline inside the widget** via an iframe
+  ([`SectionContentView`](../apps/widget/src/components/SectionContentView.tsx)) —
+  a "‹ Back" header returns to the list, and an "Open ↗" link is the fallback for
+  sites that refuse framing (X-Frame-Options / CSP). It does **not** open a new
+  tab or start a conversation. (`tab` and `activeSection` are local `WidgetRoot`
+  UI state, not machine states.)
+- The Chat tab is the conversation experience (the states above). The two tabs are
+  independent; switching to Sections never disturbs an in-progress chat.
+- Managed in the dashboard via the Widget Studio **Sections** manager (spec 22).
 
 ### `resolved`
 - Conversation has been resolved (by AI or operator)
 - Shows:
   - "This conversation has been resolved" banner
   - Full conversation history (read-only)
-  - "Start a new conversation" button → `pre_chat` (where the sections panel
-    re-appears above the composer, if the org has sections configured)
+  - "Start a new conversation" button → `pre_chat` (the Chat tab; Sections remain
+    available as their own tab)
 - New messages after resolution initiates new conversation (No reopen resolved ones):
 - A `CONVERSATION_STATUS_CHANGED` event marking the conversation resolved transitions
   to `resolved` (this screen), **never** to a sections surface mid-conversation.
@@ -240,7 +236,7 @@ function clearSession() {
 | Scenario | Behavior |
 |----------|----------|
 | Token expired (24h) | Widget creates new session → customer starts fresh conversation |
-| Token valid, conversation resolved | Show `resolved` screen; "Start a new conversation" → `pre_chat` (sections panel above the composer) |
+| Token valid, conversation resolved | Show `resolved` screen; "Start a new conversation" → `pre_chat` (Chat tab) |
 | Token valid, conversation active | Resume conversation, show existing messages |
 | localStorage cleared | Same as expired: new session |
 | Different browser/device | New session (no cross-device continuity in v1) |
@@ -275,7 +271,7 @@ flowchart TD
     H -->|No| J[Show pre-chat screen]
     I --> K{Active conversation?}
     K -->|Yes| L[Show chat_active]
-    K -->|No| M[Show pre_chat: composer + sections panel]
+    K -->|No| M[Show pre_chat: composer + suggested questions; Sections in its own tab]
     J --> N[Wait for first message]
 ```
 
