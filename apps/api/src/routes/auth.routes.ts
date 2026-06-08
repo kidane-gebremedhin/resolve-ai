@@ -65,6 +65,32 @@ router.post("/refresh", async (req: Request, res: Response) => {
   res.json({ accessToken, expiresIn: 900 });
 });
 
+// Google's stable per-account id lives in the id_token's `sub` claim. We use it
+// as `providerId` so the unique (provider, providerId) index identifies a Google
+// account exactly once. The old `idToken.slice(0, 64)` was wrong on two counts:
+// it changed every login (a fresh JWT each time), and—because every Google
+// id_token shares the same JWT header + signing-key `kid` prefix—two *different*
+// new users routinely collided on the first 64 chars, throwing E11000 → 500.
+// We decode (not verify) the payload, matching the existing "no upstream
+// verification yet" posture; signature verification is the follow-up.
+function googleProviderId(idToken: unknown, email: string): string {
+  if (typeof idToken === "string") {
+    const payloadPart = idToken.split(".")[1];
+    if (payloadPart) {
+      try {
+        const payload = JSON.parse(Buffer.from(payloadPart, "base64url").toString("utf8"));
+        if (typeof payload?.sub === "string" && payload.sub) return payload.sub;
+      } catch {
+        // Not a real JWT (e.g. a test token) — fall through to the email fallback.
+      }
+    }
+  }
+  // Fallback keeps providerId unique per email so a missing `sub` or a non-JWT
+  // token can never collide on the unique index (which would 500 every signup
+  // after the first).
+  return `email:${email.toLowerCase()}`;
+}
+
 // Google id_token exchange: NextAuth on apps/web calls this after Google sign-in.
 // In Phase 0 we accepted any id_token and didn't verify upstream — this scaffolds
 // the endpoint shape; signature verification belongs to the google-auth-library
@@ -73,19 +99,23 @@ router.post("/refresh", async (req: Request, res: Response) => {
 // First-time Google sign-in MUST also create an Organization + owner Membership.
 // Without this the issued JWT carries no `organizationId`, and every protected
 // route then 403s with "No organization context in token." See spec 12.
+// An EXISTING email reuses its user + organization (ensureMembershipForUser is
+// keyed by userId and returns the existing membership) — we never create a
+// second organization for an email that already has one.
 router.post("/google", async (req: Request, res: Response) => {
   const { idToken, email, name } = req.body ?? {};
   if (typeof email !== "string" || typeof name !== "string") {
     throw new UnauthorizedError("Missing Google identity payload.");
   }
-  // For Phase 1 unit-testing without a real Google token: just upsert by email.
+  // Upsert by email: an existing account (Google OR credentials) is reused, so a
+  // returning user never gets a duplicate user record or organization.
   let user = await User.findOne({ email });
   if (!user) {
     user = await User.create({
       email,
       name,
       provider: "google",
-      providerId: typeof idToken === "string" ? idToken.slice(0, 64) : undefined,
+      providerId: googleProviderId(idToken, email),
       role: "user",
     });
   }

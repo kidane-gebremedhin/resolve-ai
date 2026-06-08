@@ -1,15 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44" fill="none" role="img" aria-label="Logo">
   <defs>
-    <linearGradient id="helioMarkGreen" x1="0" y1="0" x2="44" y2="44" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#34D399"/>
-      <stop offset="1" stop-color="#059669"/>
+    <linearGradient id="helioMark" x1="0" y1="0" x2="44" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8b5cf6"/>
+      <stop offset="1" stop-color="#6d28d9"/>
     </linearGradient>
   </defs>
-  <rect width="44" height="44" rx="12" fill="url(#helioMarkGreen)"/>
+  <rect width="44" height="44" rx="12" fill="url(#helioMark)"/>
   <g transform="translate(10 10)">
     <path d="M5 4h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-6l-4 3.5V16H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" fill="#ffffff"/>
-    <circle cx="8.5" cy="10" r="1.15" fill="#059669"/>
-    <circle cx="12" cy="10" r="1.15" fill="#059669"/>
-    <circle cx="15.5" cy="10" r="1.15" fill="#059669"/>
+    <circle cx="8.5" cy="10" r="1.15" fill="#7c3aed"/>
+    <circle cx="12" cy="10" r="1.15" fill="#7c3aed"/>
+    <circle cx="15.5" cy="10" r="1.15" fill="#7c3aed"/>
   </g>
 </svg>

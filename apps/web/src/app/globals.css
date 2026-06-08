@@ -228,10 +228,10 @@
   --color-stroke-7: #2a333e;
   --color-stroke-8: #303b49;
   --color-ns-yellow: #f9eb57;
-  --color-ns-green: #c6f56f;
+  --color-ns-green: #7c3aed;
   --color-ns-red: #ffb9a2;
   --color-ns-cyan: #83e7ee;
-  --color-ns-green-light: #e8fbc6;
+  --color-ns-green-light: #ece8ff;
   --color-ns-cyan-light: #cdf5f8;
   --color-ns-yellow-light: #fdf7bc;
   /* --font-inter-tight is injected by next/font (see layout.tsx) */
@@ -294,10 +294,10 @@
   --color-stroke-7: #2a333e;
   --color-stroke-8: #303b49;
   --color-ns-yellow: #f9eb57;
-  --color-ns-green: #c6f56f;
+  --color-ns-green: #7c3aed;
   --color-ns-red: #ffb9a2;
   --color-ns-cyan: #83e7ee;
-  --color-ns-green-light: #e8fbc6;
+  --color-ns-green-light: #ece8ff;
   --color-ns-cyan-light: #cdf5f8;
   --color-ns-yellow-light: #fdf7bc;
   --text-heading-1: 4.25rem;
@@ -422,7 +422,7 @@
   color: transparent;
 }
 .hero-text-color-2 {
-  background-image: linear-gradient(45deg, #83e7ee, #f9eb57, #83e7ee);
+  background-image: linear-gradient(45deg, #a585ff, #ffffff, #a585ff);
 }
 @keyframes ns-textAnimate {
   0% { background-position: 0% 50%; }
@@ -508,8 +508,10 @@
 @utility btn-transparent {
   border-color: #2a333e; color: #fcfcfc; background: transparent;
 }
+/* Brand is violet (#7c3aed) everywhere — `btn-green` kept as a name for the many
+   existing usages, but recolored to the violet primary for consistency. */
 @utility btn-green {
-  background-color: #c6f56f; border-color: #e8fbc6; color: #1a1a1c;
+  background-color: #7c3aed; border-color: #6d28d9; color: white;
 }
 @utility btn-dark { background: rgba(252,252,252,0.1); color: #fcfcfc; border: none; }
 @utility btn-black { background: #000; color: #fcfcfc; border: none; }
@@ -534,10 +536,11 @@
   padding: 0.375rem 1.25rem;
   text-transform: capitalize;
 }
-@utility badge-green { background: #e8fbc6; }
-.dark .badge-green { color: #f9eb57; background: rgba(252,252,252,0.1); }
-@utility badge-green-v2 { background: #e8fbc6; }
-.dark .badge-green-v2 { color: #c6f56f; background: rgba(252,252,252,0.1); }
+/* Violet brand badges (kept under the `green` names for existing usages). */
+@utility badge-green { background: #ece8ff; color: #6d1fe2; }
+.dark .badge-green { color: #c3b1ff; background: rgba(124,58,237,0.16); }
+@utility badge-green-v2 { background: #ece8ff; color: #6d1fe2; }
+.dark .badge-green-v2 { color: #c3b1ff; background: rgba(124,58,237,0.16); }
 @utility badge-yellow { background: #fdf7bc; }
 .dark .badge-yellow { color: #f9eb57; background: rgba(252,252,252,0.1); }
 @utility badge-cyan { background: #cdf5f8; }

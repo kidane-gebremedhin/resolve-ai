@@ -15,8 +15,9 @@ import type { Org } from "./tab-inlines";
 export function ConversationSettings({ org }: { org: Org | null }): React.ReactElement {
   const router = useRouter();
   const initial = org?.settings?.conversation;
+  // Human escalation is OFF by default — only on when explicitly enabled.
   const [allowEscalation, setAllowEscalation] = useState(
-    initial?.allowHumanEscalation !== false,
+    initial?.allowHumanEscalation === true,
   );
   const [askBeforeResolve, setAskBeforeResolve] = useState(
     initial?.requireResolveConfirmation !== false,

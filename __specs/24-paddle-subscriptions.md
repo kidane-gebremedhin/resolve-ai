@@ -73,6 +73,13 @@ The conversion path is **pricing → signup → checkout**, and the plan the vis
 - `/checkout` reads `?plan=` and the logged-in email from the session, and `CheckoutPlans` **opens that plan's Paddle overlay directly** (email pre-filled via `Checkout.open({ customer: { email } })`). When a plan is preselected it **hides the plan grid entirely** and shows a focused "opening checkout" panel (with a "Choose a different plan" link) — the user does not see the plans page again.
 - When **no** plan is preselected (e.g. the user logged in directly without choosing on `/pricing`) _(Changelog 19)_: `CheckoutPlans` renders the **full plans grid in-place** (cards with name, price, features; CTA opens the Paddle overlay via the same `subscribe()` path). Previously this case bounced to `/pricing`; now the user can subscribe without leaving checkout. A "Compare plans in detail" link still points to `/pricing`.
 
+### Post-payment activation → dashboard redirect
+After `checkout.completed`, the subscription becomes `active` one of two ways: the Paddle **webhook** (production) or a direct **`POST /billing/activate { transactionId }`** call (works on localhost, where the webhook can't reach the dev server). To avoid stranding a paid user on the checkout page when one path is slow/missing _(Changelog 27)_:
+- The `transactionId` is read defensively from every known `checkout.completed` payload shape (`transaction_id` / `transactionId` / `id`, also nested under `data`).
+- `startPolling(transactionId)` **re-attempts `/billing/activate` on every tick** (the first call in `onCompleted` can race ahead of Paddle marking the txn paid) **and** checks `/billing/subscription`. Either confirming → `finishAndEnter()` (clear the plan hint, `router.push("/app")` + `refresh()`).
+- If neither confirms within the 180s window, the panel surfaces a manual **"Continue to dashboard"** button (instead of silently stopping) so the user is never dead-ended.
+- All success paths funnel through the single `finishAndEnter()` helper so they behave identically.
+
 ### Stale-session gate (ghost users)
 The `/app` dashboard is gated until a subscription is `active`, redirecting unpaid orgs to `/checkout`. After a **data wipe / account deletion**, the NextAuth cookie + API JWT are still cryptographically valid, so the old behavior bounced the now-nonexistent user to `/checkout` forever. Fixes:
 - API `requireAuth` verifies the token's user **still exists** (`User.exists`) and returns **401** when it doesn't — so deleted accounts immediately lose access (security win too).

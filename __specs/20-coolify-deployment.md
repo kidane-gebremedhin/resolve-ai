@@ -246,6 +246,16 @@ Create one **shared environment variable group** per project and attach it to ev
 
 **Rule**: every secret must be **distinct across environments**. A dev secret leaking must not give access to staging or production data.
 
+> **`NODE_ENV` at build time**: Coolify forwards the shared `NODE_ENV` (e.g.
+> `development` in the dev group) to `docker compose build` as a blanket
+> `--build-arg NODE_ENV`. A Next.js production build **must** run with
+> `NODE_ENV=production` — running it with `development` puts React in dev mode and
+> crashes the built-in `/_global-error` prerender (`Cannot read properties of null
+> (reading 'useContext')`). The web/widget/admin Dockerfiles therefore pin
+> `ENV NODE_ENV=production` in their `build` stage so the build is always a
+> production build regardless of the injected arg. The runtime stage sets it
+> independently.
+
 Full variable catalogue lives in [13-env-variables.md](./13-env-variables.md). The Coolify "Secrets" tab is the source of truth — `.env.example` is documentation only.
 
 ### 4.2 Secret rotation

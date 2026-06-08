@@ -39,14 +39,28 @@ Each feature is independently shippable; they share no hard ordering except that
 - **Send button size**: 40px (`h-10 w-10`) circle, up from 36px; 18–20px glyph.
 - **Panel size**: `width: 400px` (from 380); `height: min(680px, calc(100dvh - 48px))` (from fixed 600). Use `dvh` so mobile browser chrome doesn't clip it.
 - **Launcher**: 60px (from 56); offset 20px (from 24); add subtle scale-on-hover + open/close cross-fade.
-- **Mobile (`≤480px`)**: unchanged full-screen behavior, offsets tightened to 8px.
+- **Mobile (`≤480px`)**: the panel is **true fullscreen** — `inset: 0`, `width: 100vw`,
+  `height: 100dvh`, no border-radius, all set with `!important` so the widget's
+  `csb:resize` messages can't shrink it back to a desktop card (the resize handler
+  also early-returns on this breakpoint). The launcher sits **one z-index above**
+  the iframe (`2147483647` vs `2147483646`) so it stays visible and tappable on top
+  of the fullscreen panel — it toggles to a ✕ to close. (Earlier it shared the
+  iframe's z-index and was painted over once the panel opened.)
+- **Persistent sections bar**: the configured section shortcuts stay pinned at the
+  bottom of the widget **during a conversation** (`SectionsBar`), so they don't
+  disappear once the visitor starts chatting. Tapping a chip opens a `link`, or
+  sends the `topicPrompt` (falling back to the title) into the **current**
+  conversation rather than starting a new one. Hidden while the contact-prompt
+  overlay is forcing the composer closed.
 
 ### Open questions (flag in plan, default if unanswered)
 - O1: Match the accent color exactly, or introduce a darker "send-pressed" shade? → Default: derive pressed shade via CSS `filter: brightness(0.92)`, no new setting.
 
 ### Files
 - [`apps/widget/src/components/Composer.tsx`](../apps/widget/src/components/Composer.tsx) — glyph + button sizing/states.
-- [`apps/embed/src/widget.ts`](../apps/embed/src/widget.ts) — `injectStyles()` iframe + launcher dimensions, offsets, transitions.
+- [`apps/embed/src/widget.ts`](../apps/embed/src/widget.ts) — `injectStyles()` iframe + launcher dimensions, offsets, transitions, mobile fullscreen + launcher z-index, `isFullscreenViewport()` resize guard.
+- [`apps/widget/src/components/SectionsBar.tsx`](../apps/widget/src/components/SectionsBar.tsx) — persistent bottom sections bar shown during a conversation.
+- [`apps/widget/src/components/WidgetRoot.tsx`](../apps/widget/src/components/WidgetRoot.tsx) — renders `SectionsBar` on chat states; `handleSectionShortcut`.
 
 ---
 
