@@ -10,7 +10,10 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
-    ports: ['27017:27017']
+    # `expose` (not `ports`) — reachable on the compose network for the API and
+    # Coolify's proxy, but NOT published on the host. (For local host access run
+    # `pnpm dev` + `pnpm dev:infra`, which use docker-compose.yml with `ports`.)
+    expose: ['27017']
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-password}
@@ -27,7 +30,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    ports: ['6379:6379']
+    expose: ['6379']
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     command: sh -c 'exec redis-server --appendonly yes $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
@@ -40,9 +43,9 @@ services:
 
   mailhog:
     image: mailhog/mailhog:latest
-    ports:
-      - '1025:1025'
-      - '8025:8025'
+    expose:
+      - '1025'
+      - '8025'
     restart: unless-stopped
 
   api:
@@ -50,16 +53,18 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     env_file: ['.env']
-    ports: ['4000:4000']
+    expose: ['4000']
     depends_on:
       mongo: { condition: service_healthy }
       redis: { condition: service_healthy }
     restart: unless-stopped
 
   # NOTE on URLs: NEXT_PUBLIC_* are baked into the browser bundle at BUILD time,
-  # so they're passed as build.args and must be reachable from the HOST browser
-  # (localhost). Server-side fetches inside the container use API_INTERNAL_URL
-  # (the api service over the compose network) at runtime.
+  # so they're passed as build.args and must be reachable from the visitor's
+  # browser — the PUBLIC domain in production (e.g. the Coolify-generated
+  # http://<service>.sslip.io), or localhost for dev:full. Server-side fetches
+  # inside the container use API_INTERNAL_URL (the api service over the compose
+  # network) at runtime.
   web:
     build:
       context: .
@@ -85,11 +90,11 @@ services:
       PORT: 3000
       HOSTNAME: 0.0.0.0
       API_INTERNAL_URL: ${API_INTERNAL_URL:?set API_INTERNAL_URL in .env (e.g. http://api:4000/api/v1)}
-      # Each Next app needs its OWN NEXTAUTH_URL (the root .env's is the web app's).
-      # The admin app on :3003 must NOT inherit :3000, or its Google OAuth callback
-      # lands on the web app → state-cookie mismatch → ?error=Configuration.
-      NEXTAUTH_URL: http://localhost:3000
-    ports: ['3000:3000']
+      # Each Next app needs its OWN NEXTAUTH_URL (web and admin differ). Override
+      # per-deployment: set WEB_NEXTAUTH_URL to the web app's public origin in
+      # Coolify (e.g. http://<web-domain>); defaults to localhost for dev:full.
+      NEXTAUTH_URL: ${WEB_NEXTAUTH_URL:-http://localhost:3000}
+    expose: ['3000']
     depends_on: [api]
     restart: unless-stopped
 
@@ -107,7 +112,7 @@ services:
     environment:
       PORT: 3001
       HOSTNAME: 0.0.0.0
-    ports: ['3001:3001']
+    expose: ['3001']
     depends_on: [api]
     restart: unless-stopped
 
@@ -124,9 +129,11 @@ services:
       PORT: 3003
       HOSTNAME: 0.0.0.0
       API_INTERNAL_URL: ${API_INTERNAL_URL:?set API_INTERNAL_URL in .env (e.g. http://api:4000/api/v1)}
-      # The admin portal's own callback origin (NOT the web app's :3000).
-      NEXTAUTH_URL: http://localhost:3003
-    ports: ['3003:3003']
+      # The admin portal's own callback origin (NOT the web app's). Override with
+      # ADMIN_NEXTAUTH_URL in Coolify (e.g. http://<admin-domain>); defaults to
+      # localhost for dev:full.
+      NEXTAUTH_URL: ${ADMIN_NEXTAUTH_URL:-http://localhost:3003}
+    expose: ['3003']
     depends_on: [api]
     restart: unless-stopped
 
@@ -134,7 +141,7 @@ services:
     build:
       context: .
       dockerfile: apps/embed/Dockerfile
-    ports: ['3002:80']
+    expose: ['80']
     restart: unless-stopped
 
 volumes:

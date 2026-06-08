@@ -325,7 +325,12 @@ Copy your production values into each resource's **Environment Variables** tab
 - `MONGODB_URI`, `REDIS_*` — point at the Coolify-managed DBs (use the internal
   service hostnames, e.g. `mongodb://…@mongo:27017`) or Atlas.
 - `JWT_SECRET`, `NEXTAUTH_SECRET` — fresh `openssl rand -base64 32` values.
-- `API_BASE_URL=https://api.example.com`, `NEXTAUTH_URL=https://app.example.com`.
+- `API_BASE_URL=https://api.example.com`, `EMBED_BASE_URL=https://embed.example.com`.
+- **NextAuth origins** — web and admin need **distinct** callback origins. With
+  **Option A** (one compose), set `WEB_NEXTAUTH_URL=https://app.example.com` and
+  `ADMIN_NEXTAUTH_URL=https://admin.example.com` (the compose maps each to that
+  service's `NEXTAUTH_URL`). With **Option B** (one resource per app), set
+  `NEXTAUTH_URL` per resource.
 - `CORS_ORIGINS` — comma-separated list of every front-end origin
   (`https://app.example.com,https://admin.example.com,https://widget.example.com`,
   plus any customer site that embeds the widget).
@@ -353,8 +358,13 @@ Copy your production values into each resource's **Environment Variables** tab
 
 - Assign each resource its domain in Coolify's **Domains** field; Coolify's
   Traefik proxy terminates TLS and issues Let's Encrypt certificates
-  automatically. Set the proxy port to each service's container port from the
-  table in [§10.1](#101-services--ports).
+  automatically.
+- **Option A (one compose): bind each domain to its container port** with the
+  `:port` suffix, since the services use `expose:` (not host-published `ports:`).
+  In each "Domains for …" field append the port from [§10.1](#101-services--ports):
+  api `…:4000`, web `…:3000`, widget `…:3001`, admin `…:3003`, embed `…:80`,
+  mailhog `…:8025` (e.g. `http://app.example.com:3000`). You then browse the
+  domain **without** a port — Traefik routes it to that container port.
 - The API serves Socket.IO; Coolify's proxy forwards WebSocket upgrades by
   default, so `NEXT_PUBLIC_SOCKET_URL` can use the `https://` API domain.
 
