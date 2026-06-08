@@ -13,14 +13,10 @@ stateDiagram-v2
     [*] --> loading: Widget iframe loads
     
     loading --> error: Config/API failure
-    loading --> pre_chat: No existing session OR session expired
+    loading --> pre_chat: No active conversation (new OR returning visitor)
     loading --> chat_active: Valid session + active conversation
-    loading --> sections: Valid session + no active conversation (return visitor)
     
-    pre_chat --> chat_active: User sends first message
-    
-    sections --> chat_active: User clicks "Start chat" or topic
-    sections --> pre_chat: User clicks "New conversation"
+    pre_chat --> chat_active: User sends first message OR taps a section topic
     
     chat_active --> contact_prompt: First AI response received AND no contact info
     
@@ -33,16 +29,20 @@ stateDiagram-v2
     escalated --> resolved: Operator resolves
     
     resolved --> chat_active: User sends new message (reopens)
-    resolved --> sections: User clicks "New conversation"
+    resolved --> pre_chat: User clicks "Start a new conversation"
     
     error --> loading: Retry
     
     note right of pre_chat
-        Shows: title, subtitle,
+        Shows: greeting/welcome,
         suggested questions,
-        email input (required),
-        phone input (optional),
-        message input
+        the sections panel (floats
+        above the input, visible
+        until the 1st message),
+        message input.
+        Contact info is collected
+        AFTER the first message
+        (contact_prompt overlay).
     end note
     
     note right of contact_prompt
@@ -69,19 +69,27 @@ stateDiagram-v2
 - Transitions based on session validity and conversation state
 
 ### `pre_chat`
-- First-time visitor OR expired session
+- The entry state for any visitor without an active conversation — first-time,
+  expired session, OR a returning visitor (there is no separate `sections` screen).
 - Shows:
   - Agent avatar + name (the widget refers only to the agent's identity, never
     the organization name)
   - Optional welcome message (from `widgetSettings.welcomeMessage` /
     `agent.welcomeMessage`) — no hard-coded "How can we help?" greeting
   - Suggested questions (from `agent.suggestedQuestions`)
+  - **The configured sections panel**, floating over the bottom of the transcript
+    just above the composer (see "Sections" below)
   - Message input composer
+- **Sections + the composer coexist**: the visitor can tap a section topic OR
+  type their own message. The sections panel stays visible until the first
+  message is sent, then disappears (the state becomes `chat_active`). This
+  replaced the old full-screen `sections` state, which had no composer and so
+  forced the visitor to pick a pre-set topic.
 - **No contact form here** — conversation-first. Email/phone capture is
   deferred to the `contact_prompt` overlay, which fires after the first
   AI reply. Showing inputs up-front taxes the user before they've gotten
   any value from the chat.
-- On first message:
+- On first message (typed, or a tapped section topic):
   1. Create new contact session: `POST /api/v1/widget/sessions`
   2. Save `{ contactSessionId, token }` to localStorage
   3. Create conversation: `POST /api/v1/widget/conversations`
@@ -120,31 +128,31 @@ stateDiagram-v2
   phone and press "Continue" (`ContactPromptScreen` has no skip affordance).
 - **Important**: Chat remains visible but not functional while prompt is shown
 
-### `sections`
-- Return visitor with valid session but no active conversation
-- Shows widget sections (quick links/topics configured by org)
+### Sections (not a state — a panel within `pre_chat`)
+- There is **no standalone `sections` state**. The widget sections (quick
+  links/topics configured by the org) render as a scrollable panel **floating over
+  the bottom of the transcript, anchored just above the composer** in `pre_chat`
+  (`SectionCard`s; see [`PreChatScreen`](../apps/widget/src/components/PreChatScreen.tsx)).
 - Each section can:
   - `link` → open URL in new tab
-  - `start-chat` → transition to `pre_chat` or directly start conversation
-  - `topic` → start conversation with pre-filled message (`section.topicPrompt`)
-- "Start a new conversation" CTA at bottom
-- **Entry surface, not a mid-conversation surface.** Sections are shown only
-  before the first message is sent; once the visitor is chatting the widget never
-  routes back to `sections` (a status change on a resolved conversation goes to
-  `resolved` / the ResolvedScreen — see below — not to `sections`). The persistent
-  in-conversation section shortcuts are the separate `SectionsBar` (spec 22), not
-  this full screen.
+  - `start-chat` → start a conversation → `chat_active`
+  - `topic` → start a conversation with a pre-filled message (`section.topicPrompt`)
+- **Entry surface only.** Sections are shown only before the first message is
+  sent; once the visitor is chatting the widget never re-shows the panel (a status
+  change on a resolved conversation goes to `resolved` / the ResolvedScreen — see
+  below). The persistent in-conversation section shortcuts are the separate
+  compact `SectionsBar` strip (spec 22), shown during `chat_active`/`escalated`.
 
 ### `resolved`
 - Conversation has been resolved (by AI or operator)
 - Shows:
   - "This conversation has been resolved" banner
   - Full conversation history (read-only)
-  - "Start a new conversation" button → `sections` when the org has sections
-    configured (`context.sections.length > 0`), otherwise `pre_chat`
+  - "Start a new conversation" button → `pre_chat` (where the sections panel
+    re-appears above the composer, if the org has sections configured)
 - New messages after resolution initiates new conversation (No reopen resolved ones):
 - A `CONVERSATION_STATUS_CHANGED` event marking the conversation resolved transitions
-  to `resolved` (this screen), **never** back to `sections`.
+  to `resolved` (this screen), **never** to a sections surface mid-conversation.
 
 ### `escalated`
 - Conversation has been escalated to a human operator
@@ -232,7 +240,7 @@ function clearSession() {
 | Scenario | Behavior |
 |----------|----------|
 | Token expired (24h) | Widget creates new session → customer starts fresh conversation |
-| Token valid, conversation resolved | Show sections/pre_chat, can start new conversation |
+| Token valid, conversation resolved | Show `resolved` screen; "Start a new conversation" → `pre_chat` (sections panel above the composer) |
 | Token valid, conversation active | Resume conversation, show existing messages |
 | localStorage cleared | Same as expired: new session |
 | Different browser/device | New session (no cross-device continuity in v1) |
@@ -267,7 +275,7 @@ flowchart TD
     H -->|No| J[Show pre-chat screen]
     I --> K{Active conversation?}
     K -->|Yes| L[Show chat_active]
-    K -->|No| M[Show sections or pre_chat]
+    K -->|No| M[Show pre_chat: composer + sections panel]
     J --> N[Wait for first message]
 ```
 

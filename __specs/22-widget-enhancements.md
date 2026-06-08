@@ -52,6 +52,13 @@ Each feature is independently shippable; they share no hard ordering except that
   sends the `topicPrompt` (falling back to the title) into the **current**
   conversation rather than starting a new one. Hidden while the contact-prompt
   overlay is forcing the composer closed.
+- **Sections panel before the first message** _(Changelog 28)_: there is no
+  separate full-screen sections state. Before a conversation starts, the configured
+  sections render as a scrollable `SectionCard` panel **floating over the bottom of
+  the transcript, just above the composer** in `pre_chat`, so a new visitor can
+  either tap a topic or type their own message. The panel is shown until the first message is sent (then the view is
+  `chat_active`, where the compact `SectionsBar` takes over). See
+  [09-widget-state-machine.md](./09-widget-state-machine.md).
 
 ### Open questions (flag in plan, default if unanswered)
 - O1: Match the accent color exactly, or introduce a darker "send-pressed" shade? → Default: derive pressed shade via CSS `filter: brightness(0.92)`, no new setting.
@@ -60,7 +67,8 @@ Each feature is independently shippable; they share no hard ordering except that
 - [`apps/widget/src/components/Composer.tsx`](../apps/widget/src/components/Composer.tsx) — glyph + button sizing/states.
 - [`apps/embed/src/widget.ts`](../apps/embed/src/widget.ts) — `injectStyles()` iframe + launcher dimensions, offsets, transitions, mobile fullscreen + launcher z-index, `isFullscreenViewport()` resize guard.
 - [`apps/widget/src/components/SectionsBar.tsx`](../apps/widget/src/components/SectionsBar.tsx) — persistent bottom sections bar shown during a conversation.
-- [`apps/widget/src/components/WidgetRoot.tsx`](../apps/widget/src/components/WidgetRoot.tsx) — renders `SectionsBar` on chat states; `handleSectionShortcut`.
+- [`apps/widget/src/components/PreChatScreen.tsx`](../apps/widget/src/components/PreChatScreen.tsx) — renders the sections `SectionCard` panel above the composer before the first message _(Changelog 28)_.
+- [`apps/widget/src/components/WidgetRoot.tsx`](../apps/widget/src/components/WidgetRoot.tsx) — renders `SectionsBar` on chat states; `handleSectionShortcut`. Boot routes a no-conversation visitor to `pre_chat` (the standalone `sections` state was removed in Changelog 28).
 
 ---
 
