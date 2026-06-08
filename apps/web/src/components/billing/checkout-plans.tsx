@@ -39,7 +39,22 @@ export function CheckoutPlans({
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when payment succeeded but activation didn't confirm in time — we then
+  // offer a manual "Continue to dashboard" button instead of a dead end.
+  const [activationStuck, setActivationStuck] = useState(false);
   const autoStarted = useRef(false);
+
+  // Clear the checkout-plan hint and enter the dashboard. Used by every success
+  // path so they behave identically.
+  const finishAndEnter = useCallback(() => {
+    try {
+      sessionStorage.removeItem(PLAN_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    router.push("/app");
+    router.refresh();
+  }, [router]);
 
   // Resolve the chosen plan: URL param first, else the pricing-page selection.
   useEffect(() => {
@@ -59,33 +74,54 @@ export function CheckoutPlans({
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load plans"));
   }, []);
 
-  // After checkout, the webhook activates the subscription asynchronously. Poll
-  // until it's active, then enter the dashboard.
-  const startPolling = useCallback(() => {
-    setPolling(true);
-    const started = Date.now();
-    const iv = setInterval(async () => {
-      try {
-        const sub = await clientApi.get<{ active: boolean }>("/billing/subscription");
-        if (sub.active) {
-          clearInterval(iv);
-          try {
-            sessionStorage.removeItem(PLAN_STORAGE_KEY);
-          } catch {
-            /* ignore */
+  // After checkout, the subscription activates either via the Paddle webhook
+  // (production) or the transaction-based /billing/activate call (works on
+  // localhost, where the webhook can't reach us). Poll BOTH each tick: re-try
+  // the direct activation if we have a transaction id, and check the webhook
+  // path. Either confirming → enter the dashboard. If neither confirms within
+  // the window, surface a manual "Continue to dashboard" button instead of
+  // silently stranding the user on the checkout page.
+  const startPolling = useCallback(
+    (transactionId?: string) => {
+      setPolling(true);
+      const started = Date.now();
+      const iv = setInterval(async () => {
+        try {
+          // Retry the direct activation every tick — the first attempt in
+          // onCompleted can race ahead of Paddle marking the txn paid.
+          if (transactionId) {
+            try {
+              const r = await clientApi.post<{ active: boolean }>("/billing/activate", {
+                transactionId,
+              });
+              if (r.active) {
+                clearInterval(iv);
+                finishAndEnter();
+                return;
+              }
+            } catch {
+              /* fall through to the webhook check */
+            }
           }
-          router.push("/app");
-          router.refresh();
+          const sub = await clientApi.get<{ active: boolean }>("/billing/subscription");
+          if (sub.active) {
+            clearInterval(iv);
+            finishAndEnter();
+            return;
+          }
+        } catch {
+          /* keep polling */
         }
-      } catch {
-        /* keep polling */
-      }
-      if (Date.now() - started > 180_000) {
-        clearInterval(iv);
-        setPolling(false);
-      }
-    }, 3000);
-  }, [router]);
+        if (Date.now() - started > 180_000) {
+          clearInterval(iv);
+          setPolling(false);
+          setActivationStuck(true);
+          setError("Payment received, but activation is taking longer than usual.");
+        }
+      }, 3000);
+    },
+    [finishAndEnter],
+  );
 
   const subscribe = useCallback(
     async (p: Plan) => {
@@ -103,25 +139,27 @@ export function CheckoutPlans({
           // the dashboard.
           onCompleted: async (data) => {
             setPolling(true);
-            const transactionId = data?.transaction_id ?? data?.transactionId ?? data?.id;
+            // Paddle's checkout.completed payload nests the id differently across
+            // versions — check the known shapes before giving up.
+            const transactionId =
+              data?.transaction_id ??
+              data?.transactionId ??
+              data?.id ??
+              data?.data?.transaction_id ??
+              data?.data?.id;
             try {
               if (transactionId) {
                 const r = await clientApi.post<{ active: boolean }>("/billing/activate", { transactionId });
                 if (r.active) {
-                  try {
-                    sessionStorage.removeItem(PLAN_STORAGE_KEY);
-                  } catch {
-                    /* ignore */
-                  }
-                  router.push("/app");
-                  router.refresh();
+                  finishAndEnter();
                   return;
                 }
               }
             } catch {
               /* fall back to polling below */
             }
-            startPolling();
+            // Keep retrying activation (with the txn id) AND the webhook path.
+            startPolling(transactionId);
           },
         });
       } catch (e) {
@@ -130,7 +168,7 @@ export function CheckoutPlans({
         setBusy(false);
       }
     },
-    [organizationId, customerEmail, startPolling, router],
+    [organizationId, customerEmail, startPolling, finishAndEnter],
   );
 
   // The resolved, purchasable plan (has a price id).
@@ -241,7 +279,17 @@ export function CheckoutPlans({
           </div>
           {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
           <div className="mt-5 flex flex-col items-center gap-2">
-            <Button size="sm" onClick={() => subscribe(chosen)} disabled={busy || polling}>
+            {activationStuck ? (
+              <Button size="sm" onClick={finishAndEnter}>
+                Continue to dashboard
+              </Button>
+            ) : null}
+            <Button
+              size="sm"
+              variant={activationStuck ? "outline" : "default"}
+              onClick={() => subscribe(chosen)}
+              disabled={busy || polling}
+            >
               Continue to checkout
             </Button>
             <button

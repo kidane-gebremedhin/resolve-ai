@@ -14,7 +14,10 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 FROM deps AS build
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+# NODE_ENV=production is required for `next build`: Coolify forwards the repo's
+# .env NODE_ENV (development) as a build arg, which puts React in dev mode and
+# crashes the /_global-error prerender. Pin it here so the build is always prod.
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 # Public URLs are inlined into the client bundle at build time (NEXT_PUBLIC_*),
 # so they must be present as build args here (.env is .dockerignore'd). Defaults
 # target a local `docker-compose.full` run with host-published ports; override

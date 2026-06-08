@@ -45,6 +45,7 @@ import { BootScreen } from "./BootScreen";
 import { ErrorScreen } from "./ErrorScreen";
 import { PreChatScreen } from "./PreChatScreen";
 import { SectionsScreen } from "./SectionsScreen";
+import { SectionsBar } from "./SectionsBar";
 import { ChatScreen } from "./ChatScreen";
 import { ContactPromptScreen } from "./ContactPromptScreen";
 import { ResolvedScreen } from "./ResolvedScreen";
@@ -255,15 +256,15 @@ export function WidgetRoot({
           }
         }
 
-        // Decide the next state per spec 09.
-        // - new session            → pre_chat
-        // - existing, no convo, has sections → sections
-        // - existing, no convo, no sections  → pre_chat
-        // - existing, active convo → chat_active
+        // Decide the next state.
+        // - active convo                 → chat_active
+        // - no convo, has sections       → sections (new OR returning — sections
+        //   are configured to be the entry menu, with a "start chat" CTA)
+        // - no convo, no sections        → pre_chat
         let next: "pre_chat" | "sections" | "chat_active" | "escalated" | "resolved";
         if (resumedConversationId) {
           next = "chat_active";
-        } else if (existing && (bootstrap.sections?.length ?? 0) > 0) {
+        } else if ((bootstrap.sections?.length ?? 0) > 0) {
           next = "sections";
         } else {
           next = "pre_chat";
@@ -530,6 +531,23 @@ export function WidgetRoot({
     [state.context.conversationId, ensureConversation, sendCustomerMessage, send],
   );
 
+  // Tapping a section chip from the persistent bar DURING a conversation: links
+  // open in a new tab; everything else sends the topic prompt (or the title) as
+  // the visitor's next message in the current conversation, rather than starting
+  // a brand-new one (which is what the full sections screen does).
+  const handleSectionShortcut = useCallback(
+    (section: WidgetSection) => {
+      if (section.action === "link" && section.url) {
+        window.open(section.url, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const text = (section.topicPrompt ?? "").trim() || section.title;
+      if (!text) return;
+      void handleChatSend(text);
+    },
+    [handleChatSend],
+  );
+
   // Upload a file and RETURN its metadata for the composer to queue as a
   // preview. It is NOT sent here — the visitor sends it (with optional text and
   // more attachments) manually. Ensures a conversation exists so the upload
@@ -704,6 +722,19 @@ export function WidgetRoot({
             />
           ) : null}
         </div>
+        {/* Persistent topic shortcuts: kept pinned at the bottom during a
+            conversation so the configured sections never disappear once the
+            visitor starts chatting. Hidden while the contact-prompt overlay is
+            forcing the composer closed. */}
+        {(state.state === "chat_active" || state.state === "escalated") &&
+        state.overlay !== "contact_prompt" &&
+        state.context.sections.length > 0 ? (
+          <SectionsBar
+            sections={state.context.sections}
+            primaryColor={primaryColor}
+            onSelect={handleSectionShortcut}
+          />
+        ) : null}
         {showBranding ? <PoweredBy /> : null}
       </div>
     </div>

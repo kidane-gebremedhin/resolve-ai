@@ -48,6 +48,13 @@ const STYLE_ID = "csb-widget-style";
 const IFRAME_ID = "csb-widget-iframe";
 const LAUNCHER_ID = "csb-widget-launcher";
 
+// Launcher icons. Chat bubble when closed; ✕ when open (the launcher stays put
+// and toggles, so it never disappears).
+const CHAT_ICON_SVG =
+  '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const CLOSE_ICON_SVG =
+  '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
 (async function bootstrap(): Promise<void> {
   const currentScript = (document.currentScript as HTMLScriptElement | null) ?? null;
   if (!currentScript) {
@@ -126,6 +133,7 @@ const LAUNCHER_ID = "csb-widget-launcher";
 
   let iframe: HTMLIFrameElement | null = null;
   let initialised = false;
+  let isOpen = false;
 
   function ensureIframe(): HTMLIFrameElement {
     if (iframe) return iframe;
@@ -140,19 +148,30 @@ const LAUNCHER_ID = "csb-widget-launcher";
     return iframe;
   }
 
+  // The launcher ALWAYS stays visible (like Intercom/Crisp/seobuddy) — it just
+  // toggles its icon between "chat" (closed) and "close/✕" (open) and the panel
+  // opens above it.
+  function setLauncherOpenState(open: boolean): void {
+    isOpen = open;
+    launcher.innerHTML = open ? CLOSE_ICON_SVG : CHAT_ICON_SVG;
+    launcher.setAttribute("aria-label", open ? "Close chat" : "Open chat");
+    launcher.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
   function openWidget(): void {
     const el = ensureIframe();
     el.style.display = "block";
-    launcher.style.display = "none";
+    setLauncherOpenState(true);
   }
 
   function closeWidget(): void {
     if (iframe) iframe.style.display = "none";
-    launcher.style.display = "flex";
+    setLauncherOpenState(false);
   }
 
   launcher.addEventListener("click", () => {
-    openWidget();
+    if (isOpen) closeWidget();
+    else openWidget();
   });
 
   window.addEventListener("message", (event: MessageEvent<IncomingMessage>) => {
@@ -168,6 +187,9 @@ const LAUNCHER_ID = "csb-widget-launcher";
       }
       case "csb:resize": {
         if (!iframe) break;
+        // On phones the panel is fullscreen (CSS above, with !important). Ignore
+        // the widget's requested size so we don't fight the fullscreen layout.
+        if (isFullscreenViewport()) break;
         if (typeof data.width === "number" && data.width > 0) {
           iframe.style.width = `${Math.round(data.width)}px`;
         }
@@ -226,6 +248,16 @@ function normalizePosition(raw: string | undefined): Position {
   return "bottom-right";
 }
 
+// Matches the `@media (max-width: 480px)` breakpoint where the panel is
+// fullscreen. Used to ignore the widget's csb:resize requests on phones.
+function isFullscreenViewport(): boolean {
+  try {
+    return window.matchMedia("(max-width: 480px)").matches;
+  } catch {
+    return false;
+  }
+}
+
 interface Appearance {
   position?: string;
   primaryColor?: string;
@@ -263,15 +295,17 @@ function injectStyles(position: Position): void {
   style.textContent = `
     #${IFRAME_ID} {
       position: fixed;
-      ${positionCss(position)}
+      ${iframePositionCss(position)}
       width: 400px;
-      height: min(680px, calc(100dvh - 48px));
+      height: min(680px, calc(100dvh - 120px));
       max-width: calc(100vw - 24px);
-      max-height: calc(100dvh - 40px);
+      max-height: calc(100dvh - 110px);
       border: 0;
       border-radius: 18px;
       box-shadow: 0 16px 48px rgba(0,0,0,0.20);
-      z-index: 2147483647;
+      /* One below the launcher so the launcher (✕) stays tappable on top of the
+         panel — critical on mobile where the panel goes fullscreen. */
+      z-index: 2147483646;
       background: transparent;
       color-scheme: light dark;
       animation: csb-pop 160ms cubic-bezier(0.16,1,0.3,1);
@@ -301,15 +335,19 @@ function injectStyles(position: Position): void {
     #${LAUNCHER_ID}:hover { transform: scale(1.06); box-shadow: 0 14px 34px rgba(0,0,0,0.28); }
     #${LAUNCHER_ID}:active { transform: scale(0.96); }
     @media (max-width: 480px) {
+      /* Phones: the panel fills the whole screen (except the floating launcher,
+         which sits on top via its higher z-index). !important beats the inline
+         width/height the widget sets via csb:resize, so the panel can't shrink
+         back to a desktop-sized card. */
       #${IFRAME_ID} {
-        width: calc(100vw - 16px);
-        height: calc(100vh - 40px);
-        right: 8px;
-        left: 8px;
-        bottom: 8px;
-        top: auto;
-        transform: none;
-        border-radius: 12px;
+        inset: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        max-width: none !important;
+        max-height: none !important;
+        border-radius: 0 !important;
+        transform: none !important;
       }
     }
   `;
@@ -328,12 +366,26 @@ function positionCss(position: Position): string {
   }
 }
 
+// The panel opens ABOVE the always-visible launcher (60px tall at bottom: 24px),
+// so it's offset up by launcher height + a gap (~96px).
+function iframePositionCss(position: Position): string {
+  switch (position) {
+    case "bottom-left":
+      return "left: 24px; bottom: 96px; right: auto; top: auto;";
+    case "centered":
+      return "left: 50%; bottom: 96px; right: auto; top: auto; transform: translateX(-50%);";
+    case "bottom-right":
+    default:
+      return "right: 24px; bottom: 96px; left: auto; top: auto;";
+  }
+}
+
 function createLauncher(): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.id = LAUNCHER_ID;
   btn.type = "button";
   btn.setAttribute("aria-label", "Open chat");
-  btn.innerHTML =
-    '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  btn.setAttribute("aria-expanded", "false");
+  btn.innerHTML = CHAT_ICON_SVG;
   return btn;
 }

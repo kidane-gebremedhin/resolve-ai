@@ -279,18 +279,44 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
       };
 
     case "CONVERSATION_STATUS_CHANGED": {
+      // On resolution, return the visitor to the sections menu (when sections are
+      // configured) so they can pick a new topic — sections are "home" both
+      // before the first question AND after a conversation resolves. With no
+      // sections we fall back to the resolved screen.
+      if (event.status === "resolved") {
+        if (state.context.sections.length > 0) {
+          return {
+            ...state,
+            state: "sections",
+            overlay: null,
+            context: {
+              ...state.context,
+              conversationId: null,
+              conversationStatus: null,
+              messages: [],
+              hasPromptedForContact: hasEmail(state.context)
+                ? state.context.hasPromptedForContact
+                : false,
+            },
+          };
+        }
+        return {
+          ...state,
+          state: "resolved",
+          overlay: null,
+          context: { ...state.context, conversationStatus: "resolved" },
+        };
+      }
       const nextState: WidgetStateName =
-        event.status === "resolved"
-          ? "resolved"
-          : event.status === "escalated"
-            ? "escalated"
-            : state.state === "escalated" || state.state === "resolved"
-              ? "chat_active"
-              : state.state;
+        event.status === "escalated"
+          ? "escalated"
+          : state.state === "escalated" || state.state === "resolved"
+            ? "chat_active"
+            : state.state;
       return {
         ...state,
         state: nextState,
-        overlay: nextState === "resolved" ? null : state.overlay,
+        overlay: state.overlay,
         context: { ...state.context, conversationStatus: event.status },
       };
     }

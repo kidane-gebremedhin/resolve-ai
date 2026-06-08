@@ -239,15 +239,15 @@ function withAttachmentText(
 }
 
 // Org-level conversation controls (escalation toggle, ask-before-resolve) live
-// in the freeform Organization.settings.conversation block. Defaults preserve
-// today's behavior (escalation allowed, confirm-before-resolve on).
+// in the freeform Organization.settings.conversation block. Human escalation is
+// OFF by default (must be explicitly enabled); confirm-before-resolve stays on.
 function readConversationControls(org: { settings?: unknown } | null): ConversationControls {
   const c =
     (org?.settings && typeof org.settings === "object"
       ? (org.settings as Record<string, unknown>).conversation
       : undefined) as Record<string, unknown> | undefined;
   return {
-    allowHumanEscalation: c?.allowHumanEscalation !== false,
+    allowHumanEscalation: c?.allowHumanEscalation === true,
     requireResolveConfirmation: c?.requireResolveConfirmation !== false,
   };
 }
@@ -282,8 +282,9 @@ export async function generateAiReply(
   };
   const toolCallLog: { name: string; args: unknown; result: unknown }[] = [];
   // Default controls (used if the try below throws before org is loaded).
+  // Human escalation defaults OFF; confirm-before-resolve stays on.
   let controls: ConversationControls = {
-    allowHumanEscalation: true,
+    allowHumanEscalation: false,
     requireResolveConfirmation: true,
   };
 

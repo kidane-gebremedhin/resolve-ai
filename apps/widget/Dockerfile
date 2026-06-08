@@ -14,7 +14,10 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
 
 FROM deps AS build
 COPY . .
-ENV NEXT_TELEMETRY_DISABLED=1
+# NODE_ENV=production is required for `next build`: Coolify forwards the repo's
+# .env NODE_ENV (development) as a build arg, which puts React in dev mode and
+# crashes the /_global-error prerender. Pin it here so the build is always prod.
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 # Inlined into the client bundle at build time (.env is .dockerignore'd). The
 # widget is browser-only, so it just needs the public API/socket URLs.
 ARG NEXT_PUBLIC_API_URL=http://localhost:4000/api/v1

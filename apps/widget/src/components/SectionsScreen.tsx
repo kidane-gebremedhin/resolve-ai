@@ -24,7 +24,7 @@ export function SectionsScreen({
   onStartNew: () => void;
   busy: boolean;
 }) {
-  const title = "Welcome back";
+  const title = "How can we help?";
   const subtitle = "Pick a topic or start a new conversation.";
 
   return (
