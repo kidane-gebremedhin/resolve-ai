@@ -90,8 +90,8 @@ const THEMES = [
 ] as const;
 
 const COLORS = [
-  "#0a0a0a",
   "#1e40af",
+  "#0a0a0a",
   "#0f766e",
   "#16a34a",
   "#ea580c",

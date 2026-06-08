@@ -247,7 +247,7 @@ router.get(
     res.setHeader("Cache-Control", "public, max-age=60");
     res.json({
       position: settings?.position ?? "bottom-right",
-      primaryColor: settings?.primaryColor ?? "#7c3aed",
+      primaryColor: settings?.primaryColor ?? "#1e40af",
       theme: settings?.theme ?? "auto",
       launcherIcon: null,
     });

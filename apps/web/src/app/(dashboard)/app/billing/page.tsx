@@ -6,6 +6,7 @@ import {
   ChoosePlanButton,
   ManageSubscriptionButton,
 } from "@/components/billing/plan-actions";
+import { PlanHighlighter } from "@/components/billing/plan-highlighter";
 
 type Subscription = {
   plan: "free" | "starter" | "pro" | "enterprise";
@@ -145,7 +146,7 @@ async function Page() {
 
       <div className="mt-8">
         <div className="font-display text-sm font-semibold">Plans</div>
-        <div className="mt-3 grid gap-4 md:grid-cols-3">
+        <PlanHighlighter className="mt-3 grid gap-4 md:grid-cols-3">
           {catalog.map((p) => {
             const isCurrent = plan === p.plan;
             const highlighted = p.plan === "pro";
@@ -154,7 +155,8 @@ async function Page() {
             return (
               <div
                 key={p.plan}
-                className={`rounded-xl border bg-card p-5 ${
+                data-plan-card
+                className={`cursor-pointer rounded-xl border bg-card p-5 transition ${
                   isCurrent
                     ? "border-foreground ring-1 ring-foreground"
                     : highlighted
@@ -191,7 +193,7 @@ async function Page() {
               </div>
             );
           })}
-        </div>
+        </PlanHighlighter>
       </div>
 
       <div className="mt-8 rounded-xl border border-dashed border-border bg-surface/40 p-5 text-sm text-muted-foreground">

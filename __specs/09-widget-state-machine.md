@@ -128,14 +128,23 @@ stateDiagram-v2
   - `start-chat` → transition to `pre_chat` or directly start conversation
   - `topic` → start conversation with pre-filled message (`section.topicPrompt`)
 - "Start a new conversation" CTA at bottom
+- **Entry surface, not a mid-conversation surface.** Sections are shown only
+  before the first message is sent; once the visitor is chatting the widget never
+  routes back to `sections` (a status change on a resolved conversation goes to
+  `resolved` / the ResolvedScreen — see below — not to `sections`). The persistent
+  in-conversation section shortcuts are the separate `SectionsBar` (spec 22), not
+  this full screen.
 
 ### `resolved`
 - Conversation has been resolved (by AI or operator)
 - Shows:
   - "This conversation has been resolved" banner
   - Full conversation history (read-only)
-  - "Start a new conversation" button → `sections` or `pre_chat`
+  - "Start a new conversation" button → `sections` when the org has sections
+    configured (`context.sections.length > 0`), otherwise `pre_chat`
 - New messages after resolution initiates new conversation (No reopen resolved ones):
+- A `CONVERSATION_STATUS_CHANGED` event marking the conversation resolved transitions
+  to `resolved` (this screen), **never** back to `sections`.
 
 ### `escalated`
 - Conversation has been escalated to a human operator
@@ -279,7 +288,7 @@ arrive from `POST /widget/init` keyed by `agentId`.
 |-------|-------------------|-------------|
 | `agentId` | `data-agent` / `data-agent-id` | Agent ID — the only required identifier. |
 | `position` | `data-position` | Launcher position hint (`bottom-right` \| `bottom-left` \| `centered`). |
-| `primaryColor` | `data-primary-color` | Accent colour hint for the launcher. |
+| `primaryColor` | `data-primary-color` | Accent colour hint for the launcher. Default accent when none is configured is `#1e40af` (blue-800) — applied consistently across the widget root, boot screen, the server-side `/widget/settings` fallback, and the Widget Studio's first/default swatch. |
 | `theme` | `data-theme` | Theme hint (`light` \| `dark` \| `auto`). |
 
 #### Organization resolution (`agentId` vs `domain`)

@@ -54,6 +54,10 @@ services:
       dockerfile: apps/api/Dockerfile
     env_file: ['.env']
     expose: ['4000']
+    # Persist local-disk attachment uploads across redeploys. (A fresh named
+    # volume inherits the image's /app/uploads ownership → writable by `app`.)
+    volumes:
+      - uploads-data:/app/uploads
     depends_on:
       mongo: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -147,3 +151,4 @@ services:
 volumes:
   mongo-data:
   redis-data:
+  uploads-data:

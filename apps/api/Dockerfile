@@ -21,6 +21,11 @@ ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S app && adduser -S app -G app && apk add --no-cache wget
 COPY --from=build --chown=app:app /out ./
+# The local-disk storage adapter writes attachments to <cwd>/uploads (= /app/uploads).
+# /app is root-owned, so the non-root `app` user can't create it at runtime
+# (EACCES on mkdir) — pre-create it and hand it to `app`. Mount a volume here in
+# production for persistence (attachments are otherwise lost on redeploy).
+RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
 USER app
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \

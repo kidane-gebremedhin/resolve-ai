@@ -1,6 +1,7 @@
 import { cn } from '@/utils/ns-cn';
 import RevealAnimation from '../animation/RevealAnimation';
 import { PlanCta } from '@/components/billing/plan-cta';
+import { PlanHighlighter } from '@/components/billing/plan-highlighter';
 
 const CheckIcon = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={10} height={8} viewBox="0 0 11 8" fill="none" className={cn('shrink-0', className)}>
@@ -87,7 +88,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
               </RevealAnimation>
             </div>
 
-            <div className="grid grid-cols-12 xl:gap-8 md:gap-6 gap-y-6">
+            <PlanHighlighter className="grid grid-cols-12 xl:gap-8 md:gap-6 gap-y-6">
               {/* Features column */}
               <div className="col-span-12 xl:col-span-3 md:col-span-6">
                 <RevealAnimation delay={0.3}>
@@ -116,7 +117,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                     : `$${override.priceMonthlyUsd}`
                   : plan.price;
                 return (
-                <div key={plan.id} className="col-span-12 xl:col-span-3 md:col-span-6">
+                <div key={plan.id} data-plan-card className="col-span-12 xl:col-span-3 md:col-span-6 cursor-pointer rounded-[20px] transition">
                   <RevealAnimation delay={0.4 + index * 0.1}>
                     <div>
                       <div className={cn('rounded-t-[20px] py-8 px-6 space-y-8', plan.planType === 'featured' ? 'z-10 relative bg-secondary dark:bg-background-7 overflow-hidden' : 'bg-background-3 dark:bg-background-7')}>
@@ -157,7 +158,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                 </div>
                 );
               })}
-            </div>
+            </PlanHighlighter>
           </div>
         </div>
       </section>

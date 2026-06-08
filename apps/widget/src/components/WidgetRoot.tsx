@@ -50,7 +50,7 @@ import { ChatScreen } from "./ChatScreen";
 import { ContactPromptScreen } from "./ContactPromptScreen";
 import { ResolvedScreen } from "./ResolvedScreen";
 
-const DEFAULT_PRIMARY = "#7c3aed"; // violet-600 — matches BootScreen fallback.
+const DEFAULT_PRIMARY = "#1e40af"; // blue-800 — matches BootScreen fallback.
 
 // Derive the socket origin from the API URL so we don't need a separate env
 // var. NEXT_PUBLIC_SOCKET_URL still wins if explicitly set.
