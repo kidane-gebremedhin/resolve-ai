@@ -44,13 +44,12 @@ import { playNotification } from "../lib/audio";
 import { BootScreen } from "./BootScreen";
 import { ErrorScreen } from "./ErrorScreen";
 import { PreChatScreen } from "./PreChatScreen";
-import { SectionsScreen } from "./SectionsScreen";
 import { SectionsBar } from "./SectionsBar";
 import { ChatScreen } from "./ChatScreen";
 import { ContactPromptScreen } from "./ContactPromptScreen";
 import { ResolvedScreen } from "./ResolvedScreen";
 
-const DEFAULT_PRIMARY = "#7c3aed"; // violet-600 — matches BootScreen fallback.
+const DEFAULT_PRIMARY = "#1e40af"; // blue-800 — matches BootScreen fallback.
 
 // Derive the socket origin from the API URL so we don't need a separate env
 // var. NEXT_PUBLIC_SOCKET_URL still wins if explicitly set.
@@ -257,15 +256,13 @@ export function WidgetRoot({
         }
 
         // Decide the next state.
-        // - active convo                 → chat_active
-        // - no convo, has sections       → sections (new OR returning — sections
-        //   are configured to be the entry menu, with a "start chat" CTA)
-        // - no convo, no sections        → pre_chat
-        let next: "pre_chat" | "sections" | "chat_active" | "escalated" | "resolved";
+        // - active convo   → chat_active
+        // - no convo       → pre_chat (the chat view with the composer). Any
+        //   configured sections render as a panel just above the input there,
+        //   visible until the visitor sends their first message.
+        let next: "pre_chat" | "chat_active" | "escalated" | "resolved";
         if (resumedConversationId) {
           next = "chat_active";
-        } else if ((bootstrap.sections?.length ?? 0) > 0) {
-          next = "sections";
         } else {
           next = "pre_chat";
         }
@@ -626,21 +623,10 @@ export function WidgetRoot({
           <PreChatScreen
             agent={state.context.agent}
             settings={state.context.settings}
-            primaryColor={primaryColor}
-            onStart={handlePreChatStart}
-            busy={busy}
-          />
-        );
-
-      case "sections":
-        return (
-          <SectionsScreen
-            agent={state.context.agent}
-            settings={state.context.settings}
             sections={state.context.sections}
             primaryColor={primaryColor}
+            onStart={handlePreChatStart}
             onSelectSection={handleSectionSelect}
-            onStartNew={handleStartNew}
             busy={busy}
           />
         );

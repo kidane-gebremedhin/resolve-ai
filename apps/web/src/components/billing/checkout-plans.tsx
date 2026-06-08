@@ -13,6 +13,7 @@ import { Button } from "@csb/ui";
 import { clientApi } from "@/lib/api";
 import { isPaddleConfigured, openCheckout } from "@/lib/paddle";
 import { PLAN_STORAGE_KEY } from "./plan-cta";
+import { PlanHighlighter } from "./plan-highlighter";
 
 type Plan = {
   plan: "starter" | "pro" | "enterprise" | "free";
@@ -201,14 +202,15 @@ export function CheckoutPlans({
           </div>
         ) : null}
         {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
-        <div className="grid gap-4 sm:grid-cols-3">
+        <PlanHighlighter className="grid gap-4 sm:grid-cols-3">
           {plans.map((p) => {
             const highlighted = p.plan === "pro";
             const priceLabel = p.priceMonthlyUsd == null ? "Custom" : `$${p.priceMonthlyUsd}`;
             return (
               <div
                 key={p.plan}
-                className={`flex flex-col rounded-xl border bg-card p-6 ${
+                data-plan-card
+                className={`flex cursor-pointer flex-col rounded-xl border bg-card p-6 transition ${
                   highlighted ? "border-primary ring-1 ring-primary/30" : "border-border"
                 }`}
               >
@@ -243,7 +245,7 @@ export function CheckoutPlans({
               </div>
             );
           })}
-        </div>
+        </PlanHighlighter>
         <div className="mt-6 text-center">
           <button
             type="button"

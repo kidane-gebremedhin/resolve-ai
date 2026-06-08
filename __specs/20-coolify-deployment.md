@@ -238,13 +238,25 @@ Create one **shared environment variable group** per project and attach it to ev
 | `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET` | `sandbox` keys | `sandbox` keys | `production` keys |
 | `PADDLE_ENVIRONMENT` | `sandbox` | `sandbox` | `production` |
 | `SMTP_*` | MailHog | Mailtrap | SES / Resend / Postmark |
-| `STORAGE_PROVIDER` | `s3` (MinIO) | `s3` (MinIO) | `s3` (AWS / R2) |
+| `STORAGE_PROVIDER` | `s3` (MinIO) | `s3` (MinIO) | `s3` (AWS / R2) | (see disk-storage note below) |
 | `AWS_*` | MinIO local | MinIO local | Real |
 | `CORS_ORIGINS` | `https://dev.customer-service-chatbot.app,https://widget.dev.customer-service-chatbot.app` | `https://staging.customer-service-chatbot.app,https://widget.staging.customer-service-chatbot.app` | `https://app.customer-service-chatbot.app,https://widget.customer-service-chatbot.app` |
 | `MONGO_INITDB_ROOT_PASSWORD`, `REDIS_PASSWORD` | Generated 32-char | Generated 32-char | Generated 32-char |
 | `SENTRY_ENVIRONMENT` | `dev` | `staging` | `production` |
 
 **Rule**: every secret must be **distinct across environments**. A dev secret leaking must not give access to staging or production data.
+
+> **Local-disk attachment storage** (`docker-compose.full.yml` single-host deploy,
+> when `STORAGE_PROVIDER` is the disk adapter rather than `s3`): the disk adapter
+> writes attachments to `<cwd>/uploads` (= `/app/uploads`). The API image runs as a
+> non-root `app` user while `/app` is root-owned, so a runtime `mkdir /app/uploads`
+> fails with **`EACCES`** and uploads silently break in production (works locally,
+> where the dev server runs as the host user). The `api` Dockerfile therefore
+> pre-creates `/app/uploads` and `chown`s it to `app:app` before `USER app`, and
+> `docker-compose.full.yml` mounts a named `uploads-data` volume there so attachments
+> **persist across redeploys** (a fresh named volume inherits the image's writable
+> ownership). Production S3/MinIO deployments don't need this — they don't touch the
+> local filesystem.
 
 > **`NODE_ENV` at build time**: Coolify forwards the shared `NODE_ENV` (e.g.
 > `development` in the dev group) to `docker compose build` as a blanket

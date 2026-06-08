@@ -20,7 +20,6 @@ import type {
 export type WidgetStateName =
   | "boot"
   | "pre_chat"
-  | "sections"
   | "chat_active"
   | "contact_prompt"
   | "escalated"
@@ -67,7 +66,7 @@ export type WidgetEvent =
     settings: WidgetSettings;
     sections: WidgetSection[];
     // What to render next based on stored session + conversation.
-    next: "pre_chat" | "sections" | "chat_active" | "escalated" | "resolved";
+    next: "pre_chat" | "chat_active" | "escalated" | "resolved";
     conversationId?: string;
     conversationStatus?: ConversationStatus;
     messages?: WidgetMessage[];
@@ -174,7 +173,7 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
       };
 
     case "CONVERSATION_CREATED": {
-      // From pre_chat (first message) or from sections (return visitor).
+      // From pre_chat — the visitor's first message, or a tapped section topic.
       const nextState: WidgetStateName =
         event.status === "resolved"
           ? "resolved"
@@ -264,7 +263,9 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
       };
 
     case "START_NEW_CONVERSATION":
-      // From `resolved` or `sections`. Drop convo state and head to pre_chat.
+      // From `resolved`. Drop convo state and head back to pre_chat — the chat
+      // view with the composer, where the configured sections re-appear as the
+      // panel above the input (until the next first message is sent).
       return {
         state: "pre_chat",
         overlay: null,
@@ -279,44 +280,23 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
       };
 
     case "CONVERSATION_STATUS_CHANGED": {
-      // On resolution, return the visitor to the sections menu (when sections are
-      // configured) so they can pick a new topic — sections are "home" both
-      // before the first question AND after a conversation resolves. With no
-      // sections we fall back to the resolved screen.
-      if (event.status === "resolved") {
-        if (state.context.sections.length > 0) {
-          return {
-            ...state,
-            state: "sections",
-            overlay: null,
-            context: {
-              ...state.context,
-              conversationId: null,
-              conversationStatus: null,
-              messages: [],
-              hasPromptedForContact: hasEmail(state.context)
-                ? state.context.hasPromptedForContact
-                : false,
-            },
-          };
-        }
-        return {
-          ...state,
-          state: "resolved",
-          overlay: null,
-          context: { ...state.context, conversationStatus: "resolved" },
-        };
-      }
+      // Resolution shows the Resolved screen (NOT an automatic jump elsewhere —
+      // that was jarring mid/just-after a conversation). The sections panel
+      // reappears only when the visitor chooses "Start a new conversation"
+      // (START_NEW_CONVERSATION → pre_chat, which renders sections above the
+      // composer until the next first message is sent).
       const nextState: WidgetStateName =
-        event.status === "escalated"
-          ? "escalated"
-          : state.state === "escalated" || state.state === "resolved"
-            ? "chat_active"
-            : state.state;
+        event.status === "resolved"
+          ? "resolved"
+          : event.status === "escalated"
+            ? "escalated"
+            : state.state === "escalated" || state.state === "resolved"
+              ? "chat_active"
+              : state.state;
       return {
         ...state,
         state: nextState,
-        overlay: state.overlay,
+        overlay: nextState === "resolved" ? null : state.overlay,
         context: { ...state.context, conversationStatus: event.status },
       };
     }
