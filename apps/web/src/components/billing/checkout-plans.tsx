@@ -211,7 +211,7 @@ export function CheckoutPlans({
                 key={p.plan}
                 data-plan-card
                 className={`flex cursor-pointer flex-col rounded-xl border bg-card p-6 transition ${
-                  highlighted ? "border-primary ring-1 ring-primary/30" : "border-border"
+                  highlighted ? "border-primary" : "border-border"
                 }`}
               >
                 <div className="font-display text-lg font-semibold">{p.name}</div>

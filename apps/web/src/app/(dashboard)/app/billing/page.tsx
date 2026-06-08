@@ -158,7 +158,7 @@ async function Page() {
                 data-plan-card
                 className={`cursor-pointer rounded-xl border bg-card p-5 transition ${
                   isCurrent
-                    ? "border-foreground ring-1 ring-foreground"
+                    ? "border-foreground"
                     : highlighted
                       ? "border-primary/50"
                       : "border-border"

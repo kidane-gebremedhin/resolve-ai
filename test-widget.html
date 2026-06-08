@@ -10,13 +10,25 @@
         <center>Welcome to <b>Custome Service Chatbot</b></center>
     </div>
 
-<!-- Drop this anywhere in your page (ideally before </body>). -->
+<!-- LOCAL stack (api:4000, widget:3001, embed:3002) + the local "Support agent"
+     which has 3 seeded sections. Use this to see the sections render. -->
+<script
+  async
+  src="http://localhost:3002/widget.js"
+  data-agent="6a26106a7cffa2b65e50e0f0"
+  data-widget-url="http://localhost:3001"
+  data-api-url="http://localhost:4000/api/v1"
+></script>
+
+<!-- PRODUCTION (original) — note: agent "Support agent 2" has NO sections configured,
+     so this will show none until sections are created on prod AND the widget is redeployed.
 <script
   async
   src="http://t9qdz68ejjlm8v68310ysdb2.157.173.125.72.sslip.io/widget.js"
-  data-agent="6a26f8b542cccd74a876b46a"
+  data-agent="6a272c1857acb83baadf29f5"
   data-widget-url="http://xhj7ecvagge2tvwjl2yikby9.157.173.125.72.sslip.io"
   data-api-url="http://xv5h230nhryuwrotwxk40xtb.157.173.125.72.sslip.io/api/v1"
 ></script>
+-->
 </body>
 </html>
