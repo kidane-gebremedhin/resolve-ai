@@ -367,6 +367,8 @@ export function WidgetStudio({
                 />
               </div>
 
+              <SectionsManager agentId={agent._id} />
+
               <div className="rounded-xl border border-border bg-card p-5 space-y-3">
                 <div>
                   <Label className="text-xs">Avatar URL</Label>
@@ -403,8 +405,6 @@ export function WidgetStudio({
             </TabsContent>
 
             <TabsContent value="content" className="mt-4 space-y-4">
-              <SectionsManager agentId={agent._id} />
-
               <div className="rounded-xl border border-border bg-card p-5 space-y-4">
                 <div>
                   <Label className="text-xs">System prompt override</Label>
@@ -714,9 +714,9 @@ type SectionItem = {
   order?: number;
 };
 
-type SectionDraft = { title: string; description: string; icon: string; url: string };
+type SectionDraft = { title: string; icon: string; url: string };
 
-const EMPTY_SECTION: SectionDraft = { title: "", description: "", icon: "", url: "" };
+const EMPTY_SECTION: SectionDraft = { title: "", icon: "", url: "" };
 
 // Sections manager — the help-center "Sections" tab content. Each section has a
 // title + link; in the widget, tapping it renders that link inline (iframe).
@@ -757,7 +757,6 @@ function SectionsManager({ agentId }: { agentId: string }) {
   function toBody(d: SectionDraft, order?: number) {
     return {
       title: d.title.trim(),
-      description: d.description.trim() || undefined,
       icon: d.icon.trim() || undefined,
       url: d.url.trim() || undefined,
       ...(order !== undefined ? { order } : {}),
@@ -831,7 +830,6 @@ function SectionsManager({ agentId }: { agentId: string }) {
     setEditingId(s._id);
     setDraft({
       title: s.title ?? "",
-      description: s.description ?? "",
       icon: s.icon ?? "",
       url: s.url ?? "",
     });
@@ -926,12 +924,6 @@ function SectionsManager({ agentId }: { agentId: string }) {
           value={draft.url}
           onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
           placeholder="https://help.example.com/sign-up"
-          className="h-9"
-        />
-        <Input
-          value={draft.description}
-          onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-          placeholder="Short description (optional)"
           className="h-9"
         />
         <div className="flex justify-end gap-2">

@@ -32,9 +32,6 @@ export function SectionCard({
         <span className="block truncate text-sm font-medium text-neutral-900 dark:text-neutral-100">
           {section.title}
         </span>
-        {section.description ? (
-          <span className="mt-0.5 block text-xs text-neutral-500 dark:text-neutral-400">{section.description}</span>
-        ) : null}
       </span>
       <span className="mt-1 text-neutral-300 group-hover:text-neutral-500 dark:text-neutral-600 dark:group-hover:text-neutral-400" aria-hidden>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
