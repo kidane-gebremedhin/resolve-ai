@@ -1,13 +1,15 @@
 "use client";
 
 // SectionContentView — the inline "article" view for the Sections feature.
-// When a visitor taps a section, its linked page (`section.url`) is rendered
-// INLINE inside the widget via an iframe (no new tab), with a back button to
-// return to the previous screen. Some sites refuse to be framed
-// (X-Frame-Options / CSP frame-ancestors) and will show blank — the header
-// carries an "Open ↗" fallback link so the content is always reachable.
+// When a visitor taps a section, its linked page is rendered INLINE inside the
+// widget via an iframe (no new tab), with a back button. To defeat sites that
+// refuse direct framing (X-Frame-Options / CSP frame-ancestors), the iframe
+// loads the API's section-content PROXY (`/widget/sections/:id/content`), which
+// fetches the page server-side and strips those headers. The header still
+// carries an "Open ↗" link to the real URL as a fallback.
 
 import type { WidgetSection } from "../lib/api-client";
+import { API_URL } from "../lib/api-client";
 
 export function SectionContentView({
   section,
@@ -18,6 +20,11 @@ export function SectionContentView({
   primaryColor: string;
   onBack: () => void;
 }) {
+  // Render via the server-side proxy so X-Frame-Options/CSP-protected pages still
+  // display inline. Falls back to nothing if the section has no link.
+  const proxySrc = section.url
+    ? `${API_URL}/widget/sections/${section._id}/content`
+    : null;
   return (
     <div className="absolute inset-0 z-20 flex h-full w-full flex-col bg-white dark:bg-neutral-900">
       <div className="flex items-center gap-2 border-b border-neutral-100 px-2 py-2 dark:border-neutral-800">
@@ -54,9 +61,9 @@ export function SectionContentView({
       </div>
 
       <div className="relative min-h-0 flex-1 bg-neutral-50 dark:bg-neutral-950">
-        {section.url ? (
+        {proxySrc ? (
           <iframe
-            src={section.url}
+            src={proxySrc}
             title={section.title}
             className="h-full w-full border-0"
             sandbox="allow-scripts allow-same-origin allow-popups allow-forms"

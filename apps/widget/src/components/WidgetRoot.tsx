@@ -688,7 +688,7 @@ export function WidgetRoot({
               /* not embedded (e.g. studio preview) — no-op */
             }
           }}
-          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/10 text-neutral-700 transition hover:bg-black/20 active:scale-95 dark:bg-white/15 dark:text-neutral-100 dark:hover:bg-white/25 sm:hidden"
+          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30 active:scale-95 sm:hidden"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -760,8 +760,17 @@ function WidgetTabBar({
     { id: "sections" as const, label: "Sections" },
   ];
   return (
-    <div className="shrink-0 border-b border-neutral-100 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
-      <div className="mx-auto flex w-full max-w-[280px] items-center gap-1 rounded-full bg-neutral-100 p-1 dark:bg-neutral-800">
+    // Sits on the same accent band as the header (cross-hatch grid + accent base)
+    // so the tabs + header read as one coloured block, like the reference.
+    <div
+      className="shrink-0 px-3 pt-3 pb-2"
+      style={{
+        backgroundColor: primaryColor,
+        backgroundImage:
+          "repeating-linear-gradient(-45deg, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 5px, transparent 5px, transparent 8px), repeating-linear-gradient(45deg, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 5px, transparent 5px, transparent 8px)",
+      }}
+    >
+      <div className="mx-auto flex w-full max-w-[280px] items-center gap-1 rounded-full bg-black/15 p-1">
         {tabs.map((t) => {
           const active = tab === t.id;
           return (
@@ -771,10 +780,10 @@ function WidgetTabBar({
               onClick={() => onChange(t.id)}
               className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                 active
-                  ? "text-white shadow-sm"
-                  : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+                  ? "bg-white shadow-sm"
+                  : "text-white/80 hover:bg-white/10 hover:text-white"
               }`}
-              style={active ? { background: primaryColor } : undefined}
+              style={active ? { color: primaryColor } : undefined}
               aria-pressed={active}
             >
               {t.label}

@@ -130,11 +130,15 @@ stateDiagram-v2
   tab ([`SectionsTab`](../apps/widget/src/components/SectionsTab.tsx)) is a
   help-center list of `SectionCard`s.
 - Tapping a section **renders its `url` inline inside the widget** via an iframe
-  ([`SectionContentView`](../apps/widget/src/components/SectionContentView.tsx)) —
-  a "‹ Back" header returns to the list, and an "Open ↗" link is the fallback for
-  sites that refuse framing (X-Frame-Options / CSP). It does **not** open a new
-  tab or start a conversation. (`tab` and `activeSection` are local `WidgetRoot`
-  UI state, not machine states.)
+  ([`SectionContentView`](../apps/widget/src/components/SectionContentView.tsx)).
+  The iframe loads a server-side **proxy** (`GET /widget/sections/:id/content`,
+  widget.routes.ts) — not the raw URL — so pages that send `X-Frame-Options` /
+  CSP `frame-ancestors` (e.g. support.google.com) still display; the proxy strips
+  those headers and injects a `<base>`. A "‹ Back" header returns to the list and
+  an "Open ↗" link is the fallback. It does **not** open a new tab or start a
+  conversation. (`tab` and `activeSection` are local `WidgetRoot` UI state, not
+  machine states.) The widget header itself uses the operator's accent colour with
+  a cross-hatch grid overlay; the tab bar shares that accent band.
 - The Chat tab is the conversation experience (the states above). The two tabs are
   independent; switching to Sections never disturbs an in-progress chat.
 - Managed in the dashboard via the Widget Studio **Sections** manager (spec 22).

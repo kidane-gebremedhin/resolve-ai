@@ -254,6 +254,76 @@ router.get(
   }),
 );
 
+// ---------- GET /widget/sections/:id/content ----------
+// Public server-side proxy that renders a section's linked page INSIDE the
+// widget iframe. Browsers refuse to frame sites that send `X-Frame-Options` or
+// CSP `frame-ancestors` (e.g. support.google.com → "Refused to display … in a
+// frame"). We fetch the page server-side (those headers don't restrict us),
+// strip the framing/security headers helmet set on OUR response, and inject a
+// `<base>` so the page's relative assets/links still resolve to the source.
+// Only configured section URLs are fetched (no arbitrary-URL proxy) and obvious
+// internal/loopback hosts are blocked — limiting SSRF to operator-set help URLs.
+const PRIVATE_HOST_RE =
+  /^(localhost$|127\.|0\.0\.0\.0$|169\.254\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fe80:|fc00:|fd)/i;
+
+router.get(
+  "/sections/:id/content",
+  asyncHandler(async (req: Request, res: Response) => {
+    const id = String(req.params.id);
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) throw new ValidationError("Invalid section id.");
+    const section = await Section.findOne({ _id: id, isActive: true });
+    if (!section?.url) throw new NotFoundError("Section content not found.");
+
+    let target: URL;
+    try {
+      target = new URL(section.url);
+    } catch {
+      throw new ValidationError("Section URL is invalid.");
+    }
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      throw new ValidationError("Unsupported URL scheme.");
+    }
+    if (PRIVATE_HOST_RE.test(target.hostname)) {
+      throw new ValidationError("Blocked host.");
+    }
+
+    let upstream: Awaited<ReturnType<typeof fetch>>;
+    try {
+      upstream = await fetch(target.toString(), {
+        redirect: "follow",
+        headers: {
+          "user-agent": "Mozilla/5.0 (compatible; HelioWidget/1.0)",
+          accept: "text/html,application/xhtml+xml,*/*",
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      throw new ValidationError("Could not load the section content.");
+    }
+
+    const ctype = upstream.headers.get("content-type") ?? "text/html; charset=utf-8";
+    // Strip the headers helmet added so the widget (a different origin) can frame
+    // our response and the proxied page's own assets aren't blocked by our CSP.
+    res.removeHeader("X-Frame-Options");
+    res.removeHeader("Content-Security-Policy");
+    res.removeHeader("Cross-Origin-Embedder-Policy");
+    res.removeHeader("Cross-Origin-Resource-Policy");
+    res.setHeader("Content-Type", ctype);
+    res.setHeader("Cache-Control", "public, max-age=300");
+
+    if (/\btext\/html\b/i.test(ctype)) {
+      const html = await upstream.text();
+      const baseTag = `<base href="${target.toString().replace(/"/g, "&quot;")}">`;
+      const out = /<head[^>]*>/i.test(html)
+        ? html.replace(/(<head[^>]*>)/i, `$1${baseTag}`)
+        : `${baseTag}${html}`;
+      res.send(out);
+    } else {
+      res.send(Buffer.from(await upstream.arrayBuffer()));
+    }
+  }),
+);
+
 // `POST /widget/sessions` (spec name) is an alias for `/widget/init` — same payload, same response.
 // We keep both registered so older clients keep working while spec-aligned clients can call /sessions.
 router.post(

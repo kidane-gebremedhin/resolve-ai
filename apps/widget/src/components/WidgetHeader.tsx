@@ -22,11 +22,18 @@ export function WidgetHeader({
     .toUpperCase();
 
   return (
-    <header className="flex items-center gap-3 border-b border-neutral-100 bg-white px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900">
-      <div
-        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full text-xs font-semibold text-white"
-        style={{ background: primaryColor }}
-      >
+    <header
+      className="flex items-center gap-3 px-4 py-3 text-white"
+      // Accent-coloured header with a subtle diagonal cross-hatch grid overlay
+      // (per the reference). Base = the operator's selected accent; the grid is a
+      // faint translucent-white pattern layered on top.
+      style={{
+        backgroundColor: primaryColor,
+        backgroundImage:
+          "repeating-linear-gradient(-45deg, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 5px, transparent 5px, transparent 8px), repeating-linear-gradient(45deg, rgba(255,255,255,0.12) 0px, rgba(255,255,255,0.12) 5px, transparent 5px, transparent 8px)",
+      }}
+    >
+      <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-white/20 text-xs font-semibold text-white ring-1 ring-white/30">
         {agent?.avatarUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={agent.avatarUrl} alt={agent.name} className="h-full w-full object-cover" />
@@ -35,10 +42,10 @@ export function WidgetHeader({
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-neutral-900 dark:text-neutral-100">
+        <div className="truncate text-sm font-semibold text-white">
           {agent?.name ?? "Assistant"}
         </div>
-        <div className="text-[11px] text-neutral-500 dark:text-neutral-400">Typically replies in under 2 minutes</div>
+        <div className="text-[11px] text-white/80">Typically replies in under 2 minutes</div>
       </div>
       {status ? <StatusPill {...status} /> : null}
     </header>
