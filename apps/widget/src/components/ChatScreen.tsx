@@ -42,6 +42,9 @@ export function ChatScreen({
   /** Authenticates attachment preview/download URLs. */
   sessionToken?: string;
 }) {
+  // Suggested questions are onboarding prompts — hide them once the visitor has
+  // sent their first message (any "customer" message in the transcript).
+  const userHasSent = messages.some((m) => m.role === "customer");
   return (
     <div className="flex h-full w-full flex-col bg-white dark:bg-neutral-900">
       <WidgetHeader
@@ -55,10 +58,11 @@ export function ChatScreen({
         <EscalatedBanner operatorJoined={messages.some((m) => m.role === "operator")} />
       ) : null}
       <MessageList messages={messages} primaryColor={primaryColor} typing={aiTyping} sessionToken={sessionToken} />
-      {/* Suggested questions (configured per-agent in /app/widget) — a persistent
-          chip strip in the Chat tab, kept visible even after the first message.
-          Hidden only while the contact-prompt overlay forces the composer closed. */}
-      {!composerDisabled ? (
+      {/* Suggested questions (configured per-agent in /app/widget) — a chip strip
+          in the Chat tab shown only before the visitor's first message, to seed
+          the conversation. Hidden after they send, and while the contact-prompt
+          overlay forces the composer closed. */}
+      {!composerDisabled && !userHasSent ? (
         <SuggestedQuestions
           questions={agent?.suggestedQuestions ?? []}
           onSend={onSend}

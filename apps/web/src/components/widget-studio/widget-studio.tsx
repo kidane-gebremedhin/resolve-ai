@@ -752,20 +752,32 @@ function SectionsManager({ agentId }: { agentId: string }) {
     setEditingId(null);
   }
 
-  // Build the API body, dropping empty optionals so server-side validation
-  // (url must be a valid URL when present) doesn't reject empty strings.
+  // A section's link is required; prefix a scheme if the admin omitted it so
+  // "help.example.com" still posts as a valid absolute URL.
+  function ensureProtocol(raw: string) {
+    const t = raw.trim();
+    if (!t) return t;
+    return /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  }
+
+  // Build the API body. icon is optional; title + url are required.
   function toBody(d: SectionDraft, order?: number) {
     return {
       title: d.title.trim(),
       icon: d.icon.trim() || undefined,
-      url: d.url.trim() || undefined,
+      url: ensureProtocol(d.url),
       ...(order !== undefined ? { order } : {}),
     };
   }
 
   async function submit() {
     const title = draft.title.trim();
+    const url = draft.url.trim();
     if (!title) return;
+    if (!url) {
+      setError("A link is required — add the URL this section should open.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -841,7 +853,8 @@ function SectionsManager({ agentId }: { agentId: string }) {
         <Label className="text-xs font-medium">Sections (help center)</Label>
         <p className="mt-1 text-[11px] text-muted-foreground">
           Topics shown in the widget&apos;s <span className="font-medium">Sections</span> tab.
-          Tapping one opens its link inline inside the widget. Saved instantly.
+          Tapping one opens its link inline inside the widget — a link is required.
+          Saved instantly.
         </p>
       </div>
 
@@ -920,12 +933,19 @@ function SectionsManager({ agentId }: { agentId: string }) {
             className="h-9 flex-1"
           />
         </div>
-        <Input
-          value={draft.url}
-          onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
-          placeholder="https://help.example.com/sign-up"
-          className="h-9"
-        />
+        <div>
+          <Label className="text-[11px] font-medium">
+            Link <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            value={draft.url}
+            onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))}
+            placeholder="https://help.example.com/sign-up"
+            className="mt-1 h-9"
+            required
+            aria-required="true"
+          />
+        </div>
         <div className="flex justify-end gap-2">
           {editingId && (
             <Button size="sm" variant="outline" onClick={resetForm} disabled={busy}>
@@ -935,7 +955,7 @@ function SectionsManager({ agentId }: { agentId: string }) {
           <Button
             size="sm"
             onClick={submit}
-            disabled={busy || !draft.title.trim()}
+            disabled={busy || !draft.title.trim() || !draft.url.trim()}
             className="gap-1"
           >
             <Plus className="h-3.5 w-3.5" />

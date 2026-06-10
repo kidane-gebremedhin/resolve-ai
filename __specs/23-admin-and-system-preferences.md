@@ -61,6 +61,36 @@ Offer a **curated set** of fonts (not arbitrary), so we keep `next/font` optimiz
 - Admin UI: the `/admin/settings` ("System Preferences") page renders [`FontPreferences`](../apps/admin/src/components/font-preferences.tsx) — two dropdown selects (body, heading) listing every curated font, each with a **live sample aligned to its right** that re-renders in the selected font as you pick, before saving.
 
 ### Decisions
+
+> **Changelog 30 — ~100 fonts, generated registry, searchable picker, widget + marketing.**
+> The curated registry grew from 20 to **~97 popular Google fonts** (Google Fonts
+> popularity ∩ `@fontsource` availability, Latin-capable, variable-preferred), still
+> self-hosted via `@fontsource[-variable]` + `next/font/local` (build never fetches
+> Google Fonts). The two-slot architecture (CL19–20) is unchanged.
+> - The registry is now **generated**: [`scripts/fonts-list.json`](../scripts/fonts-list.json)
+>   (curated list) + [`scripts/gen-fonts.mjs`](../scripts/gen-fonts.mjs) scans the
+>   installed packages and writes an identical `fonts.ts` into all three apps plus
+>   the API's [`font-keys.ts`](../apps/api/src/lib/font-keys.ts) (the Zod-enum
+>   source). To change the set: edit `fonts-list.json`, `pnpm add` new packages,
+>   run `node scripts/gen-fonts.mjs`. Hand-editing `fonts.ts` is no longer the path.
+> - [`FontPreferences`](../apps/admin/src/components/font-preferences.tsx) is now two
+>   **searchable comboboxes** (Popover + cmdk `Command`); each option renders in its
+>   own font, with a live preview. `settings-real.tsx`'s Theming tab lists the same
+>   ~100 fonts (imported from the registry).
+> - The **widget** now loads the selected font too
+>   (`apps/widget/src/app/{fonts.ts,layout.tsx,globals.css}`), reading the admin
+>   choice from `/public/theming` (graceful fallback) — so the font is consistent on
+>   the widget as well as admin / `/app` / marketing.
+> - Marketing `.ns-theme` follows `--font-sans`/`--font-display`; no component
+>   hard-codes a family and Tailwind preflight makes links/buttons/form controls
+>   inherit, so **every** text/link/button/form element obeys the chosen font.
+> - Base type size bumped to `html { font-size: 115% }` (web + admin); landing body
+>   copy (`.ns-theme p`) enlarged to ~1–1.125rem for a chatbase.co-like scale.
+> - `theming.fontSans`/`fontDisplay` keep family keys (default `inter`/`inter-tight`).
+>
+> The CL19–20 notes below are retained for history; the font *count* and the
+> hand-edit workflow are superseded by the generated registry above.
+
 - **Curated list (self-hosted via @fontsource + `next/font/local`)**: a popular set — body/sans (Inter, **Geist, DM Sans, Plus Jakarta Sans, Manrope, Sora, Space Grotesk, IBM Plex Sans**, Roboto, Open Sans, Lato, Montserrat, Poppins, Nunito, Work Sans) and heading/display (Inter Tight, **Geist, Sora, Space Grotesk**, Montserrat, Poppins, Playfair Display, Lora, Merriweather, Oswald). _(Bolded fonts added in Changelog 19.)_ The fonts are vendored as `@fontsource[-variable]` npm packages and loaded with `next/font/local` so the **build never fetches Google Fonts** (that made the Docker/Coolify build fail intermittently). The canonical list lives in `apps/{web,admin}/src/app/fonts.ts`; the API enum in `admin.routes.ts` mirrors its keys. To add a font: `pnpm add --filter @csb/{web,admin} @fontsource[-variable]/<name>`, add a `localFont()` entry + key in both `fonts.ts`, and the enum key.
 - **`admin/fonts.ts` was stale** _(fixed Changelog 19)_: it still used `next/font/google` with only ~3 fonts per slot (never migrated to the `@fontsource` local set like web), so a chosen platform font frequently failed to apply on admin pages. Now synced verbatim to the web registry. Keep the two files identical.
 - **Unified body + title options** _(Changelog 20)_: the body and heading selects now offer the **same** list. `fonts.ts` declares every font twice — once for the body slot (`variable: --font-inter`) and once for the heading slot (`variable: --font-inter-tight`) — because next/font only loads a font when its `.variable` className is applied. A single `FONT_OPTIONS` list backs both selects (aliased to `SANS_OPTIONS`/`DISPLAY_OPTIONS`), and the API enum is a single `FONT_KEYS` for both `fontSans`/`fontDisplay`. Current set (20, popular website fonts): Inter, Inter Tight, Geist, DM Sans, Plus Jakarta Sans, Manrope, Sora, Space Grotesk, IBM Plex Sans, Roboto, Open Sans, Lato, Montserrat, Poppins, Nunito, Work Sans, Lora, Merriweather, Playfair Display, Oswald.

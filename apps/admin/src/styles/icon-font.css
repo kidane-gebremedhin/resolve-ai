@@ -15,8 +15,11 @@ Custom Icon FOnts styles
   font-display: block;
 }
 
-[class^='ns-'],
-[class*=' ns-'] {
+/* Scope the icon font to the actual icon classes (ns-shape-*) only — the broad
+   [class^='ns-'] also matched the `.ns-theme` landing wrapper and forced
+   'next-sass' onto all body text. Keep in sync with apps/web. */
+[class^='ns-shape-'],
+[class*=' ns-shape-'] {
   /* use !important to prevent issues with browser extensions that change fonts */
   font-family: 'next-sass' !important;
   speak-as: never;

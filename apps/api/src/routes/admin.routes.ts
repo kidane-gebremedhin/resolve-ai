@@ -24,32 +24,10 @@ import {
   parseListParams,
   searchFilter,
 } from "../utils/list-query.js";
+import { FONT_KEYS } from "../lib/font-keys.js";
 
-// Curated font keys (must match apps/web/src/app/fonts.ts — vendored via
-// @fontsource/next-font-local).
-// Body and heading accept the SAME keys (see apps/web/src/app/fonts.ts FONT_OPTIONS).
-const FONT_KEYS = [
-  "inter",
-  "inter-tight",
-  "geist",
-  "dm-sans",
-  "plus-jakarta-sans",
-  "manrope",
-  "sora",
-  "space-grotesk",
-  "ibm-plex-sans",
-  "roboto",
-  "open-sans",
-  "lato",
-  "montserrat",
-  "poppins",
-  "nunito",
-  "work-sans",
-  "lora",
-  "merriweather",
-  "playfair",
-  "oswald",
-] as const;
+// Curated font keys (mirror of apps/web/src/app/fonts.ts FONT_OPTIONS), generated
+// by scripts/gen-fonts.mjs. Body and heading accept the SAME keys.
 const SANS_KEYS = FONT_KEYS;
 const DISPLAY_KEYS = FONT_KEYS;
 import { requireAuth, requirePlatformAdmin } from "../middleware/auth.middleware.js";
