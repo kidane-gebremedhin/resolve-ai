@@ -30,6 +30,16 @@ Complete the platform admin panel (add the missing **Organizations** and **Agent
 
 ### Global font preference
 
+> **Updated by Changelog 30** — the curated registry grew to **~97 popular Google
+> fonts** and is now **generated** ([`scripts/fonts-list.json`](../scripts/fonts-list.json)
+> + [`scripts/gen-fonts.mjs`](../scripts/gen-fonts.mjs) → `fonts.ts` in all 3 apps +
+> the API [`font-keys.ts`](../apps/api/src/lib/font-keys.ts)). The picker is a
+> **searchable combobox** (each option in its own font), the font now also applies
+> to **the widget**, and marketing pages obey it on every text/link/button/form.
+> Two-slot architecture and `inter`/`inter-tight` defaults unchanged. See
+> [`__specs/23-admin-and-system-preferences.md`](../__specs/23-admin-and-system-preferences.md)
+> (Decisions → Changelog 30) and [`CHANGELOGS_30.md`](../CHANGELOGS_30.md).
+
 | # | Task | Files | Skill | Acceptance |
 |---|------|-------|-------|------------|
 | 4 | Curated `next/font` registry of popular Google fonts — sans (Inter, Roboto, Open Sans, Lato, Montserrat, Poppins, Raleway, Nunito, Work Sans, Source Sans 3, Rubik, DM Sans, Manrope, Plus Jakarta Sans, Mulish, Figtree) + display (Inter Tight, Montserrat, Poppins, Playfair Display, Lora, Merriweather, Raleway, Oswald, Space Grotesk, Sora, Archivo, DM Serif Display), each exposing a CSS variable | `apps/web/src/app/fonts.ts`, `apps/admin/src/app/fonts.ts` (kept in sync) | nextjs16-template-migration | Module exports `{key → fontObject}` for sans + display sets |

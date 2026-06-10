@@ -1,20 +1,24 @@
 'use client';
 
-// Global app font picker. Two dropdowns (body + heading) list every available
-// font; a live preview panel re-renders instantly in the selected fonts so the
-// admin can see the change before saving. The choice is saved to
-// PlatformSetting.theming and applies across /app, public pages, and this
-// admin portal.
+// Global app font picker. Two searchable comboboxes (body + heading) list every
+// available font; each option renders in its own font so the admin can see it,
+// and a live preview panel re-renders instantly in the selected fonts before
+// saving. The choice is saved to PlatformSetting.theming and applies across /app,
+// the public marketing pages, the widget, and this admin portal.
 
 import { useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Check, ChevronsUpDown, Loader2 } from 'lucide-react';
 import {
   Button,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from '@csb/ui';
 import { clientApi, ApiError } from '@/lib/api';
 
@@ -32,6 +36,65 @@ const SAMPLE =
 
 function byValue(options: FontOption[], value: string) {
   return options.find((o) => o.value === value) ?? options[0];
+}
+
+/** Searchable font picker; each option previews in its own font. */
+function FontCombobox({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: FontOption[];
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = byValue(options, value);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          className="mt-3 w-full justify-between font-normal"
+        >
+          <span className={selected.className} style={{ fontFamily: selected.fontFamily }}>
+            {selected.label}
+          </span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search fonts…" />
+          <CommandList>
+            <CommandEmpty>No font found.</CommandEmpty>
+            <CommandGroup>
+              {options.map((o) => (
+                <CommandItem
+                  key={o.value}
+                  value={o.label}
+                  onSelect={() => {
+                    onChange(o.value);
+                    setOpen(false);
+                  }}
+                >
+                  <span className={o.className} style={{ fontFamily: o.fontFamily }}>
+                    {o.label}
+                  </span>
+                  <Check
+                    className={`ml-auto h-4 w-4 ${value === o.value ? 'opacity-100' : 'opacity-0'}`}
+                  />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 export function FontPreferences({
@@ -76,26 +139,14 @@ export function FontPreferences({
         <div className="sm:w-72 sm:shrink-0">
           <label className="font-display text-sm font-semibold">Body font</label>
           <p className="mt-0.5 text-xs text-muted-foreground">Paragraphs and UI text everywhere.</p>
-          <Select
+          <FontCombobox
             value={fontSans}
-            onValueChange={(v) => {
+            onChange={(v) => {
               setFontSans(v);
               setSaved(false);
             }}
-          >
-            <SelectTrigger className="mt-3">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="max-h-72">
-              {sans.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  <span className={o.className} style={{ fontFamily: o.fontFamily }}>
-                    {o.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={sans}
+          />
         </div>
         <div className="flex-1 rounded-xl border border-border bg-muted/20 p-4">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -114,26 +165,14 @@ export function FontPreferences({
         <div className="sm:w-72 sm:shrink-0">
           <label className="font-display text-sm font-semibold">Heading font</label>
           <p className="mt-0.5 text-xs text-muted-foreground">Titles and display text.</p>
-          <Select
+          <FontCombobox
             value={fontDisplay}
-            onValueChange={(v) => {
+            onChange={(v) => {
               setFontDisplay(v);
               setSaved(false);
             }}
-          >
-            <SelectTrigger className="mt-3">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="max-h-72">
-              {display.map((o) => (
-                <SelectItem key={o.value} value={o.value}>
-                  <span className={o.className} style={{ fontFamily: o.fontFamily }}>
-                    {o.label}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            options={display}
+          />
         </div>
         <div className="flex-1 rounded-xl border border-border bg-muted/20 p-4">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -154,7 +193,9 @@ export function FontPreferences({
           {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
           Save font
         </Button>
-        {saved ? <span className="text-xs text-emerald-600">Saved — applies on next page load.</span> : null}
+        {saved ? (
+          <span className="text-xs text-emerald-600">Saved — applies on next page load.</span>
+        ) : null}
       </div>
     </div>
   );

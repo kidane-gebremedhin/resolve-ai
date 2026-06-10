@@ -22,6 +22,7 @@ import {
   TabsTrigger,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { SANS_OPTIONS, DISPLAY_OPTIONS } from "@/app/fonts";
 
 export type PlatformSettings = {
   _id?: string;
@@ -53,18 +54,9 @@ export type PlatformSettings = {
   updatedAt?: string;
 };
 
-// Curated font options — values MUST match apps/web/src/app/fonts.ts and the
-// admin Zod enum in apps/api/src/routes/admin.routes.ts.
-const SANS_OPTIONS = [
-  { value: "inter", label: "Inter" },
-  { value: "open-sans", label: "Open Sans" },
-  { value: "montserrat", label: "Montserrat" },
-];
-const DISPLAY_OPTIONS = [
-  { value: "inter-tight", label: "Inter Tight" },
-  { value: "lora", label: "Lora (serif)" },
-  { value: "montserrat", label: "Montserrat" },
-];
+// Curated font options come from the shared registry (imported at the top of the
+// file), so this fallback editor lists the same ~100 fonts as the searchable
+// picker on the System Preferences page. Body and heading share the list.
 
 type Editable = {
   smtp: {
@@ -358,7 +350,7 @@ export function AdminSettingsForm({ initial }: { initial: PlatformSettings | nul
         <TabsContent value="theming" className="mt-6 max-w-2xl">
           <Section
             title="Global app font"
-            description="Applied consistently across the dashboard, admin, and public pages. Defaults to Inter."
+            description="Applied consistently across the dashboard, admin, public pages and widget. Defaults to Inter."
           >
             <div>
               <Label>Body font (sans)</Label>

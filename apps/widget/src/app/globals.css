@@ -7,6 +7,18 @@
    theme setting is the source of truth, with `auto` resolved in JS. */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* The widget shares the platform's global font. The admin-selected body/heading
+   fonts are injected by next/font into --font-inter / --font-inter-tight (only the
+   chosen font's .variable className is applied to <html> in layout.tsx). */
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  font-family: var(--font-sans);
+}
+
 body {
   margin: 0;
 }

@@ -1,9 +1,9 @@
 "use client";
 
 // SuggestedQuestions — a compact, horizontally-scrollable strip of quick-reply
-// chips shown inside the Chat tab, just above the composer. Persistent: visible
-// before the first message AND throughout the conversation (clicking one sends
-// it as the next message). This is a separate feature from Sections.
+// chips shown inside the Chat tab, just above the composer. Shown only before the
+// visitor's first message to seed the conversation (clicking one sends it); the
+// parent hides the strip once they've sent. This is separate from Sections.
 
 export function SuggestedQuestions({
   questions,

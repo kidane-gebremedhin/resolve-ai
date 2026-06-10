@@ -56,6 +56,9 @@ importers:
       '@fontsource-variable/oswald':
         specifier: ^5.2.8
         version: 5.2.8
+      '@fontsource-variable/outfit':
+        specifier: ^5.2.8
+        version: 5.2.8
       '@fontsource-variable/playfair-display':
         specifier: ^5.2.8
         version: 5.2.8
@@ -134,7 +137,7 @@ importers:
         version: 9.39.4(jiti@2.7.0)
       eslint-config-next:
         specifier: 16.2.6
-        version: 16.2.6(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+        version: 16.2.6(@typescript-eslint/parser@8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
       tailwindcss:
         specifier: ^4
         version: 4.3.0
@@ -332,6 +335,9 @@ importers:
         specifier: ^5.2.7
         version: 5.2.7
       '@fontsource-variable/oswald':
+        specifier: ^5.2.8
+        version: 5.2.8
+      '@fontsource-variable/outfit':
         specifier: ^5.2.8
         version: 5.2.8
       '@fontsource-variable/playfair-display':
@@ -550,7 +556,7 @@ importers:
         version: 9.39.4(jiti@2.7.0)
       eslint-config-next:
         specifier: 16.2.6
-        version: 16.2.6(@typescript-eslint/parser@8.59.4(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3))(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
+        version: 16.2.6(eslint@9.39.4(jiti@2.7.0))(typescript@5.9.3)
       tailwindcss:
         specifier: ^4
         version: 4.3.0
@@ -572,6 +578,9 @@ importers:
       '@emoji-mart/react':
         specifier: ^1.1.1
         version: 1.1.1(emoji-mart@5.6.0)(react@19.2.4)
+      '@fontsource-variable/outfit':
+        specifier: ^5.2.8
+        version: 5.2.8
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -1440,6 +1449,9 @@ packages:
 
   '@fontsource-variable/oswald@5.2.8':
     resolution: {integrity: sha512-sIXwfKbyHOATgBWOlpR73VMQ8pA8XCToiyy6sL02ZfYEZPpW18TLtpxPBpYXId7xKbWCousOTzlJsa/9rTd8WQ==}
+
+  '@fontsource-variable/outfit@5.2.8':
+    resolution: {integrity: sha512-4oUDCZx/Tcz6HZP423w/niqEH31Gks5IsqHV2ZZz1qKHaVIZdj2f0/S1IK2n8jl6Xo0o3N+3RjNHlV9R73ozQA==}
 
   '@fontsource-variable/playfair-display@5.2.8':
     resolution: {integrity: sha512-ZzVIXPOrL85yyOvZYoBzUszIJM+xKkHqni4IYn2CVLaGQQdJR8sBeC8yFNgjxSJ7ludTwta8qpULeOFuk5X75A==}
@@ -6393,6 +6405,8 @@ snapshots:
   '@fontsource-variable/open-sans@5.2.7': {}
 
   '@fontsource-variable/oswald@5.2.8': {}
+
+  '@fontsource-variable/outfit@5.2.8': {}
 
   '@fontsource-variable/playfair-display@5.2.8': {}
 

@@ -16,7 +16,8 @@ const sectionCreateSchema = z.object({
   title: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
   icon: z.string().max(80).optional(),
-  url: z.string().url().optional(),
+  // A section's link is required — tapping a section opens this URL inline.
+  url: z.string().url(),
   action: z.enum(["link", "start-chat", "topic"]).optional(),
   topicPrompt: z.string().max(2000).optional(),
   order: z.number().int().min(0).optional(),

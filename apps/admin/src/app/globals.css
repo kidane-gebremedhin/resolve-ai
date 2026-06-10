@@ -50,6 +50,10 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* The admin-selected body/heading fonts are injected by next/font into the
+     two slots --font-inter (body) and --font-inter-tight (heading) — only the
+     chosen font's .variable className is applied to <html> (see layout.tsx +
+     fonts.ts). Keep these slot names so the whole registry maps here. */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-inter-tight), var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
@@ -135,8 +139,9 @@
     border-color: var(--color-border);
   }
   html {
-    /* Base type scale bumped ~12% (16px → 18px) — keep in sync with web/widget. */
-    font-size: 112.5%;
+    /* Base type scale bumped to ~18.4px (115% of 16px) — keep in sync with
+       web/widget. Scales all rem-based sizing proportionally. */
+    font-size: 115%;
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
@@ -194,7 +199,8 @@
 
 /* NS Theme variables — override Tailwind color tokens inside landing pages */
 .ns-theme {
-  font-family: var(--font-inter-tight), sans-serif;
+  /* Follow the platform body font (Outfit) — same as /app. */
+  font-family: var(--font-sans), sans-serif;
   --color-primary-50: #f4f2fe;
   --color-primary-100: #ece8ff;
   --color-primary-200: #dcd4ff;
@@ -231,7 +237,7 @@
   --color-ns-green-light: #e8fbc6;
   --color-ns-cyan-light: #cdf5f8;
   --color-ns-yellow-light: #fdf7bc;
-  /* --font-inter-tight is injected by next/font (see layout.tsx) */
+  /* Body/heading fonts follow --font-sans/--font-display (set in layout.tsx). */
   --text-heading-1: 4.25rem;
   --text-heading-1--line-height: 110%;
   --text-heading-2: 3.25rem;
@@ -322,7 +328,7 @@
 
 /* NS Typography inside .ns-theme */
 .ns-theme h1, .ns-theme h2, .ns-theme h3, .ns-theme h4, .ns-theme h5, .ns-theme h6 {
-  font-family: var(--font-inter-tight), sans-serif;
+  font-family: var(--font-display), sans-serif;
   color: #1a1a1c;
 }
 .ns-theme.dark h1, .ns-theme.dark h2, .ns-theme.dark h3, .ns-theme.dark h4, .ns-theme.dark h5, .ns-theme.dark h6,

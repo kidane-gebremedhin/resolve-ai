@@ -68,7 +68,8 @@ const platformSettingSchema = new Schema(
       { _id: false },
     ),
     // Global app typography. Keys map to the curated next/font registry in
-    // apps/web/src/app/fonts.ts. Defaults reproduce the current Inter look.
+    // apps/web/src/app/fonts.ts (one of ~100 self-hosted Google fonts). Defaults
+    // reproduce the Inter / Inter Tight look.
     theming: new Schema(
       {
         fontSans: { type: String, default: "inter" },

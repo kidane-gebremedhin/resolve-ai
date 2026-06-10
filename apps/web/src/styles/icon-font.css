@@ -15,8 +15,13 @@ Custom Icon FOnts styles
   font-display: block;
 }
 
-[class^='ns-'],
-[class*=' ns-'] {
+/* Scope the icon font to the actual icon classes (ns-shape-*) only. The original
+   template used the over-broad [class^='ns-'] which also matched the landing
+   wrapper `.ns-theme` and forced `font-family: 'next-sass' !important` onto all
+   body text (headings escaped via their own rule) — so the admin-selected body
+   font never applied to marketing paragraphs/links/buttons. */
+[class^='ns-shape-'],
+[class*=' ns-shape-'] {
   /* use !important to prevent issues with browser extensions that change fonts */
   font-family: 'next-sass' !important;
   speak-as: never;
