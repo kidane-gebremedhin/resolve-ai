@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 3003",
     "build": "next build",
-    "start": "next start -p 3003",
+    "start": "PORT=3003 HOSTNAME=0.0.0.0 node .next/standalone/apps/admin/server.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf .next .turbo node_modules"
