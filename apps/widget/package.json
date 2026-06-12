@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 3001",
     "build": "next build",
-    "start": "next start -p 3001",
+    "start": "PORT=3001 HOSTNAME=0.0.0.0 node .next/standalone/apps/widget/server.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf .next .turbo node_modules"
