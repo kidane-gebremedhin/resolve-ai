@@ -40,6 +40,7 @@ export function CheckoutPlans({
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [defaultHighlight, setDefaultHighlight] = useState<string>("pro");
   // Set when payment succeeded but activation didn't confirm in time — we then
   // offer a manual "Continue to dashboard" button instead of a dead end.
   const [activationStuck, setActivationStuck] = useState(false);
@@ -204,12 +205,13 @@ export function CheckoutPlans({
         {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
         <PlanHighlighter className="grid gap-4 sm:grid-cols-3">
           {plans.map((p) => {
-            const highlighted = p.plan === "pro";
+            const highlighted = p.plan === defaultHighlight;
             const priceLabel = p.priceMonthlyUsd == null ? "Custom" : `$${p.priceMonthlyUsd}`;
             return (
               <div
                 key={p.plan}
                 data-plan-card
+                onClick={() => setDefaultHighlight(p.plan)}
                 className={`flex cursor-pointer flex-col rounded-xl border bg-card p-6 transition ${
                   highlighted ? "border-primary" : "border-border"
                 }`}
