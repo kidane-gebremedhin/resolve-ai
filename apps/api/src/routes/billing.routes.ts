@@ -14,9 +14,11 @@ import {
 } from "../services/billing.service.js";
 import { limitsForPlan } from "../middleware/plan-limit.middleware.js";
 import { loadPlanCatalog } from "../config/plans.js";
-import { Message, KnowledgeSource, Website, Membership } from "../models/index.js";
+import { Message, KnowledgeSource, Website, Membership, UsageRecord } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { dailyMetric } from "../services/analytics.service.js";
+import { budgetLimitsForPlan } from "../config/plans.js";
+import mongoose from "mongoose";
 
 const router = Router();
 
@@ -189,6 +191,102 @@ router.get("/usage/daily", requireAuth, requireOrg, async (req: Request, res: Re
     messages: p.value,
     knowledgeIngested: kbByDate.get(p.date) ?? 0,
   }));
+  res.json({ points });
+});
+
+function currentPeriod(): string {
+  const now = new Date();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  return `${now.getFullYear()}-${mm}`;
+}
+
+// Current-month USD spending summary for the org + per-plan budget limits.
+router.get("/usage/cost", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const org = await Organization.findById(req.orgId).select("plan").lean();
+  const period = currentPeriod();
+  const orgOid = new mongoose.Types.ObjectId(req.orgId!);
+
+  const [spendAgg] = await UsageRecord.aggregate<{ total: number }>([
+    { $match: { organizationId: orgOid, period } },
+    { $group: { _id: null, total: { $sum: "$costUsd" } } },
+  ]);
+  const spentUsd = spendAgg?.total ?? 0;
+  const budgetLimits = await budgetLimitsForPlan(org?.plan);
+
+  res.json({
+    period,
+    spentUsd: parseFloat(spentUsd.toFixed(6)),
+    orgMonthlyLimitUsd: budgetLimits.orgMonthlyLimitUsd,
+    websiteMonthlyLimitUsd: budgetLimits.websiteMonthlyLimitUsd,
+    plan: org?.plan ?? null,
+  });
+});
+
+// Per-website USD spending breakdown for the current month.
+router.get("/usage/cost/websites", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const period = currentPeriod();
+  const orgOid = new mongoose.Types.ObjectId(req.orgId!);
+  const org = await Organization.findById(req.orgId).select("plan").lean();
+
+  const websiteAgg = await UsageRecord.aggregate<{ _id: unknown; spentUsd: number }>([
+    { $match: { organizationId: orgOid, period, websiteId: { $ne: null } } },
+    { $group: { _id: "$websiteId", spentUsd: { $sum: "$costUsd" } } },
+  ]);
+
+  const websiteIds = websiteAgg.map((a) => a._id);
+  const websites = await Website.find({ _id: { $in: websiteIds } })
+    .select("name domain")
+    .lean();
+  const websiteMap = new Map(websites.map((w) => [String(w._id), w]));
+
+  const budgetLimits = await budgetLimitsForPlan(org?.plan);
+
+  res.json({
+    period,
+    websiteMonthlyLimitUsd: budgetLimits.websiteMonthlyLimitUsd,
+    websites: websiteAgg.map((a) => {
+      const w = websiteMap.get(String(a._id));
+      return {
+        websiteId: String(a._id),
+        name: w?.name ?? "Unknown",
+        domain: w?.domain ?? "",
+        spentUsd: parseFloat(a.spentUsd.toFixed(6)),
+      };
+    }),
+  });
+});
+
+// Daily USD cost time series for the current org (last N days).
+router.get("/usage/cost/daily", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const rawDays = (req.query.days as string | undefined) ?? "30";
+  const days = Math.min(Math.max(Number(rawDays) || 30, 1), 180);
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+  const orgOid = new mongoose.Types.ObjectId(req.orgId!);
+
+  const agg = await UsageRecord.aggregate<{ _id: string; costUsd: number }>([
+    { $match: { organizationId: orgOid, createdAt: { $gte: since } } },
+    {
+      $group: {
+        _id: {
+          $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "UTC" },
+        },
+        costUsd: { $sum: "$costUsd" },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ]);
+
+  // Fill missing days with 0 so the chart has a continuous x-axis.
+  const byDate = new Map(agg.map((a) => [a._id, a.costUsd]));
+  const points: Array<{ date: string; costUsd: number }> = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    points.push({ date: key, costUsd: parseFloat((byDate.get(key) ?? 0).toFixed(6)) });
+  }
+
   res.json({ points });
 });
 

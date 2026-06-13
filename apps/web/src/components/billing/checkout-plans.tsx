@@ -1,10 +1,10 @@
 "use client";
 
 // Post-signup checkout. If a plan was chosen on /pricing (carried via ?plan= or
-// sessionStorage), we resolve it and open its Paddle overlay directly. If NO plan
-// was selected (e.g. the user just logged in), we render the full plans grid here
-// so they can pick one without leaving checkout. Either path opens the Paddle
-// overlay, then polls for the subscription to activate and continues to /app.
+// sessionStorage), open its Paddle overlay directly with a minimal transition screen.
+// If NO plan was selected, show the full plans grid so they can pick one.
+// On payment, polls for activation. If activation doesn't confirm within 3 minutes,
+// redirects to /checkout/pending rather than stranding the user.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -44,9 +44,6 @@ export function CheckoutPlans({
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [defaultHighlight, setDefaultHighlight] = useState<string>("business");
-  // Set when payment succeeded but activation didn't confirm in time — we then
-  // offer a manual "Continue to dashboard" button instead of a dead end.
-  const [activationStuck, setActivationStuck] = useState(false);
   const autoStarted = useRef(false);
 
   // Clear the checkout-plan hint and enter the dashboard. Used by every success
@@ -81,19 +78,15 @@ export function CheckoutPlans({
 
   // After checkout, the subscription activates either via the Paddle webhook
   // (production) or the transaction-based /billing/activate call (works on
-  // localhost, where the webhook can't reach us). Poll BOTH each tick: re-try
-  // the direct activation if we have a transaction id, and check the webhook
-  // path. Either confirming → enter the dashboard. If neither confirms within
-  // the window, surface a manual "Continue to dashboard" button instead of
-  // silently stranding the user on the checkout page.
+  // localhost). Poll both each tick. If neither confirms within 3 minutes,
+  // redirect to /checkout/pending (pending subscription status) rather than
+  // stranding the user here.
   const startPolling = useCallback(
     (transactionId?: string) => {
       setPolling(true);
       const started = Date.now();
       const iv = setInterval(async () => {
         try {
-          // Retry the direct activation every tick — the first attempt in
-          // onCompleted can race ahead of Paddle marking the txn paid.
           if (transactionId) {
             try {
               const r = await clientApi.post<{ active: boolean }>("/billing/activate", {
@@ -119,18 +112,21 @@ export function CheckoutPlans({
         }
         if (Date.now() - started > 180_000) {
           clearInterval(iv);
-          setPolling(false);
-          setActivationStuck(true);
-          setError("Payment received, but activation is taking longer than usual.");
+          try {
+            sessionStorage.removeItem(PLAN_STORAGE_KEY);
+          } catch {
+            /* ignore */
+          }
+          router.push("/checkout/pending");
         }
       }, 3000);
     },
-    [finishAndEnter],
+    [finishAndEnter, router],
   );
 
   const subscribe = useCallback(
-    async (p: Plan, billingInterval: "month" | "year" = "month") => {
-      const priceId = billingInterval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
+    async (p: Plan, interval: "month" | "year" = "month") => {
+      const priceId = interval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
       if (!priceId || !organizationId) return;
       setBusy(true);
       setError(null);
@@ -140,13 +136,8 @@ export function CheckoutPlans({
           priceId,
           customData: { organizationId },
           customerEmail,
-          // On successful payment, activate immediately from the transaction
-          // (don't wait for the webhook, which can't reach localhost), then enter
-          // the dashboard.
           onCompleted: async (data) => {
             setPolling(true);
-            // Paddle's checkout.completed payload nests the id differently across
-            // versions — check the known shapes before giving up.
             const transactionId =
               data?.transaction_id ??
               data?.transactionId ??
@@ -162,9 +153,8 @@ export function CheckoutPlans({
                 }
               }
             } catch {
-              /* fall back to polling below */
+              /* fall back to polling */
             }
-            // Keep retrying activation (with the txn id) AND the webhook path.
             startPolling(transactionId);
           },
         });
@@ -196,156 +186,167 @@ export function CheckoutPlans({
     );
   }
 
-  // No plan remembered (e.g. the user logged in without picking one on /pricing)
-  // — show the full plans grid here so they can choose without leaving checkout.
-  if (!chosen) {
+  // Pre-selected plan: show a minimal transition screen and open the overlay.
+  // The user already compared plans on /pricing; no need to show the full grid.
+  if (chosen) {
     return (
-      <div>
+      <div className="mx-auto max-w-sm text-center">
         {!isPaddleConfigured() ? (
-          <div className="mx-auto mb-6 max-w-md rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-center text-sm">
+          <div className="mb-6 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
             Checkout is not configured (missing <code>NEXT_PUBLIC_PADDLE_CLIENT_TOKEN</code>).
           </div>
         ) : null}
-        {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
 
-        {/* Billing interval toggle */}
-        <div className="mb-4 flex items-center justify-center gap-2">
-          <button
-            onClick={() => setBillingInterval("month")}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-              billingInterval === "month"
-                ? "bg-foreground text-background"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            Monthly
-          </button>
-          <button
-            onClick={() => setBillingInterval("year")}
-            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition ${
-              billingInterval === "year"
-                ? "bg-foreground text-background"
-                : "bg-muted text-muted-foreground hover:bg-muted/80"
-            }`}
-          >
-            Yearly
-            <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success">
-              Save ~30%
-            </span>
-          </button>
-        </div>
+        <p className="text-sm text-muted-foreground">Starting checkout for</p>
+        <p className="mt-1 font-display text-xl font-semibold">{chosen.name} plan</p>
 
-        <PlanHighlighter className="grid gap-4 sm:grid-cols-3">
-          {plans.map((p) => {
-            const highlighted = p.plan === defaultHighlight;
-            const priceUsd = billingInterval === "year" ? p.priceYearlyUsd : p.priceMonthlyUsd;
-            const cadence = billingInterval === "year" ? "/yr" : "/mo";
-            const priceLabel = priceUsd == null ? "Custom" : `$${priceUsd}`;
-            const activePriceId = billingInterval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
-            return (
-              <div
-                key={p.plan}
-                data-plan-card
-                onClick={() => setDefaultHighlight(p.plan)}
-                className={`flex cursor-pointer flex-col rounded-xl border bg-card p-6 transition ${
-                  highlighted ? "border-primary" : "border-border"
-                }`}
+        {isPaddleConfigured() ? (
+          <>
+            <div className="mt-6 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {polling ? "Confirming your subscription…" : "Opening secure checkout…"}
+            </div>
+            {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+            <div className="mt-5 flex flex-col items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => void subscribe(chosen, billingInterval)}
+                disabled={busy || polling}
               >
-                <div className="font-display text-lg font-semibold">{p.name}</div>
-                <div className="mt-1 font-display text-3xl font-semibold">
-                  {priceLabel}
-                  {priceUsd != null && (
-                    <span className="text-sm font-normal text-muted-foreground">{cadence}</span>
-                  )}
-                </div>
-                {billingInterval === "year" && priceUsd != null && p.priceMonthlyUsd != null && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    ${(priceUsd / 12).toFixed(0)}/mo billed annually
-                  </p>
-                )}
-                {p.features?.length ? (
-                  <ul className="mt-4 flex-1 space-y-2 text-sm text-muted-foreground">
-                    {p.features.map((f, i) => (
-                      <li key={i} className="flex gap-2">
-                        <span className="text-primary">✓</span>
-                        <span>{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <div className="flex-1" />
-                )}
-                <Button
-                  className="mt-6"
-                  size="sm"
-                  variant={highlighted ? "default" : "outline"}
-                  onClick={() => subscribe(p, billingInterval)}
-                  disabled={busy || polling || !isPaddleConfigured() || !activePriceId}
-                >
-                  {polling ? "Confirming…" : `Choose ${p.name}`}
-                </Button>
-              </div>
-            );
-          })}
-        </PlanHighlighter>
-        <div className="mt-6 text-center">
-          <button
-            type="button"
-            onClick={() => router.push("/pricing")}
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-          >
-            Compare plans in detail
-          </button>
-        </div>
+                Continue to checkout
+              </Button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    sessionStorage.removeItem(PLAN_STORAGE_KEY);
+                  } catch {
+                    /* ignore */
+                  }
+                  setChosenTier(undefined);
+                }}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              >
+                Choose a different plan
+              </button>
+            </div>
+          </>
+        ) : null}
       </div>
     );
   }
 
-  const price = chosen.priceMonthlyUsd == null ? "Custom" : `$${chosen.priceMonthlyUsd}`;
-
+  // No plan selected — show the full grid so the user can compare and pick.
   return (
-    <div className="mx-auto max-w-md rounded-xl border border-border bg-card p-6 text-center">
-      <div className="font-display text-lg font-semibold">{chosen.name} plan</div>
-      <div className="mt-1 font-display text-3xl font-semibold">
-        {price}
-        {chosen.priceMonthlyUsd == null ? "" : <span className="text-sm font-normal text-muted-foreground">/mo</span>}
-      </div>
-
+    <div>
       {!isPaddleConfigured() ? (
-        <div className="mt-4 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+        <div className="mx-auto mb-6 max-w-md rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-center text-sm">
           Checkout is not configured (missing <code>NEXT_PUBLIC_PADDLE_CLIENT_TOKEN</code>).
         </div>
-      ) : (
-        <>
-          <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+      ) : null}
+      {polling ? (
+        <div className="mx-auto mb-6 max-w-md rounded-md border border-border bg-card px-4 py-3 text-center">
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
-            {polling ? "Confirming your subscription…" : "Opening secure checkout…"}
+            Confirming your subscription…
           </div>
-          {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
-          <div className="mt-5 flex flex-col items-center gap-2">
-            {activationStuck ? (
-              <Button size="sm" onClick={finishAndEnter}>
-                Continue to dashboard
+        </div>
+      ) : null}
+      {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
+
+      {/* Billing interval toggle */}
+      <div className="mb-4 flex items-center justify-center gap-2">
+        <button
+          onClick={() => setBillingInterval("month")}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+            billingInterval === "month"
+              ? "bg-foreground text-background"
+              : "bg-muted text-muted-foreground hover:bg-muted/80"
+          }`}
+        >
+          Monthly
+        </button>
+        <button
+          onClick={() => setBillingInterval("year")}
+          className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition ${
+            billingInterval === "year"
+              ? "bg-foreground text-background"
+              : "bg-muted text-muted-foreground hover:bg-muted/80"
+          }`}
+        >
+          Yearly
+          <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+            Save ~30%
+          </span>
+        </button>
+      </div>
+
+      <PlanHighlighter className="grid gap-4 sm:grid-cols-3">
+        {plans.map((p) => {
+          const highlighted = p.plan === defaultHighlight;
+          const priceUsd = billingInterval === "year" ? p.priceYearlyUsd : p.priceMonthlyUsd;
+          const cadence = billingInterval === "year" ? "/yr" : "/mo";
+          const priceLabel = priceUsd == null ? "Custom" : `$${priceUsd}`;
+          const activePriceId = billingInterval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
+          return (
+            <div
+              key={p.plan}
+              data-plan-card
+              onClick={() => setDefaultHighlight(p.plan)}
+              className={`flex cursor-pointer flex-col rounded-xl border bg-card p-6 transition ${
+                highlighted ? "border-primary" : "border-border"
+              }`}
+            >
+              <div className="font-display text-lg font-semibold">{p.name}</div>
+              <div className="mt-1 font-display text-3xl font-semibold">
+                {priceLabel}
+                {priceUsd != null && (
+                  <span className="text-sm font-normal text-muted-foreground">{cadence}</span>
+                )}
+              </div>
+              {billingInterval === "year" && priceUsd != null && p.priceMonthlyUsd != null && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  ${(priceUsd / 12).toFixed(0)}/mo billed annually
+                </p>
+              )}
+              {p.features?.length ? (
+                <ul className="mt-4 flex-1 space-y-2 text-sm text-muted-foreground">
+                  {p.features.map((f, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="text-primary">✓</span>
+                      <span>{f}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="flex-1" />
+              )}
+              <Button
+                className="mt-6"
+                size="sm"
+                variant={highlighted ? "default" : "outline"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void subscribe(p, billingInterval);
+                }}
+                disabled={busy || polling || !isPaddleConfigured() || !activePriceId}
+              >
+                {polling ? "Confirming…" : `Choose ${p.name}`}
               </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant={activationStuck ? "outline" : "default"}
-              onClick={() => subscribe(chosen)}
-              disabled={busy || polling}
-            >
-              Continue to checkout
-            </Button>
-            <button
-              type="button"
-              onClick={() => router.push("/pricing")}
-              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-            >
-              Choose a different plan
-            </button>
-          </div>
-        </>
-      )}
+            </div>
+          );
+        })}
+      </PlanHighlighter>
+
+      <div className="mt-6 text-center">
+        <button
+          type="button"
+          onClick={() => router.push("/pricing")}
+          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Compare plans in detail
+        </button>
+      </div>
     </div>
   );
 }

@@ -24,6 +24,7 @@
 | 8 | [`09-affiliate-system.md`](./09-affiliate-system.md) | **Post-v1.** Referral attribution + commissions + mailer | Referral funnel + earned commissions + emails | 25 |
 | 9 | [`10-conversation-controls.md`](./10-conversation-controls.md) | **Post-v1.** Human-escalation toggle + ask-before-resolve (org settings gate prompt/tools/UI) | Org-configurable conversation behavior | 26 |
 | 10 | [`11-kb-crawl-and-phone.md`](./11-kb-crawl-and-phone.md) | **Post-v1.** Same-domain website crawl + favicon avatar; visitor phone country-code from IP | Scoped crawls + auto avatar; geo-defaulted phone code | 27, 28 |
+| 12 | [`12-usd-usage-tracking.md`](./12-usd-usage-tracking.md) | **Post-v1.** USD cost capture from OpenRouter, per-plan budget caps, 402 enforcement, email alerts at 75%/100%, usage dashboard with cost charts | UsageRecord + BudgetAlert models; budget middleware; admin Budget & Limits UI | — |
 
 > **Post-v1 phases (5–10)** are independent enhancement tracks from the product backlog, not strictly sequential like Phases 0–4. Phase 8 (affiliate) benefits from Phase 7 (plan catalog) landing first.
 

@@ -110,9 +110,20 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
 
   // Affiliate: when a referred org first activates a paid plan, earn the
   // referrer's commission (no-op if there's no pending referral).
+  // Fire-and-forget: a failure here must NOT prevent the webhook 200 response —
+  // Paddle would retry, but our idempotency guard would skip the re-run, leaving
+  // the commission unrecorded permanently.
   if (data.status === "active") {
-    const sub = await Subscription.findOne({ organizationId }).select("_id").lean();
-    await recordEarnedCommissionForOrg(organizationId, plan, sub?._id);
+    Subscription.findOne({ organizationId })
+      .select("_id")
+      .lean()
+      .then((sub) => recordEarnedCommissionForOrg(organizationId, plan, sub?._id))
+      .catch((err) =>
+        logger.warn("[billing] affiliate commission recording failed", {
+          organizationId,
+          err: String(err),
+        }),
+      );
   }
 }
 
