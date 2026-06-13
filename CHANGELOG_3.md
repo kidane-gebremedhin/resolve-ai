@@ -82,6 +82,7 @@ Updated in `.env`, `.env.prod`, `.env.example`.
 **`apps/web/src/components/billing/checkout-plans.tsx`**
 - `Plan.plan` type: `"pro" | "business" | "enterprise"`
 - `defaultHighlight`: `"pro"` → `"business"`
+- Removed `.filter((p) => p.plan !== "free")` from plan fetch (caused TypeScript build error — `"free"` no longer in the Plan union)
 
 **`apps/web/src/components/billing/plan-actions.tsx`**
 - `Plan.id` type: `"pro" | "business" | "enterprise"`
