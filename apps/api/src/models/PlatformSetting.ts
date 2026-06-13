@@ -77,6 +77,21 @@ const platformSettingSchema = new Schema(
       },
       { _id: false },
     ),
+    // Admin-configurable USD spending caps per plan. 0 = unlimited.
+    // Falls back to DEFAULT_BUDGET_LIMITS in config/plans.ts when empty.
+    budgetLimits: {
+      type: [
+        new Schema(
+          {
+            plan: { type: String, enum: ["pro", "business", "enterprise"], required: true },
+            orgMonthlyLimitUsd: { type: Number, default: 0 },
+            websiteMonthlyLimitUsd: { type: Number, default: 0 },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true },

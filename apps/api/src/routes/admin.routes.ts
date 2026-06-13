@@ -14,6 +14,7 @@ import {
   Referral,
   Subscription,
   User,
+  UsageRecord,
 } from "../models/index.js";
 import {
   DEFAULT_PAGE_SIZE,
@@ -524,6 +525,12 @@ const planEntrySchema = z.object({
   priceId: z.string().max(80).optional(),
 });
 
+const budgetLimitEntrySchema = z.object({
+  plan: z.enum(["pro", "business", "enterprise"]),
+  orgMonthlyLimitUsd: z.number().min(0).max(1_000_000),
+  websiteMonthlyLimitUsd: z.number().min(0).max(1_000_000),
+});
+
 const platformSettingsPatchSchema = z
   .object({
     smtp: smtpSchema,
@@ -533,6 +540,7 @@ const platformSettingsPatchSchema = z
     theming: themingSchema,
     affiliate: affiliateSchema,
     plans: z.array(planEntrySchema).max(8),
+    budgetLimits: z.array(budgetLimitEntrySchema).max(3),
   })
   .partial();
 
@@ -545,6 +553,57 @@ async function loadOrInitSettings() {
     { new: true, upsert: true, setDefaultsOnInsert: true },
   );
 }
+
+// ---------- Admin cost / usage overview ----------
+// Aggregated USD spend for the current or specified month.
+// Returns overall totals and top-N orgs by spend.
+router.get("/usage/cost", async (req: Request, res: Response) => {
+  const periodParam = req.query.period as string | undefined;
+  let period = periodParam ?? (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  })();
+
+  const [totalAgg] = await UsageRecord.aggregate<{ total: number; tokens: number }>([
+    { $match: { period } },
+    { $group: { _id: null, total: { $sum: "$costUsd" }, tokens: { $sum: "$totalTokens" } } },
+  ]);
+
+  const topOrgs = await UsageRecord.aggregate<{ _id: unknown; spentUsd: number; calls: number }>([
+    { $match: { period } },
+    {
+      $group: {
+        _id: "$organizationId",
+        spentUsd: { $sum: "$costUsd" },
+        calls: { $sum: 1 },
+      },
+    },
+    { $sort: { spentUsd: -1 } },
+    { $limit: 20 },
+  ]);
+
+  const orgIds = topOrgs.map((o) => o._id);
+  const orgs = await Organization.find({ _id: { $in: orgIds } })
+    .select("name plan")
+    .lean();
+  const orgMap = new Map(orgs.map((o) => [String(o._id), o]));
+
+  res.json({
+    period,
+    totalCostUsd: parseFloat((totalAgg?.total ?? 0).toFixed(6)),
+    totalTokens: totalAgg?.tokens ?? 0,
+    topOrgs: topOrgs.map((o) => {
+      const org = orgMap.get(String(o._id));
+      return {
+        orgId: String(o._id),
+        name: org?.name ?? "Unknown",
+        plan: org?.plan ?? null,
+        spentUsd: parseFloat(o.spentUsd.toFixed(6)),
+        calls: o.calls,
+      };
+    }),
+  });
+});
 
 router.get("/settings", async (_req: Request, res: Response) => {
   const settings = await loadOrInitSettings();
@@ -560,9 +619,9 @@ router.patch(
     // overwriting whole sub-documents.
     const $set: Record<string, unknown> = {};
     for (const [group, fields] of Object.entries(body)) {
-      // `plans` is an array — set it wholesale rather than dot-path merging.
-      if (group === "plans") {
-        if (Array.isArray(fields)) $set.plans = fields;
+      // Array fields are set wholesale rather than dot-path merging.
+      if (group === "plans" || group === "budgetLimits") {
+        if (Array.isArray(fields)) $set[group] = fields;
         continue;
       }
       if (!fields || typeof fields !== "object") continue;

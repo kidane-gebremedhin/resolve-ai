@@ -348,6 +348,51 @@ Widget navigation sections (quick links/topics).
 
 ---
 
+### 13. `usagerecords`
+
+Per-turn LLM cost records (one doc per `generateAiReply` invocation).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_id` | `ObjectId` | auto | Primary key |
+| `organizationId` | `ObjectId` | ✅ | Ref → `organizations` |
+| `websiteId` | `ObjectId` | — | Ref → `websites` |
+| `conversationId` | `ObjectId` | — | Ref → `conversations` |
+| `generationIds` | `string[]` | — | OpenRouter generation IDs for cost lookup |
+| `model` | `string` | — | Model name (e.g. `openai/gpt-4o`) |
+| `promptTokens` | `number` | — | Aggregated prompt tokens |
+| `completionTokens` | `number` | — | Aggregated completion tokens |
+| `totalTokens` | `number` | — | `promptTokens + completionTokens` |
+| `costUsd` | `number` | — | Actual USD cost from OpenRouter |
+| `period` | `string` | ✅ | `YYYY-MM` (pre-computed for fast monthly grouping) |
+| `createdAt` | `Date` | auto | TTL: auto-delete after 2 years |
+
+**Indexes:**
+- `{ organizationId: 1, period: 1 }` — monthly org spend queries
+- `{ websiteId: 1, period: 1 }` — monthly website spend queries
+- `{ createdAt: 1 }` — TTL index (730 days)
+
+---
+
+### 14. `budgetalerts`
+
+Deduplication guard — ensures each budget threshold email is sent at most once per entity × period × threshold.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_id` | `ObjectId` | auto | Primary key |
+| `entityType` | `string` | ✅ | `org` or `website` |
+| `entityId` | `ObjectId` | ✅ | Org or website ID |
+| `period` | `string` | ✅ | `YYYY-MM` |
+| `threshold` | `number` | ✅ | `75` or `100` |
+| `sentAt` | `Date` | auto | TTL: auto-delete after 90 days |
+
+**Indexes:**
+- `{ entityId: 1, period: 1, threshold: 1 }` — unique (prevents duplicate sends)
+- `{ sentAt: 1 }` — TTL index (90 days)
+
+---
+
 ## Entity Relationship Diagram
 
 ```mermaid

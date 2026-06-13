@@ -16,3 +16,5 @@ export { PlatformSetting, type PlatformSettingDocType } from "./PlatformSetting.
 export { ProcessedWebhook, type ProcessedWebhookDocType } from "./ProcessedWebhook.js";
 export { Referral, type ReferralDocType } from "./Referral.js";
 export { Campaign, type CampaignDocType } from "./Campaign.js";
+export { UsageRecord, type UsageRecordDocType } from "./UsageRecord.js";
+export { BudgetAlert, type BudgetAlertDocType } from "./BudgetAlert.js";

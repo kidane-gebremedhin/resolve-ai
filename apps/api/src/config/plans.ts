@@ -136,6 +136,37 @@ export async function loadPlanCatalog(): Promise<PlanCatalogEntry[]> {
   });
 }
 
+// Default USD spending caps per plan. 0 = no cap (unlimited).
+// Admin can override these via PlatformSetting.budgetLimits.
+export const DEFAULT_BUDGET_LIMITS: Record<
+  Plan,
+  { orgMonthlyLimitUsd: number; websiteMonthlyLimitUsd: number }
+> = {
+  pro: { orgMonthlyLimitUsd: 50, websiteMonthlyLimitUsd: 10 },
+  business: { orgMonthlyLimitUsd: 200, websiteMonthlyLimitUsd: 25 },
+  enterprise: { orgMonthlyLimitUsd: 0, websiteMonthlyLimitUsd: 0 },
+};
+
+// Fetch the effective budget limits for a plan (admin override or code defaults).
+export async function budgetLimitsForPlan(
+  plan: string | null | undefined,
+): Promise<{ orgMonthlyLimitUsd: number; websiteMonthlyLimitUsd: number }> {
+  if (!plan || !(plan in DEFAULT_BUDGET_LIMITS)) {
+    return { orgMonthlyLimitUsd: 0, websiteMonthlyLimitUsd: 0 };
+  }
+  const { PlatformSetting } = await import("../models/index.js");
+  const settings = await PlatformSetting.findOne({ singleton: "global" })
+    .select("budgetLimits")
+    .lean();
+  const overrides = (settings?.budgetLimits ?? []) as Array<{
+    plan: string;
+    orgMonthlyLimitUsd: number;
+    websiteMonthlyLimitUsd: number;
+  }>;
+  const override = overrides.find((o) => o.plan === plan);
+  return override ?? DEFAULT_BUDGET_LIMITS[plan as Plan];
+}
+
 // Reverse map: Paddle price id → plan tier (covers both monthly and yearly).
 export async function planByPriceId(): Promise<Record<string, Plan>> {
   const map: Record<string, Plan> = {};

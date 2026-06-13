@@ -15,6 +15,7 @@ import {
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireWidgetSession } from "../middleware/widget-auth.middleware.js";
 import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
+import { enforceBudgetLimit } from "../middleware/budget-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { generateAiReply } from "../services/ai/agent.service.js";
@@ -528,6 +529,7 @@ router.post(
   "/conversations/:id/messages",
   requireWidgetSession,
   enforceMessageQuota,
+  enforceBudgetLimit,
   validateBody(sendMessageSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const conversation = await Conversation.findOne({

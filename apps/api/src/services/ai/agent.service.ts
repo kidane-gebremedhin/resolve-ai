@@ -13,6 +13,7 @@ import { AGENT_TOOLS, buildAgentTools, FINAL_REPLY_SCHEMA, type ToolCall } from 
 import type { ConversationControls } from "./prompts.js";
 import { searchKb } from "../kb/search.service.js";
 import { logger } from "../../config/logger.js";
+import { recordConversationUsage } from "../openrouter-usage.service.js";
 
 type ConvoDoc = HydratedDocument<ConversationDocType>;
 
@@ -37,9 +38,15 @@ type LlmChoice = {
   finish_reason?: string;
 };
 
-type LlmResponse = { choices?: LlmChoice[] };
+type LlmResponse = {
+  id?: string;
+  choices?: LlmChoice[];
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+};
 
 type ToolMode = "auto" | "none";
+
+type LlmCallResult = { choice: LlmChoice; generationId: string | null };
 
 const OPENROUTER_URL =
   process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
@@ -71,19 +78,22 @@ async function callLlm(args: {
   model: string;
   temperature: number;
   tools?: unknown[];
-}): Promise<LlmChoice> {
+}): Promise<LlmCallResult> {
   if (!process.env.OPENROUTER_API_KEY) {
     return {
-      message: {
-        role: "assistant",
-        content: JSON.stringify({
-          reply:
-            "Thanks for reaching out — a human teammate will follow up shortly.",
-          confidence: 0.3,
-          action: "escalate",
-        }),
+      choice: {
+        message: {
+          role: "assistant",
+          content: JSON.stringify({
+            reply:
+              "Thanks for reaching out — a human teammate will follow up shortly.",
+            confidence: 0.3,
+            action: "escalate",
+          }),
+        },
+        finish_reason: "stop",
       },
-      finish_reason: "stop",
+      generationId: null,
     };
   }
 
@@ -120,7 +130,7 @@ async function callLlm(args: {
       const json = (await res.json()) as LlmResponse;
       const choice = json.choices?.[0];
       if (!choice) throw new Error("OpenRouter returned no choices");
-      return choice;
+      return { choice, generationId: json.id ?? null };
     } catch (err) {
       lastErr = err;
       if (attempt === LLM_MAX_ATTEMPTS || !isTransientLlmError(err)) break;
@@ -281,6 +291,8 @@ export async function generateAiReply(
     action: "escalate",
   };
   const toolCallLog: { name: string; args: unknown; result: unknown }[] = [];
+  const generationIds: string[] = [];
+  let usageModel = env.ai.model;
   // Default controls (used if the try below throws before org is loaded).
   // Human escalation defaults OFF; confirm-before-resolve stays on.
   let controls: ConversationControls = {
@@ -319,6 +331,7 @@ export async function generateAiReply(
     ];
 
     const model = agent.model ?? env.ai.model;
+    usageModel = model;
     // No hardcoded fallback — `agent.temperature` may be undefined for fresh
     // agents; the env var (`AI_TEMPERATURE`) is the only sanctioned default.
     const temperature = agent.temperature ?? env.ai.temperature;
@@ -327,9 +340,9 @@ export async function generateAiReply(
     // A failure inside the loop must not abort the whole reply — we break out
     // and still attempt a final answer, so the customer always gets a response.
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-      let choice: LlmChoice;
+      let loopResult: LlmCallResult;
       try {
-        choice = await callLlm({
+        loopResult = await callLlm({
           messages,
           toolMode: "auto",
           requireJson: false,
@@ -344,6 +357,8 @@ export async function generateAiReply(
         });
         break;
       }
+      if (loopResult.generationId) generationIds.push(loopResult.generationId);
+      const choice = loopResult.choice;
       const toolCalls = choice.message?.tool_calls ?? [];
       if (toolCalls.length === 0) break;
 
@@ -390,9 +405,9 @@ export async function generateAiReply(
     }
 
     // Final pass: structured reply.
-    let final: LlmChoice;
+    let finalResult: LlmCallResult;
     try {
-      final = await callLlm({
+      finalResult = await callLlm({
         messages,
         toolMode: "none",
         requireJson: true,
@@ -401,19 +416,23 @@ export async function generateAiReply(
       });
     } catch (err) {
       logger.error("[ai] final LLM call failed", { err: (err as Error).message });
-      final = {
-        message: {
-          role: "assistant",
-          content: JSON.stringify({
-            reply: "Sorry, I hit a glitch — connecting you to a teammate.",
-            confidence: 0.1,
-            action: "escalate",
-          }),
+      finalResult = {
+        choice: {
+          message: {
+            role: "assistant",
+            content: JSON.stringify({
+              reply: "Sorry, I hit a glitch — connecting you to a teammate.",
+              confidence: 0.1,
+              action: "escalate",
+            }),
+          },
         },
+        generationId: null,
       };
     }
+    if (finalResult.generationId) generationIds.push(finalResult.generationId);
 
-    const parsed = parseFinalReply(final.message?.content);
+    const parsed = parseFinalReply(finalResult.choice.message?.content);
 
     // NOTE: We deliberately do NOT auto-escalate on low confidence. Instead the
     // agent is prompted (see prompts.ts) to ASK the customer "Do you want to
@@ -473,6 +492,19 @@ export async function generateAiReply(
     confidence: reply.confidence,
     toolCalls: toolCallLog.length > 0 ? toolCallLog : undefined,
   });
+
+  // Fire-and-forget: fetch OpenRouter cost and store UsageRecord.
+  if (generationIds.length > 0) {
+    recordConversationUsage({
+      generationIds,
+      organizationId: conversation.organizationId,
+      websiteId: (conversation as unknown as { websiteId?: unknown }).websiteId ?? null,
+      conversationId: conversation._id,
+      model: usageModel,
+    }).catch((err) => {
+      logger.warn("[ai] usage recording failed", { err: (err as Error).message });
+    });
+  }
 
   let conversationChanged = false;
   if (action === "escalate" && conversation.status === "active") {

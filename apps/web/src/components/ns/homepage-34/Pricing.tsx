@@ -104,8 +104,8 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                     className={cn(
                       'rounded-full px-4 py-1.5 text-sm font-medium transition',
                       billingInterval === 'month'
-                        ? 'bg-secondary dark:bg-accent text-accent dark:text-secondary'
-                        : 'text-secondary/60 dark:text-accent/60 hover:text-secondary dark:hover:text-accent',
+                        ? 'bg-secondary dark:bg-accent text-accent dark:text-[#1a1a1c]'
+                        : 'text-secondary/80 dark:text-accent/80 hover:text-secondary dark:hover:text-accent',
                     )}
                   >
                     Monthly
@@ -115,8 +115,8 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                     className={cn(
                       'flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition',
                       billingInterval === 'year'
-                        ? 'bg-secondary dark:bg-accent text-accent dark:text-secondary'
-                        : 'text-secondary/60 dark:text-accent/60 hover:text-secondary dark:hover:text-accent',
+                        ? 'bg-secondary dark:bg-accent text-accent dark:text-[#1a1a1c]'
+                        : 'text-secondary/80 dark:text-accent/80 hover:text-secondary dark:hover:text-accent',
                     )}
                   >
                     Yearly

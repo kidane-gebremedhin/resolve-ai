@@ -1,5 +1,6 @@
 import { api, ApiError } from '@/lib/api';
 import { FontPreferences, type FontOption } from '@/components/font-preferences';
+import { BudgetLimitsForm } from '@/components/admin/budget-limits-form';
 import {
   SANS_FONTS,
   DISPLAY_FONTS,
@@ -11,10 +12,17 @@ import {
   type DisplayKey,
 } from '@/app/fonts';
 
-type Theming = { theming?: { fontSans?: string; fontDisplay?: string } };
+type BudgetEntry = {
+  plan: 'pro' | 'business' | 'enterprise';
+  orgMonthlyLimitUsd: number;
+  websiteMonthlyLimitUsd: number;
+};
 
-// Build the picker options with each font's className (so next/font bundles +
-// loads it) and its actual font-family (so the sample renders in that font).
+type Settings = {
+  theming?: { fontSans?: string; fontDisplay?: string };
+  budgetLimits?: BudgetEntry[];
+};
+
 const SANS: FontOption[] = SANS_OPTIONS.map((o) => ({
   value: o.value,
   label: o.label,
@@ -28,19 +36,26 @@ const DISPLAY: FontOption[] = DISPLAY_OPTIONS.map((o) => ({
   fontFamily: DISPLAY_FONTS[o.value as DisplayKey].style.fontFamily,
 }));
 
-async function loadCurrent(): Promise<{ fontSans: string; fontDisplay: string; error: string | null }> {
+async function loadCurrent(): Promise<{
+  fontSans: string;
+  fontDisplay: string;
+  budgetLimits: BudgetEntry[];
+  error: string | null;
+}> {
   try {
-    const s = await api.get<Theming>('/admin/settings');
+    const s = await api.get<Settings>('/admin/settings');
     return {
       fontSans: s?.theming?.fontSans ?? DEFAULT_SANS,
       fontDisplay: s?.theming?.fontDisplay ?? DEFAULT_DISPLAY,
+      budgetLimits: s?.budgetLimits ?? [],
       error: null,
     };
   } catch (err) {
-    if (!(err instanceof ApiError)) throw err; // propagate the /logout redirect on 401/403
+    if (!(err instanceof ApiError)) throw err;
     return {
       fontSans: DEFAULT_SANS,
       fontDisplay: DEFAULT_DISPLAY,
+      budgetLimits: [],
       error: err.message,
     };
   }
@@ -54,8 +69,7 @@ export default async function SettingsPage() {
     <div className="container-page py-8">
       <h1 className="font-display text-2xl font-semibold tracking-tight">System Preferences</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Global app font — applied consistently across the dashboard, public pages, and this admin
-        portal.
+        Global platform configuration — fonts, budget limits, and more.
       </p>
       {current.error ? (
         <div className="mt-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
@@ -67,6 +81,7 @@ export default async function SettingsPage() {
         display={DISPLAY}
         current={{ fontSans: current.fontSans, fontDisplay: current.fontDisplay }}
       />
+      <BudgetLimitsForm initial={current.budgetLimits} />
     </div>
   );
 }
