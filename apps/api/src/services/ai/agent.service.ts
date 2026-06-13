@@ -498,7 +498,7 @@ export async function generateAiReply(
     recordConversationUsage({
       generationIds,
       organizationId: conversation.organizationId,
-      websiteId: (conversation as unknown as { websiteId?: unknown }).websiteId ?? null,
+      websiteId: (conversation as unknown as { websiteId?: string | null }).websiteId ?? null,
       conversationId: conversation._id,
       model: usageModel,
     }).catch((err) => {
