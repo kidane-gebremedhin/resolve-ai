@@ -5,7 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { BarChart } from "@/components/charts";
 
 type UsageResponse = {
-  plan: "free" | "starter" | "pro" | "enterprise";
+  plan: "pro" | "business" | "enterprise" | null;
   period: { start: string; end: string | null };
   usage: {
     messages: { used: number; limit: number };

@@ -105,7 +105,7 @@ router.get("/subscriptions", async (req: Request, res: Response) => {
   const match = mergeFilters(
     searchFilter(params.q, ["paddleSubscriptionId", "paddleCustomerId"]),
     dateRangeFilter("createdAt", params.from, params.to),
-    plan && ["starter", "pro", "enterprise"].includes(plan) ? { plan } : {},
+    plan && ["pro", "business", "enterprise"].includes(plan) ? { plan } : {},
     status && ["active", "trialing", "past_due", "canceled", "paused"].includes(status) ? { status } : {},
   ) as Record<string, unknown>;
 
@@ -158,7 +158,7 @@ router.get("/organizations", async (req: Request, res: Response) => {
   const match = mergeFilters(
     searchFilter(params.q, ["name", "slug"]),
     dateRangeFilter("createdAt", params.from, params.to),
-    plan && ["free", "starter", "pro", "enterprise"].includes(plan) ? { plan } : {},
+    plan && ["pro", "business", "enterprise"].includes(plan) ? { plan } : {},
   ) as Record<string, unknown>;
 
   // The Membership ref keeps the model registered for the $lookup below.
@@ -402,7 +402,7 @@ router.get("/campaigns", async (_req: Request, res: Response) => {
       $group: {
         _id: "$campaignCode",
         signups: { $sum: 1 },
-        conversions: { $sum: { $cond: [{ $ne: ["$plan", "free"] }, 1, 0] } },
+        conversions: { $sum: { $cond: [{ $in: ["$plan", ["pro", "business", "enterprise"]] }, 1, 0] } },
       },
     },
   ]);
@@ -517,7 +517,7 @@ const affiliateSchema = z
   .partial();
 
 const planEntrySchema = z.object({
-  plan: z.enum(["free", "starter", "pro", "enterprise"]),
+  plan: z.enum(["pro", "business", "enterprise"]),
   name: z.string().max(60).optional(),
   priceMonthlyUsd: z.number().min(0).max(1_000_000).nullable().optional(),
   features: z.array(z.string().max(160)).max(12).optional(),

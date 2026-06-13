@@ -47,7 +47,7 @@ const platformSettingSchema = new Schema(
       type: [
         new Schema(
           {
-            plan: { type: String, enum: ["free", "starter", "pro", "enterprise"], required: true },
+            plan: { type: String, enum: ["pro", "business", "enterprise"], required: true },
             name: { type: String },
             priceMonthlyUsd: { type: Number, default: null },
             features: { type: [String], default: undefined },

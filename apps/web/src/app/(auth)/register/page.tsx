@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: 'Sign up',
 };
 
-const VALID_PLANS = new Set(['starter', 'pro', 'enterprise']);
+const VALID_PLANS = new Set(['pro', 'business', 'enterprise']);
 
 // Signup requires choosing a plan first: visitors reach /register?plan=<tier>
 // from the pricing CTAs. A direct visit with no (valid) plan goes to /pricing.

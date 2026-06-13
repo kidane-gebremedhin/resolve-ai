@@ -16,10 +16,12 @@ import { PLAN_STORAGE_KEY } from "./plan-cta";
 import { PlanHighlighter } from "./plan-highlighter";
 
 type Plan = {
-  plan: "starter" | "pro" | "enterprise" | "free";
+  plan: "pro" | "business" | "enterprise";
   name: string;
   priceId: string | null;
   priceMonthlyUsd: number | null;
+  priceIdYearly: string | null;
+  priceYearlyUsd: number | null;
   features: string[];
 };
 
@@ -37,10 +39,11 @@ export function CheckoutPlans({
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [chosenTier, setChosenTier] = useState<string | undefined>(preselectedPlan || undefined);
+  const [billingInterval, setBillingInterval] = useState<"month" | "year">("month");
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [defaultHighlight, setDefaultHighlight] = useState<string>("pro");
+  const [defaultHighlight, setDefaultHighlight] = useState<string>("business");
   // Set when payment succeeded but activation didn't confirm in time — we then
   // offer a manual "Continue to dashboard" button instead of a dead end.
   const [activationStuck, setActivationStuck] = useState(false);
@@ -126,14 +129,15 @@ export function CheckoutPlans({
   );
 
   const subscribe = useCallback(
-    async (p: Plan) => {
-      if (!p.priceId || !organizationId) return;
+    async (p: Plan, billingInterval: "month" | "year" = "month") => {
+      const priceId = billingInterval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
+      if (!priceId || !organizationId) return;
       setBusy(true);
       setError(null);
       try {
-        await clientApi.post("/billing/checkout", { priceId: p.priceId });
+        await clientApi.post("/billing/checkout", { priceId });
         await openCheckout({
-          priceId: p.priceId,
+          priceId,
           customData: { organizationId },
           customerEmail,
           // On successful payment, activate immediately from the transaction
@@ -180,7 +184,7 @@ export function CheckoutPlans({
   useEffect(() => {
     if (autoStarted.current || !chosen || !organizationId || !isPaddleConfigured()) return;
     autoStarted.current = true;
-    const id = setTimeout(() => void subscribe(chosen), 0);
+    const id = setTimeout(() => void subscribe(chosen, billingInterval), 0);
     return () => clearTimeout(id);
   }, [chosen, organizationId, subscribe]);
 
@@ -203,10 +207,41 @@ export function CheckoutPlans({
           </div>
         ) : null}
         {error ? <p className="mb-4 text-center text-sm text-destructive">{error}</p> : null}
+
+        {/* Billing interval toggle */}
+        <div className="mb-4 flex items-center justify-center gap-2">
+          <button
+            onClick={() => setBillingInterval("month")}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              billingInterval === "month"
+                ? "bg-foreground text-background"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            Monthly
+          </button>
+          <button
+            onClick={() => setBillingInterval("year")}
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition ${
+              billingInterval === "year"
+                ? "bg-foreground text-background"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            }`}
+          >
+            Yearly
+            <span className="rounded-full bg-success/15 px-1.5 py-0.5 text-[10px] font-semibold text-success">
+              Save ~30%
+            </span>
+          </button>
+        </div>
+
         <PlanHighlighter className="grid gap-4 sm:grid-cols-3">
           {plans.map((p) => {
             const highlighted = p.plan === defaultHighlight;
-            const priceLabel = p.priceMonthlyUsd == null ? "Custom" : `$${p.priceMonthlyUsd}`;
+            const priceUsd = billingInterval === "year" ? p.priceYearlyUsd : p.priceMonthlyUsd;
+            const cadence = billingInterval === "year" ? "/yr" : "/mo";
+            const priceLabel = priceUsd == null ? "Custom" : `$${priceUsd}`;
+            const activePriceId = billingInterval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
             return (
               <div
                 key={p.plan}
@@ -219,10 +254,15 @@ export function CheckoutPlans({
                 <div className="font-display text-lg font-semibold">{p.name}</div>
                 <div className="mt-1 font-display text-3xl font-semibold">
                   {priceLabel}
-                  {p.priceMonthlyUsd == null ? "" : (
-                    <span className="text-sm font-normal text-muted-foreground">/mo</span>
+                  {priceUsd != null && (
+                    <span className="text-sm font-normal text-muted-foreground">{cadence}</span>
                   )}
                 </div>
+                {billingInterval === "year" && priceUsd != null && p.priceMonthlyUsd != null && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    ${(priceUsd / 12).toFixed(0)}/mo billed annually
+                  </p>
+                )}
                 {p.features?.length ? (
                   <ul className="mt-4 flex-1 space-y-2 text-sm text-muted-foreground">
                     {p.features.map((f, i) => (
@@ -239,8 +279,8 @@ export function CheckoutPlans({
                   className="mt-6"
                   size="sm"
                   variant={highlighted ? "default" : "outline"}
-                  onClick={() => subscribe(p)}
-                  disabled={busy || polling || !isPaddleConfigured() || !p.priceId}
+                  onClick={() => subscribe(p, billingInterval)}
+                  disabled={busy || polling || !isPaddleConfigured() || !activePriceId}
                 >
                   {polling ? "Confirming…" : `Choose ${p.name}`}
                 </Button>

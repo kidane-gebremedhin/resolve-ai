@@ -48,7 +48,6 @@ export async function registerUser(input: {
   const org = await Organization.create({
     name: input.organizationName,
     slug,
-    plan: "free",
     campaignCode: input.campaignCode?.toLowerCase().trim() || undefined,
   });
 
@@ -101,7 +100,6 @@ export async function ensureMembershipForUser(user: {
   const org = await Organization.create({
     name: `${user.name}'s workspace`,
     slug,
-    plan: "free",
   });
 
   return Membership.create({

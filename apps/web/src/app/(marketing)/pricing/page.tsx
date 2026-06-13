@@ -7,7 +7,12 @@ export const metadata: Metadata = {
   title: 'Pricing',
 };
 
-export type CatalogPlan = { plan: string; name: string; priceMonthlyUsd: number | null };
+export type CatalogPlan = {
+  plan: string;
+  name: string;
+  priceMonthlyUsd: number | null;
+  priceYearlyUsd: number | null;
+};
 
 // Admin-configured plan catalog (GET /billing/plans, public). The marketing
 // template's name + price are overridden from this; its feature matrix is kept.
