@@ -5,7 +5,7 @@ const subscriptionSchema = new Schema(
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, unique: true },
     paddleSubscriptionId: { type: String, required: true, unique: true },
     paddleCustomerId: { type: String, required: true },
-    plan: { type: String, enum: ["starter", "pro", "enterprise"], required: true },
+    plan: { type: String, enum: ["pro", "business", "enterprise"], required: true },
     status: {
       type: String,
       enum: ["active", "trialing", "past_due", "canceled", "paused"],

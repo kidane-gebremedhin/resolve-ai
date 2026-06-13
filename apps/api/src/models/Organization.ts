@@ -4,7 +4,7 @@ const organizationSchema = new Schema(
   {
     name: { type: String, required: true },
     slug: { type: String, required: true, unique: true },
-    plan: { type: String, enum: ["free", "starter", "pro", "enterprise"], required: true, default: "free" },
+    plan: { type: String, enum: ["pro", "business", "enterprise"] },
     paddleCustomerId: { type: String },
     paddleSubscriptionId: { type: String },
     // Affiliate attribution: the user whose referral link created this org.

@@ -1,3 +1,6 @@
+'use client';
+
+import { useState } from 'react';
 import { cn } from '@/utils/ns-cn';
 import RevealAnimation from '../animation/RevealAnimation';
 import { PlanCta } from '@/components/billing/plan-cta';
@@ -9,69 +12,76 @@ const CheckIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-const featureLabels = ['Pages included', 'Custom design', 'SEO optimization', 'Branding support', 'Social media integration'];
+const featureLabels = ['AI messages / mo', 'Websites', 'Knowledge sources', 'Team members', 'Priority support'];
 
 const pricingPlans = [
   {
-    id: 'essential',
-    name: 'Basic',
-    price: '$19',
+    id: 'pro',
+    name: 'Pro',
+    monthlyPrice: '$70',
+    yearlyPrice: '$588',
+    yearlyPerMonth: '$49',
     description: 'For small teams getting started',
     buttonText: 'Get started',
     planType: 'basic' as const,
+    tier: 'pro',
     features: [
-      { label: 'Pages included', value: 'Up to 5' },
-      { label: 'Custom design', value: true },
-      { label: 'SEO optimization', value: true },
-      { label: 'Branding support', value: false },
-      { label: 'Social media integration', value: false },
+      { label: 'AI messages / mo', value: '2,000' },
+      { label: 'Websites', value: '3' },
+      { label: 'Knowledge sources', value: '25' },
+      { label: 'Team members', value: '5' },
+      { label: 'Priority support', value: false },
     ],
   },
   {
-    id: 'advanced',
+    id: 'business',
     name: 'Business',
-    price: '$99',
+    monthlyPrice: '$199',
+    yearlyPrice: '$1,671.60',
+    yearlyPerMonth: '$139',
     description: 'For growing businesses',
     buttonText: 'Get started',
     planType: 'featured' as const,
+    tier: 'business',
     features: [
-      { label: 'Pages included', value: 'Up to 10' },
-      { label: 'Custom design', value: true },
-      { label: 'SEO optimization', value: true },
-      { label: 'Branding support', value: true },
-      { label: 'Social media integration', value: false },
+      { label: 'AI messages / mo', value: '20,000' },
+      { label: 'Websites', value: '10' },
+      { label: 'Knowledge sources', value: '200' },
+      { label: 'Team members', value: '25' },
+      { label: 'Priority support', value: true },
     ],
   },
   {
     id: 'enterprise',
     name: 'Enterprise',
-    price: '$199',
+    monthlyPrice: '$399',
+    yearlyPrice: '$3,351.60',
+    yearlyPerMonth: '$279',
     description: 'For large teams at scale',
     buttonText: 'Get started',
     planType: 'premium' as const,
+    tier: 'enterprise',
     features: [
-      { label: 'Pages included', value: 'Unlimited' },
-      { label: 'Custom design', value: true },
-      { label: 'SEO optimization', value: true },
-      { label: 'Branding support', value: true },
-      { label: 'Social media integration', value: true },
+      { label: 'AI messages / mo', value: 'Unlimited' },
+      { label: 'Websites', value: 'Unlimited' },
+      { label: 'Knowledge sources', value: 'Unlimited' },
+      { label: 'Team members', value: 'Unlimited' },
+      { label: 'Priority support', value: true },
     ],
   },
 ];
 
-type CatalogPlan = { plan: string; name: string; priceMonthlyUsd: number | null };
-
-// Maps the marketing template's plan ids to billing catalog tiers, so an admin
-// editing names/prices in the admin panel is reflected here while the template's
-// design + feature matrix stay intact.
-const TIER_BY_ID: Record<string, string> = {
-  essential: 'starter',
-  advanced: 'pro',
-  enterprise: 'enterprise',
+type CatalogPlan = {
+  plan: string;
+  name: string;
+  priceMonthlyUsd: number | null;
+  priceYearlyUsd?: number | null;
 };
 
 const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
+  const [billingInterval, setBillingInterval] = useState<'month' | 'year'>('month');
   const byTier = new Map(catalog.map((c) => [c.plan, c]));
+
   return (
     <RevealAnimation delay={0.1}>
       <section className="lg:py-[100px] py-16 md:py-20 bg-background-2 dark:bg-background-5">
@@ -86,6 +96,36 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                   Select the pricing plan that best suits your needs.
                 </h2>
               </RevealAnimation>
+              {/* Billing billingInterval toggle */}
+              <RevealAnimation delay={0.25}>
+                <div className="inline-flex items-center gap-1 rounded-full border border-stroke-4 dark:border-stroke-8 p-1">
+                  <button
+                    onClick={() => setBillingInterval('month')}
+                    className={cn(
+                      'rounded-full px-4 py-1.5 text-sm font-medium transition',
+                      billingInterval === 'month'
+                        ? 'bg-secondary dark:bg-accent text-accent dark:text-secondary'
+                        : 'text-secondary/60 dark:text-accent/60 hover:text-secondary dark:hover:text-accent',
+                    )}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    onClick={() => setBillingInterval('year')}
+                    className={cn(
+                      'flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition',
+                      billingInterval === 'year'
+                        ? 'bg-secondary dark:bg-accent text-accent dark:text-secondary'
+                        : 'text-secondary/60 dark:text-accent/60 hover:text-secondary dark:hover:text-accent',
+                    )}
+                  >
+                    Yearly
+                    <span className="rounded-full bg-[#22c55e]/15 px-2 py-0.5 text-xs font-semibold text-[#22c55e]">
+                      Save ~30%
+                    </span>
+                  </button>
+                </div>
+              </RevealAnimation>
             </div>
 
             <PlanHighlighter className="grid grid-cols-12 xl:gap-8 md:gap-6 gap-y-6">
@@ -93,9 +133,9 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
               <div className="col-span-12 xl:col-span-3 md:col-span-6">
                 <RevealAnimation delay={0.3}>
                   <div>
-                    <div className="md:h-[195px] md:w-[290px]" />
+                    <div className="md:h-[215px] md:w-[290px]" />
                     <div className="space-y-2.5">
-                      <h3 className="text-[1.25rem] leading-[140%]">What's included</h3>
+                      <h3 className="text-[1.25rem] leading-[140%]">What&apos;s included</h3>
                       <ul>
                         {featureLabels.map((feature, index) => (
                           <li key={feature} className={cn('text-secondary/60 dark:text-accent/60 text-[1rem] leading-[150%] font-normal py-4 pr-6', index < featureLabels.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
@@ -109,53 +149,73 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
               </div>
 
               {pricingPlans.map((plan, index) => {
-                const override = byTier.get(TIER_BY_ID[plan.id]);
+                const override = byTier.get(plan.tier);
                 const displayName = override?.name ?? plan.name;
-                const displayPrice = override
-                  ? override.priceMonthlyUsd == null
-                    ? 'Custom'
-                    : `$${override.priceMonthlyUsd}`
-                  : plan.price;
+                let displayPrice: string;
+                if (billingInterval === 'year') {
+                  displayPrice = override?.priceYearlyUsd != null
+                    ? `$${override.priceYearlyUsd}`
+                    : plan.yearlyPrice;
+                } else {
+                  displayPrice = override?.priceMonthlyUsd != null
+                    ? `$${override.priceMonthlyUsd}`
+                    : plan.monthlyPrice;
+                }
+                const cadence = billingInterval === 'year' ? '/yr' : '/mo';
+                const perMonthNote = billingInterval === 'year'
+                  ? (override?.priceYearlyUsd != null
+                    ? `$${(override.priceYearlyUsd / 12).toFixed(0)}/mo billed annually`
+                    : `${plan.yearlyPerMonth}/mo billed annually`)
+                  : null;
+
                 return (
-                <div key={plan.id} data-plan-card className="col-span-12 xl:col-span-3 md:col-span-6 cursor-pointer rounded-[20px] transition">
-                  <RevealAnimation delay={0.4 + index * 0.1}>
-                    <div>
-                      <div className={cn('rounded-t-[20px] py-8 px-6 space-y-8', plan.planType === 'featured' ? 'z-10 relative bg-secondary dark:bg-background-7 overflow-hidden' : 'bg-background-3 dark:bg-background-7')}>
-                        {plan.planType === 'featured' && (
-                          <div className="absolute h-full w-full -top-28 -right-20 -z-[1] pointer-events-none">
-                            <img src="/images/gradient/gradient-4.png" alt="pricing bg" className="w-full h-full object-cover" />
+                  <div key={plan.id} data-plan-card className="col-span-12 xl:col-span-3 md:col-span-6 cursor-pointer rounded-[20px] transition">
+                    <RevealAnimation delay={0.4 + index * 0.1}>
+                      <div>
+                        <div className={cn('rounded-t-[20px] py-8 px-6 space-y-6', plan.planType === 'featured' ? 'z-10 relative bg-secondary dark:bg-background-7 overflow-hidden' : 'bg-background-3 dark:bg-background-7')}>
+                          {plan.planType === 'featured' && (
+                            <div className="absolute h-full w-full -top-28 -right-20 -z-[1] pointer-events-none">
+                              <img src="/images/gradient/gradient-4.png" alt="pricing bg" className="w-full h-full object-cover" />
+                            </div>
+                          )}
+                          <div>
+                            <p className={cn('text-[1rem] leading-[150%] font-medium mb-3', plan.planType === 'featured' ? 'text-accent/60' : 'text-secondary/60 dark:text-accent/60')}>{displayName}</p>
+                            <h3 className={cn('text-[1.5rem] leading-[140%] font-normal', plan.planType === 'featured' && 'text-accent')}>
+                              {displayPrice}
+                              <span className={cn('text-sm font-normal ml-0.5', plan.planType === 'featured' ? 'text-accent/60' : 'text-secondary/60 dark:text-accent/60')}>{cadence}</span>
+                            </h3>
+                            {perMonthNote && (
+                              <p className={cn('text-xs mt-1', plan.planType === 'featured' ? 'text-accent/50' : 'text-secondary/50 dark:text-accent/50')}>
+                                {perMonthNote}
+                              </p>
+                            )}
+                            <p className={cn('mt-2', plan.planType === 'featured' && 'text-accent/60')}>{plan.description}</p>
                           </div>
-                        )}
-                        <div>
-                          <p className={cn('text-[1rem] leading-[150%] font-medium mb-3', plan.planType === 'featured' ? 'text-accent/60' : 'text-secondary/60 dark:text-accent/60')}>{displayName}</p>
-                          <h3 className={cn('text-[1.5rem] leading-[140%] font-normal', plan.planType === 'featured' && 'text-accent')}>{displayPrice}</h3>
-                          <p className={cn(plan.planType === 'featured' && 'text-accent/60')}>{plan.description}</p>
+                          <PlanCta
+                            tier={plan.tier}
+                            className={cn('btn btn-md w-full', plan.planType === 'featured' ? 'btn-primary hover:btn-white border-0' : 'btn-white dark:btn-white-dark hover:btn-primary')}
+                          >
+                            <span>{plan.buttonText}</span>
+                          </PlanCta>
                         </div>
-                        <PlanCta
-                          tier={TIER_BY_ID[plan.id] ?? ''}
-                          className={cn('btn btn-md w-full', plan.planType === 'featured' ? 'btn-primary hover:btn-white border-0' : 'btn-white dark:btn-white-dark hover:btn-primary')}
-                        >
-                          <span>{plan.buttonText}</span>
-                        </PlanCta>
+                        <div className="rounded-b-[20px] bg-white dark:bg-black">
+                          <ul>
+                            {plan.features.map((feature, featureIndex) => (
+                              <li key={feature.label} className={cn('h-14 px-6 py-4 text-center flex items-center justify-center', featureIndex < plan.features.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
+                                {typeof feature.value === 'string' ? (
+                                  <p className="font-medium text-secondary/60 dark:text-accent/60">{feature.value}</p>
+                                ) : feature.value ? (
+                                  <span className="size-[18px] shrink-0 bg-secondary dark:bg-accent rounded-full flex items-center justify-center">
+                                    <CheckIcon className="fill-white dark:fill-secondary" />
+                                  </span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
                       </div>
-                      <div className="rounded-b-[20px] bg-white dark:bg-black">
-                        <ul>
-                          {plan.features.map((feature, featureIndex) => (
-                            <li key={feature.label} className={cn('h-14 px-6 py-4 text-center flex items-center justify-center', featureIndex < plan.features.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
-                              {typeof feature.value === 'string' ? (
-                                <p className="font-medium text-secondary/60 dark:text-accent/60">{feature.value}</p>
-                              ) : feature.value ? (
-                                <span className="size-[18px] shrink-0 bg-secondary dark:bg-accent rounded-full flex items-center justify-center">
-                                  <CheckIcon className="fill-white dark:fill-secondary" />
-                                </span>
-                              ) : null}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </RevealAnimation>
-                </div>
+                    </RevealAnimation>
+                  </div>
                 );
               })}
             </PlanHighlighter>

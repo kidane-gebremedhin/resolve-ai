@@ -5,9 +5,9 @@ import { limitsForPlan, type Plan } from "../config/plans.js";
 
 export { limitsForPlan };
 
-async function planFor(orgId: string): Promise<Plan> {
+async function planFor(orgId: string): Promise<string | null> {
   const org = await Organization.findById(orgId).select("plan").lean();
-  return ((org?.plan ?? "free") as Plan) || "free";
+  return (org?.plan as string) || null;
 }
 
 function startOfMonth(): Date {
@@ -102,12 +102,11 @@ export async function enforceTeamMemberQuota(
 }
 
 export function requirePaidPlan(req: Request, _res: Response, next: NextFunction): void {
-  // Server-side helper for endpoints gated to non-free plans (e.g., Firecrawl).
   Organization.findById(req.orgId)
     .select("plan")
     .lean()
     .then((org) => {
-      if (!org || (org.plan ?? "free") === "free") {
+      if (!org?.plan) {
         throw new ForbiddenError("This feature requires a paid plan.");
       }
       next();

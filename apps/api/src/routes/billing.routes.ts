@@ -10,6 +10,7 @@ import {
   createCheckoutSession,
   createCustomerPortalSession,
   activateFromTransaction,
+  changePlan,
 } from "../services/billing.service.js";
 import { limitsForPlan } from "../middleware/plan-limit.middleware.js";
 import { loadPlanCatalog } from "../config/plans.js";
@@ -56,7 +57,7 @@ router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: R
   // dashboard gate redirects unpaid orgs to checkout.
   const active = Boolean(sub && (sub.status === "active" || sub.status === "trialing"));
   res.json({
-    plan: sub?.plan ?? org?.plan ?? "free",
+    plan: sub?.plan ?? org?.plan ?? null,
     status: sub?.status ?? "none",
     active,
     paddleSubscriptionId: sub?.paddleSubscriptionId ?? null,
@@ -82,7 +83,7 @@ router.get("/usage", requireAuth, requireOrg, async (req: Request, res: Response
   ]);
 
   res.json({
-    plan: org?.plan ?? "free",
+    plan: org?.plan ?? null,
     period: { start: start.toISOString(), end: null },
     usage: {
       messages: { used: messages, limit: limits.messagesPerMonth },
@@ -134,6 +135,27 @@ router.post(
     } catch (err) {
       logger.error("[billing] activate failed", { err: (err as Error).message });
       res.json({ active: false });
+    }
+  },
+);
+
+// Schedule a plan change at the end of the current billing period (no proration).
+// Calls Paddle's subscription update API with proration_billing_mode=do_not_bill.
+const changePlanSchema = z.object({ priceId: z.string().min(1) });
+router.post(
+  "/change-plan",
+  requireAuth,
+  requireOrg,
+  validateBody(changePlanSchema),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await changePlan({ organizationId: req.orgId!, priceId: req.body.priceId });
+      res.json(result);
+    } catch (err) {
+      logger.error("[billing] change-plan failed", err);
+      res
+        .status(400)
+        .json({ error: { code: "change_plan_error", message: (err as Error).message } });
     }
   },
 );

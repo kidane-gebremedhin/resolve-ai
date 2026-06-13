@@ -1,10 +1,22 @@
 // Shared helpers used by admin pages. Server-importable: no client-only APIs.
 
+// Monthly prices — keep in sync with apps/api/src/config/plans.ts.
+// Pro=$70, Business=$199, Enterprise=$399.
 export const PLAN_PRICES: Record<string, number> = {
-  starter: 29,
-  pro: 99,
-  enterprise: 499,
+  pro: 70,
+  business: 199,
+  enterprise: 399,
 };
+
+const PLAN_LABELS: Record<string, string> = {
+  pro: "Pro",
+  business: "Business",
+  enterprise: "Enterprise",
+};
+export function planLabel(plan?: string | null): string {
+  if (!plan) return "—";
+  return PLAN_LABELS[plan] ?? plan;
+}
 
 export type AdminStats = {
   // Extended shape returned by the rewritten /admin/stats endpoint. Older
@@ -56,7 +68,7 @@ export type AdminSubscription = {
   organizationId: string;
   paddleSubscriptionId: string;
   paddleCustomerId: string;
-  plan: "starter" | "pro" | "enterprise";
+  plan: "pro" | "business" | "enterprise";
   status: "active" | "trialing" | "past_due" | "canceled" | "paused";
   currentPeriodStart: string;
   currentPeriodEnd: string;

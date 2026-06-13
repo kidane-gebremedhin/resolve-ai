@@ -77,7 +77,7 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
     return;
   }
   const priceId = data.items?.[0]?.price?.id;
-  const plan = (priceId && (await planByPriceId())[priceId]) ?? "starter";
+  const plan = (priceId && (await planByPriceId())[priceId]) ?? "pro";
 
   await Subscription.findOneAndUpdate(
     { organizationId },
@@ -100,11 +100,13 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
   );
 
   // Mirror plan onto Organization for fast plan-gate lookups.
-  await Organization.findByIdAndUpdate(organizationId, {
-    plan: data.status === "active" || data.status === "trialing" ? plan : "free",
-    paddleSubscriptionId: data.id,
-    paddleCustomerId: data.customer_id,
-  });
+  const isActive = data.status === "active" || data.status === "trialing";
+  await Organization.findByIdAndUpdate(
+    organizationId,
+    isActive
+      ? { $set: { plan, paddleSubscriptionId: data.id, paddleCustomerId: data.customer_id } }
+      : { $unset: { plan: 1 }, $set: { paddleSubscriptionId: data.id, paddleCustomerId: data.customer_id } },
+  );
 
   // Affiliate: when a referred org first activates a paid plan, earn the
   // referrer's commission (no-op if there's no pending referral).
@@ -211,6 +213,29 @@ export async function syncSubscriptionFromPaddle(paddleSubscriptionId: string): 
     }
   }
   await handlePaddleEvent({ event_type: "subscription.reconcile", data: d });
+}
+
+// Schedule a plan change at the next billing renewal (no immediate charge).
+// Uses Paddle's subscription update API with proration_billing_mode="do_not_bill"
+// so the customer's plan switches at the end of their current period.
+export async function changePlan(args: {
+  organizationId: string;
+  priceId: string;
+}): Promise<{ scheduledAt: string | null }> {
+  const org = await Organization.findById(args.organizationId)
+    .select("paddleSubscriptionId")
+    .lean();
+  if (!org?.paddleSubscriptionId) {
+    throw new NotFoundError("No active Paddle subscription found for this organization.");
+  }
+  const result = (await paddleFetch(`/subscriptions/${org.paddleSubscriptionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      items: [{ price_id: args.priceId, quantity: 1 }],
+      proration_billing_mode: "do_not_bill",
+    }),
+  })) as { data?: { scheduled_change?: { effective_at?: string } } };
+  return { scheduledAt: result.data?.scheduled_change?.effective_at ?? null };
 }
 
 export async function createCustomerPortalSession(args: {
