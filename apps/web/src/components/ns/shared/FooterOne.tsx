@@ -12,7 +12,7 @@ const socialLinks = [
 
 const FooterOne = () => {
   return (
-    <footer className="bg-secondary dark:bg-background-8 relative overflow-hidden">
+    <footer className="bg-[#1a1a1c] dark:bg-background-8 relative overflow-hidden">
       {/* Right gradient */}
       <figure className="pointer-events-none absolute top-[-17%] right-[-64%] size-[550px] rotate-[-30deg] select-none md:top-[-25%] md:right-[-30%] lg:right-[-19%] xl:top-[-32%] xl:right-[-9%]">
         <img src="/images/gradient/gradient-1.png" alt="" className="size-full object-cover object-top" />

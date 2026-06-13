@@ -104,8 +104,8 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                     className={cn(
                       'rounded-full px-4 py-1.5 text-sm font-medium transition',
                       billingInterval === 'month'
-                        ? 'bg-secondary dark:bg-accent text-accent dark:text-[#1a1a1c]'
-                        : 'text-secondary/80 dark:text-accent/80 hover:text-secondary dark:hover:text-accent',
+                        ? 'bg-[#1a1a1c] dark:bg-[#fcfcfc] text-[#fcfcfc] dark:text-[#1a1a1c]'
+                        : 'text-[#1a1a1c]/60 dark:text-[#fcfcfc]/60 hover:text-[#1a1a1c] dark:hover:text-[#fcfcfc]',
                     )}
                   >
                     Monthly
@@ -115,8 +115,8 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                     className={cn(
                       'flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium transition',
                       billingInterval === 'year'
-                        ? 'bg-secondary dark:bg-accent text-accent dark:text-[#1a1a1c]'
-                        : 'text-secondary/80 dark:text-accent/80 hover:text-secondary dark:hover:text-accent',
+                        ? 'bg-[#1a1a1c] dark:bg-[#fcfcfc] text-[#fcfcfc] dark:text-[#1a1a1c]'
+                        : 'text-[#1a1a1c]/60 dark:text-[#fcfcfc]/60 hover:text-[#1a1a1c] dark:hover:text-[#fcfcfc]',
                     )}
                   >
                     Yearly
@@ -138,7 +138,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                       <h3 className="text-[1.25rem] leading-[140%]">What&apos;s included</h3>
                       <ul>
                         {featureLabels.map((feature, index) => (
-                          <li key={feature} className={cn('text-secondary/60 dark:text-accent/60 text-[1rem] leading-[150%] font-normal py-4 pr-6', index < featureLabels.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
+                          <li key={feature} className={cn('text-[#1a1a1c]/60 dark:text-[#fcfcfc]/60 text-[1rem] leading-[150%] font-normal py-4 pr-6', index < featureLabels.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
                             {feature}
                           </li>
                         ))}
@@ -203,10 +203,10 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                             {plan.features.map((feature, featureIndex) => (
                               <li key={feature.label} className={cn('h-14 px-6 py-4 text-center flex items-center justify-center', featureIndex < plan.features.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
                                 {typeof feature.value === 'string' ? (
-                                  <p className="font-medium text-secondary/60 dark:text-accent/60">{feature.value}</p>
+                                  <p className="font-medium text-[#1a1a1c]/60 dark:text-[#fcfcfc]/60">{feature.value}</p>
                                 ) : feature.value ? (
-                                  <span className="size-[18px] shrink-0 bg-secondary dark:bg-accent rounded-full flex items-center justify-center">
-                                    <CheckIcon className="fill-white dark:fill-secondary" />
+                                  <span className="size-[18px] shrink-0 bg-[#1a1a1c] dark:bg-[#fcfcfc] rounded-full flex items-center justify-center">
+                                    <CheckIcon className="fill-[#fcfcfc] dark:fill-[#1a1a1c]" />
                                   </span>
                                 ) : null}
                               </li>
