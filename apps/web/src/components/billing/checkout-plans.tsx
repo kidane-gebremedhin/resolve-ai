@@ -75,7 +75,7 @@ export function CheckoutPlans({
   useEffect(() => {
     clientApi
       .get<{ plans: Plan[] }>("/billing/plans")
-      .then((d) => setPlans(d.plans.filter((p) => p.plan !== "free")))
+      .then((d) => setPlans(d.plans))
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load plans"));
   }, []);
 
