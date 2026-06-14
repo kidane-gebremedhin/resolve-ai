@@ -24,3 +24,15 @@ In light mode, `var(--secondary)` and `var(--accent)` are both near-white (`oklc
 - **Footer background**: changed `bg-secondary dark:bg-background-8` → `bg-[#1a1a1c] dark:bg-background-8`
   - `bg-secondary` was resolving to near-white in light mode (Tailwind token issue above), making all footer text (`.footer-link` = `#f4f2fe`, `text-primary-50`, `text-accent`) invisible on the light background
   - Explicit `bg-[#1a1a1c]` ensures the footer always has a dark background in light mode, matching the intended design and making all existing light-colored text readable
+
+---
+
+## Legal Pages (reference: shipfaster.app)
+
+Updated `/privacy`, `/refund`, and `/terms` pages to match the ShipFaster reference content structure and legal text, with the following adaptations:
+
+- **Brand substitution**: `ShipFaster` → `{APP_NAME}`, `ML Labs` → `{APP_LEGAL_NAME}` (dynamic from env)
+- **Contact emails**: hardcoded to `chataxis.pro` domain (`privacy@chataxis.pro`, `support@chataxis.pro`, `legal@chataxis.pro`)
+- **Refund page**: restructured to match reference (section headers: Cancellation Window, Refund Request Process, Exception for Digital Content, Subscription Details, Processing Timeline, Contact Us) with a blockquote for the digital content withdrawal notice
+- **Terms page**: section 9 disclaimer updated to full ALL-CAPS legal wording from reference; section 10 updated with "TO THE MAXIMUM EXTENT PERMITTED BY LAW" prefix; description of service kept as AI chatbot (not SEO tools)
+- **Privacy page**: usage information adapted for chatbot product (conversations, widgets, knowledge base queries instead of SEO audit data)
