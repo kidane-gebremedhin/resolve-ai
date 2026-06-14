@@ -8,7 +8,7 @@ import { formatDate, relativeTime } from "./utils";
 
 export function UsersTable({ users }: { users: AdminUser[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <div className="overflow-x-auto rounded-xl border border-border bg-card">
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>

@@ -72,6 +72,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 7 },
   pages: { signIn: "/login", error: "/login" },
   trustHost: true,
+  // Distinct cookie names prevent session collision with the web app when both
+  // run on localhost (browsers share cookies by domain, not by port).
+  cookies: {
+    sessionToken: { name: "admin-authjs.session-token" },
+    callbackUrl: { name: "admin-authjs.callback-url" },
+    csrfToken: { name: "admin-authjs.csrf-token" },
+  },
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,

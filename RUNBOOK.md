@@ -251,7 +251,8 @@ Prerequisites and gotchas:
 - **Paddle checkout** is optional: set `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` (your
   sandbox client-side token) in `.env` and rebuild web
   (`up --build web`) to enable the overlay; otherwise checkout shows
-  "not configured".
+  "not configured". See [§13](#13-paddle-billing--sandbox-vs-production) for
+  sandbox IDs, test cards, and webhook tunnel setup.
 - After it's up, sync indexes once:
   `docker compose -f docker-compose.full.yml exec api pnpm db:migrate`.
 - **Google sign-in 500 (`POST /auth/google → internal_error`) = the mongo app
@@ -410,7 +411,59 @@ restart unhealthy containers (`restart: unless-stopped`). Verify a deploy with
 - **Embed test page shows the error screen** — the `data-agent` is stale or missing. Copy a fresh snippet from `/app/developers` (the DB ships empty, so create an agent first), and serve the HTML over HTTP, not `file://` (see §7).
 - **Phase-specific failures** — consult the matching plan in [`__plans/`](__plans/) and the procedure in [`__skills/`](__skills/).
 
-## 13. Where to go next
+## 13. Paddle Billing — Sandbox vs Production
+
+### 13.1 Environment separation
+
+The two `.env` files keep sandbox and production completely isolated:
+
+| File | `PADDLE_ENVIRONMENT` | API key prefix | Client token prefix | Used by |
+|------|----------------------|----------------|---------------------|---------|
+| `.env` | `sandbox` | `pdl_sdbx_…` | `test_…` | `pnpm dev` (local) |
+| `.env.prod` | `production` | `pdl_live_…` | `live_…` | Coolify (production) |
+
+Running `pnpm dev` locally always hits the sandbox — no risk of touching live data.
+
+### 13.2 Testing checkout locally (webhook tunnel)
+
+Paddle's servers need to reach your local API to fire webhook events. Use ngrok:
+
+```bash
+# 1. Start the API locally
+pnpm dev
+
+# 2. In a separate terminal, expose port 4000
+ngrok http 4000
+# → https://<random>.ngrok-free.app
+```
+
+In the **Paddle sandbox dashboard** → Developer Tools → Notifications → add endpoint:
+
+- URL: `https://<random>.ngrok-free.app/api/v1/billing/webhook`
+- Events: `subscription.activated`, `transaction.completed`, `subscription.updated`, `subscription.canceled`
+
+Copy the webhook secret Paddle shows and set it in `.env`:
+
+```
+PADDLE_WEBHOOK_SECRET=<secret from sandbox dashboard>
+```
+
+Restart the API. The checkout overlay will now fire real sandbox events end-to-end.
+
+**Sandbox test cards:**
+
+| Scenario | Card number | Expiry | CVV |
+|----------|------------|--------|-----|
+| Success | `4242 4242 4242 4242` | Any future | Any 3 digits |
+| Decline | `4000 0000 0000 0002` | Any future | Any 3 digits |
+
+### 13.4 Adding new plans or prices
+
+1. Use `mcp__paddle__create_product` + `mcp__paddle__create_price` (or the Paddle dashboard) in both sandbox and production.
+2. Update `.env` (sandbox IDs) and `.env.prod` (production IDs) — both server-side (`PADDLE_PRODUCT_*` / `PADDLE_PRICE_*`) and client-side (`NEXT_PUBLIC_PADDLE_PRODUCT_*` / `NEXT_PUBLIC_PADDLE_PRICE_*`).
+3. Update `apps/api/src/config/plans.ts` with the new plan key and limits.
+
+## 14. Where to go next
 
 - Architecture & rationale: [`__specs/00-table-of-contents.md`](__specs/00-table-of-contents.md)
 - Phased implementation plan: [`__plans/00-overview.md`](__plans/00-overview.md)

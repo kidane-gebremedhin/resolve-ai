@@ -15,6 +15,7 @@ import {
   Settings,
   Menu,
   LogOut,
+  DollarSign,
 } from 'lucide-react';
 import { Logo } from '@/components/site/Logo';
 import { ThemeToggle } from '@/components/theme-toggle';
@@ -28,6 +29,7 @@ const NAV: NavItem[] = [
   { href: '/agents', label: 'Agents', icon: Bot, group: 'Tenants' },
   { href: '/users', label: 'Users', icon: Users, group: 'Tenants' },
   { href: '/subscriptions', label: 'Subscriptions', icon: Receipt, group: 'Revenue' },
+  { href: '/usage', label: 'AI Usage', icon: DollarSign, group: 'Revenue' },
   { href: '/campaigns', label: 'Campaigns', icon: Megaphone, group: 'Marketing' },
   { href: '/settings', label: 'System Preferences', icon: Settings, group: 'Platform' },
 ];

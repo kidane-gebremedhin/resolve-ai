@@ -56,9 +56,8 @@ export default async function OrganizationsPage({
             param="plan"
             label="Plan"
             options={[
-              { value: 'free', label: 'Free' },
-              { value: 'starter', label: 'Basic' },
-              { value: 'pro', label: 'Business' },
+              { value: 'pro', label: 'Pro' },
+              { value: 'business', label: 'Business' },
               { value: 'enterprise', label: 'Enterprise' },
             ]}
           />

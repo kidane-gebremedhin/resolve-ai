@@ -3,6 +3,7 @@ import { AlertCircle, MessagesSquare, BookOpen, Globe, Users, DollarSign } from 
 import { Button } from "@csb/ui";
 import { api, ApiError } from "@/lib/api";
 import { BarChart } from "@/components/charts";
+import { UsageDaysFilter } from "./usage-days-filter";
 
 type UsageResponse = {
   plan: "pro" | "business" | "enterprise" | null;
@@ -65,7 +66,11 @@ function fmtUsd(val: number): string {
   return `$${val.toFixed(4)}`;
 }
 
-async function Page() {
+async function Page({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const sp = await searchParams;
+  const daysParam = typeof sp.days === 'string' ? sp.days : '30';
+  const days = Math.max(7, Math.min(90, Number(daysParam) || 30));
+
   let data: UsageResponse | null = null;
   let daily: DailyUsagePoint[] = [];
   let cost: CostResponse | null = null;
@@ -76,10 +81,10 @@ async function Page() {
   try {
     const [usage, dailyResp, costResp, websiteCostResp, dailyCostResp] = await Promise.all([
       api.get<UsageResponse>("/billing/usage"),
-      api.get<DailyUsageResponse>("/billing/usage/daily?days=30"),
+      api.get<DailyUsageResponse>(`/billing/usage/daily?days=${days}`),
       api.get<CostResponse>("/billing/usage/cost"),
       api.get<WebsiteCostResponse>("/billing/usage/cost/websites"),
-      api.get<DailyCostResponse>("/billing/usage/cost/daily?days=30"),
+      api.get<DailyCostResponse>(`/billing/usage/cost/daily?days=${days}`),
     ]);
     data = usage;
     daily = dailyResp.points;
@@ -121,9 +126,12 @@ async function Page() {
               : "Loading current billing period…"}
           </p>
         </div>
-        <Button asChild size="sm" variant="outline">
-          <Link href="/app/billing">Upgrade plan</Link>
-        </Button>
+        <div className="flex items-center gap-3">
+          <UsageDaysFilter days={String(days)} />
+          <Button asChild size="sm" variant="outline">
+            <Link href="/app/billing">Upgrade plan</Link>
+          </Button>
+        </div>
       </div>
 
       {loadError && (
@@ -297,7 +305,7 @@ async function Page() {
       {dailyCost.length > 0 && (
         <div className="mt-6 rounded-xl border border-border bg-card p-5">
           <div className="font-display text-sm font-semibold">Daily AI cost (USD)</div>
-          <p className="mt-1 text-xs text-muted-foreground">Estimated spend per day (last 30 days, UTC).</p>
+          <p className="mt-1 text-xs text-muted-foreground">Estimated spend per day (last {days} days, UTC).</p>
           <div className="mt-4 text-foreground">
             <BarChart
               points={dailyCost.map((p) => ({ date: p.date, value: p.costUsd }))}
@@ -314,7 +322,7 @@ async function Page() {
           <div>
             <div className="font-display text-sm font-semibold">Daily activity</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Messages per day (last 30 days, UTC).
+              Messages per day (last {days} days, UTC).
             </p>
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
