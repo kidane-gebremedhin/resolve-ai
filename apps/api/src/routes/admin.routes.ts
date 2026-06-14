@@ -15,6 +15,7 @@ import {
   Subscription,
   User,
   UsageRecord,
+  Website,
 } from "../models/index.js";
 import {
   DEFAULT_PAGE_SIZE,
@@ -555,54 +556,120 @@ async function loadOrInitSettings() {
 }
 
 // ---------- Admin cost / usage overview ----------
-// Aggregated USD spend for the current or specified month.
-// Returns overall totals and top-N orgs by spend.
+// Aggregated USD spend grouped by (org, website). Supports period (YYYY-MM),
+// custom date range (from/to YYYY-MM-DD), org filter, and website filter.
 router.get("/usage/cost", async (req: Request, res: Response) => {
-  const periodParam = req.query.period as string | undefined;
-  let period = periodParam ?? (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  })();
+  const {
+    period: periodParam,
+    from,
+    to,
+    organizationId,
+    websiteId,
+  } = req.query as Record<string, string | undefined>;
 
+  const now = new Date();
+  const defaultPeriod = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const period = periodParam ?? defaultPeriod;
+
+  // Build the time-range part of the match filter.
+  const timeMatch: Record<string, unknown> = {};
+  if (from || to) {
+    const createdAt: Record<string, Date> = {};
+    if (from) createdAt.$gte = new Date(from);
+    if (to) {
+      const end = new Date(to);
+      end.setDate(end.getDate() + 1); // inclusive end day
+      createdAt.$lt = end;
+    }
+    timeMatch.createdAt = createdAt;
+  } else {
+    timeMatch.period = period;
+  }
+
+  // Optional entity filters.
+  const entityMatch: Record<string, unknown> = {};
+  if (organizationId && mongoose.isValidObjectId(organizationId)) {
+    entityMatch.organizationId = new mongoose.Types.ObjectId(organizationId);
+  }
+  if (websiteId && mongoose.isValidObjectId(websiteId)) {
+    entityMatch.websiteId = new mongoose.Types.ObjectId(websiteId);
+  }
+
+  const match = { ...timeMatch, ...entityMatch };
+
+  // Totals across the whole filter scope.
   const [totalAgg] = await UsageRecord.aggregate<{ total: number; tokens: number }>([
-    { $match: { period } },
+    { $match: match },
     { $group: { _id: null, total: { $sum: "$costUsd" }, tokens: { $sum: "$totalTokens" } } },
   ]);
 
-  const topOrgs = await UsageRecord.aggregate<{ _id: unknown; spentUsd: number; calls: number }>([
-    { $match: { period } },
+  // Group by (org, website) pair so the table shows one row per website.
+  const rows = await UsageRecord.aggregate<{
+    _id: { orgId: unknown; websiteId: unknown };
+    spentUsd: number;
+    calls: number;
+    tokens: number;
+  }>([
+    { $match: match },
     {
       $group: {
-        _id: "$organizationId",
+        _id: { orgId: "$organizationId", websiteId: "$websiteId" },
         spentUsd: { $sum: "$costUsd" },
         calls: { $sum: 1 },
+        tokens: { $sum: "$totalTokens" },
       },
     },
     { $sort: { spentUsd: -1 } },
-    { $limit: 20 },
+    { $limit: 50 },
   ]);
 
-  const orgIds = topOrgs.map((o) => o._id);
-  const orgs = await Organization.find({ _id: { $in: orgIds } })
-    .select("name plan")
-    .lean();
+  // Resolve org and website names from the aggregated IDs.
+  const orgIds = [...new Set(rows.map((r) => r._id.orgId).filter(Boolean))];
+  const websiteIds = [...new Set(rows.map((r) => r._id.websiteId).filter(Boolean))];
+
+  const [orgs, websites] = await Promise.all([
+    Organization.find({ _id: { $in: orgIds } }).select("name plan").lean(),
+    websiteIds.length
+      ? Website.find({ _id: { $in: websiteIds } }).select("name domain organizationId").lean()
+      : Promise.resolve([]),
+  ]);
+
   const orgMap = new Map(orgs.map((o) => [String(o._id), o]));
+  const siteMap = new Map(websites.map((w) => [String(w._id), w]));
 
   res.json({
-    period,
+    period: from || to ? undefined : period,
+    from: from ?? undefined,
+    to: to ?? undefined,
     totalCostUsd: parseFloat((totalAgg?.total ?? 0).toFixed(6)),
     totalTokens: totalAgg?.tokens ?? 0,
-    topOrgs: topOrgs.map((o) => {
-      const org = orgMap.get(String(o._id));
+    rows: rows.map((r) => {
+      const org = orgMap.get(String(r._id.orgId));
+      const site = r._id.websiteId ? siteMap.get(String(r._id.websiteId)) : undefined;
       return {
-        orgId: String(o._id),
-        name: org?.name ?? "Unknown",
+        orgId: String(r._id.orgId),
+        orgName: org?.name ?? "Unknown",
         plan: org?.plan ?? null,
-        spentUsd: parseFloat(o.spentUsd.toFixed(6)),
-        calls: o.calls,
+        websiteId: r._id.websiteId ? String(r._id.websiteId) : null,
+        websiteName: site?.name ?? null,
+        websiteDomain: site?.domain ?? null,
+        spentUsd: parseFloat(r.spentUsd.toFixed(6)),
+        calls: r.calls,
+        tokens: r.tokens,
       };
     }),
   });
+});
+
+// Lightweight website list for filter dropdowns. Optionally scoped to one org.
+router.get("/usage/websites", async (req: Request, res: Response) => {
+  const { organizationId } = req.query as Record<string, string | undefined>;
+  const filter: Record<string, unknown> = {};
+  if (organizationId && mongoose.isValidObjectId(organizationId)) {
+    filter.organizationId = new mongoose.Types.ObjectId(organizationId);
+  }
+  const sites = await Website.find(filter).select("name domain organizationId").limit(200).lean();
+  res.json({ items: sites.map((w) => ({ _id: String(w._id), name: w.name, domain: w.domain })) });
 });
 
 router.get("/settings", async (_req: Request, res: Response) => {

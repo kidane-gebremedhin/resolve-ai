@@ -144,7 +144,7 @@ export const DEFAULT_BUDGET_LIMITS: Record<
 > = {
   pro: { orgMonthlyLimitUsd: 50, websiteMonthlyLimitUsd: 10 },
   business: { orgMonthlyLimitUsd: 200, websiteMonthlyLimitUsd: 25 },
-  enterprise: { orgMonthlyLimitUsd: 0, websiteMonthlyLimitUsd: 0 },
+  enterprise: { orgMonthlyLimitUsd: 1000, websiteMonthlyLimitUsd: 200 },
 };
 
 // Fetch the effective budget limits for a plan (admin override or code defaults).

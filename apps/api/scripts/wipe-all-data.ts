@@ -1,8 +1,8 @@
 /**
  * wipe-all-data.ts
  *
- * Drops ALL application data from MongoDB, deletes ALL vectors from Pinecone, and
- * removes ALL uploaded attachments (local disk or MinIO bucket).
+ * Drops ALL application data from MongoDB, deletes ALL vectors from Pinecone
+ * (every namespace), and removes ALL uploaded attachments (local disk or MinIO).
  * Run with:  pnpm --filter @csb/api db:wipe
  *
  * ⚠️  DESTRUCTIVE — there is no undo!
@@ -52,15 +52,39 @@ async function wipePinecone(): Promise<void> {
     const pc = new Pinecone({ apiKey });
     const index = pc.index(indexName);
 
-    // deleteAll removes every vector in the default namespace.
-    console.log(`🗑️  Deleting all vectors from index "${indexName}" …`);
+    // List all namespaces (vectors are currently upserted into the default
+    // namespace; org-scoped namespaces are planned for a future migration).
+    // Wipe each namespace individually so nothing is left behind.
+    let namespaces: string[] = [];
+    try {
+        const stats = await index.describeIndexStats();
+        namespaces = Object.keys(stats.namespaces ?? {});
+    } catch {
+        // describeIndexStats may be unsupported on some index types — fall back
+        // to wiping the default namespace only.
+    }
+
+    if (namespaces.length === 0) {
+        // No named namespaces found — wipe the default (unnamed) namespace.
+        console.log(`🗑️  Deleting all vectors from index "${indexName}" (default namespace) …`);
+        await index.deleteAll();
+        console.log("✅ Pinecone index wiped\n");
+        return;
+    }
+
+    console.log(`🗑️  Deleting vectors from ${namespaces.length} namespace(s) in "${indexName}" …`);
+    for (const ns of namespaces) {
+        await index.namespace(ns).deleteAll();
+        console.log(`   ✓ namespace "${ns}" wiped`);
+    }
+    // Also wipe the default (unnamed) namespace in case anything landed there.
     await index.deleteAll();
     console.log("✅ Pinecone index wiped\n");
 }
 
 // Removes all uploaded attachments. Mirrors the storage adapter selection in
 // apps/api/src/config/storage.ts: MinIO when MINIO_ENDPOINT + MINIO_ACCESS_KEY
-// are set, otherwise the local-disk adapter (<cwd>/uploads).
+// are set, otherwise the local-disk adapter.
 async function wipeStorage(): Promise<void> {
     if (process.env.MINIO_ENDPOINT && process.env.MINIO_ACCESS_KEY) {
         const bucket = process.env.MINIO_BUCKET ?? "csb-attachments";
@@ -88,15 +112,15 @@ async function wipeStorage(): Promise<void> {
         return;
     }
 
-    // Local-disk adapter uses <cwd>/uploads (STORAGE_LOCAL_PATH is not consumed
-    // by the adapter). Recreated automatically on the next upload.
-    const dir = path.resolve(process.cwd(), "uploads");
+    // Local-disk adapter. Prefer STORAGE_LOCAL_PATH from env, fall back to ./uploads.
+    const localPath = process.env.STORAGE_LOCAL_PATH ?? "./uploads";
+    const dir = path.resolve(process.cwd(), localPath);
     await rm(dir, { recursive: true, force: true });
     console.log(`✅ Local attachments wiped (${dir})\n`);
 }
 
 // Run a wipe phase independently — a failure in one (e.g. Pinecone unreachable
-// offline) must NOT abort the others. Tracks whether anything failed.
+// offline) must NOT abort the others.
 async function step(label: string, fn: () => Promise<void>): Promise<boolean> {
     try {
         await fn();

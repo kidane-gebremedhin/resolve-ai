@@ -26,7 +26,7 @@ function statusBadgeClass(status: AdminSubscription["status"]): string {
 
 export function SubscriptionsTable({ subscriptions }: { subscriptions: AdminSubscription[] }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <div className="overflow-x-auto rounded-xl border border-border bg-card">
       <table className="w-full text-sm">
         <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
           <tr>
