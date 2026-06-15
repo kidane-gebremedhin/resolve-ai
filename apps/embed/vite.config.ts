@@ -14,4 +14,10 @@ export default defineConfig({
       },
     },
   },
+  // preview (used by the dev script) must allow cross-origin requests so the
+  // widget.js can be loaded from any test page or customer site.
+  preview: {
+    port: 3002,
+    cors: true,
+  },
 });

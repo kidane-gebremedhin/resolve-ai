@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 3003",
     "build": "next build",
+    "postbuild": "cp -r .next/static .next/standalone/apps/admin/.next/static",
     "start": "PORT=3003 HOSTNAME=0.0.0.0 node .next/standalone/apps/admin/server.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
