@@ -30,7 +30,7 @@ Make the existing Paddle.js billing actually runnable and production-safe: defin
 | 7 | Add `enforceWebsiteQuota` + `enforceTeamMemberQuota`; wire to website-create + member-invite routes | `apps/api/src/middleware/plan-limit.middleware.ts`, website/member routes | express-mongoose-scaffold | 402 at limit; below limit passes |
 | 8 | Real admin reconcile: `POST /admin/subscriptions/:id/sync` (and/or `POST /billing/sync`) fetches from Paddle + re-upserts; wire the admin button | `apps/api/src/routes/admin.routes.ts`, `apps/web/src/app/(admin)/admin/subscriptions/page.tsx` | paddle-billing | Button reconciles status from Paddle |
 | 9 | Update `packages/shared-types` Subscription to match the model | `packages/shared-types/src/models.ts` | — | `type-check` green; no drift |
-| 10 | Update spec 24 + this plan with deltas; append `CHANGELOGS_*.md` | docs | — | Docs match shipped behavior |
+| 10 | Update spec 24 + this plan with deltas; append `CHANGELOG_*.md` | docs | — | Docs match shipped behavior |
 
 ## Decisions baked in (from spec)
 - Sandbox-first; production creds swapped at deploy (distinct per env).

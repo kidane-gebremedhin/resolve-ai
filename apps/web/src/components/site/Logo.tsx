@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { APP_NAME } from '@/lib/app-config';
+import { NAVBAR_BRAND_NAME } from '@/lib/app-config';
 
 // Brand mark: a rounded gradient tile with a chat bubble + typing dots — a
 // cleaner, more professional take than a flat glyph, and unmistakably a
@@ -18,7 +18,7 @@ export function Logo({ className = '' }: { className?: string }) {
           <circle cx="15.5" cy="10" r="1.1" fill="white" />
         </svg>
       </span>
-      <span className="font-display text-[15px] font-semibold tracking-tight">{APP_NAME}</span>
+      <span className="font-display text-[15px] font-semibold tracking-tight">{NAVBAR_BRAND_NAME}</span>
     </Link>
   );
 }

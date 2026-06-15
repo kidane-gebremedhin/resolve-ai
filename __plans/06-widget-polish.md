@@ -53,7 +53,7 @@ Three independent widget improvements: (1) a modern filled send icon with refine
 | # | Task | Files touched | Acceptance |
 |---|------|---------------|------------|
 | 13 | Rebuild widget + embed; restart; smoke-test all three features end-to-end | — | All acceptance checks below green |
-| 14 | Update spec 22 + this plan with any deltas discovered during build; write `CHANGELOGS_1.md` (this session's changes only) | `__specs/22-widget-enhancements.md`, `__plans/06-widget-polish.md`, `CHANGELOGS_1.md` | Docs match shipped behavior |
+| 14 | Update spec 22 + this plan with any deltas discovered during build; write `CHANGELOG_1.md` (this session's changes only) | `__specs/22-widget-enhancements.md`, `__plans/06-widget-polish.md`, `CHANGELOG_1.md` | Docs match shipped behavior |
 
 ## Decisions baked in (from spec)
 

@@ -49,7 +49,7 @@ Let any user share a referral link, attribute referred org signups (credentials 
 | 8 | Referral routes: `GET /referrals/me`, `POST /referrals/code`; admin `GET /admin/referrals`, `POST /admin/referrals/:id/mark-paid`, `GET /admin/referrals/export.csv` | `apps/api/src/routes/referral.routes.ts` (new), `admin.routes.ts` | express-mongoose-scaffold | Endpoints return correct funnel/earnings; admin-gated |
 | 9 | `/app/referrals` page (link + copy, funnel stats, table, earnings) + nav item (Account group, `Share2`) | `apps/web/src/app/(dashboard)/app/referrals/page.tsx` (new), `app-shell.tsx` | nextjs16-template-migration | Page renders real data |
 | 10 | `/admin/referrals` page (list, filters, mark-paid, CSV) + nav item; affiliate config in admin settings | `apps/web/src/app/(admin)/admin/referrals/page.tsx` (new), `admin-shell.tsx`, admin settings form | nextjs16-template-migration | Admin can review + mark paid + export |
-| 11 | Update spec 25 + this plan with deltas; append `CHANGELOGS_*.md` | docs | — | Docs match shipped behavior |
+| 11 | Update spec 25 + this plan with deltas; append `CHANGELOG_*.md` | docs | — | Docs match shipped behavior |
 
 ## Decisions baked in (from spec)
 - First-subscription commission, default 20%, 60-day window; manual CSV payout v1.

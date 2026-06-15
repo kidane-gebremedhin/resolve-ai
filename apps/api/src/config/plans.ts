@@ -142,9 +142,9 @@ export const DEFAULT_BUDGET_LIMITS: Record<
   Plan,
   { orgMonthlyLimitUsd: number; websiteMonthlyLimitUsd: number }
 > = {
-  pro: { orgMonthlyLimitUsd: 50, websiteMonthlyLimitUsd: 10 },
-  business: { orgMonthlyLimitUsd: 200, websiteMonthlyLimitUsd: 25 },
-  enterprise: { orgMonthlyLimitUsd: 1000, websiteMonthlyLimitUsd: 200 },
+  pro: { orgMonthlyLimitUsd: 20, websiteMonthlyLimitUsd: 20 },
+  business: { orgMonthlyLimitUsd: 50, websiteMonthlyLimitUsd: 50 },
+  enterprise: { orgMonthlyLimitUsd: 100, websiteMonthlyLimitUsd: 100 },
 };
 
 // Fetch the effective budget limits for a plan (admin override or code defaults).

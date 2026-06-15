@@ -4,6 +4,9 @@
 
 export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "Helio";
 
+// Brand name shown specifically in the navbar/logo. Falls back to APP_NAME.
+export const NAVBAR_BRAND_NAME = process.env.NEXT_PUBLIC_NAVBAR_BRAND_NAME ?? APP_NAME;
+
 // Short tagline used after the app name in metadata.
 export const APP_TAGLINE =
   process.env.NEXT_PUBLIC_APP_TAGLINE ?? "AI customer support for modern websites";
