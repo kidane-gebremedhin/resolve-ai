@@ -49,7 +49,7 @@ If `pnpm` is missing: `corepack enable && corepack prepare pnpm@9.15.0 --activat
 ## 2. Clone & install
 
 ```bash
-git clone <repo-url> customer-service-chatbot
+git clone <repo-url>
 cd customer-service-chatbot
 pnpm install
 ```

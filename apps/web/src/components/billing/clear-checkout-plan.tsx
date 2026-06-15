@@ -6,12 +6,13 @@
 // Paddle overlay the next time the user visits /checkout.
 
 import { useEffect } from "react";
-import { PLAN_STORAGE_KEY } from "./plan-cta";
+import { PLAN_STORAGE_KEY, CYCLE_STORAGE_KEY } from "./plan-cta";
 
 export function ClearCheckoutPlan() {
   useEffect(() => {
     try {
       sessionStorage.removeItem(PLAN_STORAGE_KEY);
+      sessionStorage.removeItem(CYCLE_STORAGE_KEY);
     } catch {
       /* sessionStorage unavailable */
     }

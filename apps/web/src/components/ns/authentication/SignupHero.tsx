@@ -42,6 +42,7 @@ const SignupHero = () => {
       const referralCode = params?.get('ref') ?? readCookie('csb_ref') ?? undefined;
       const campaignCode = params?.get('campaign') ?? readCookie('csb_campaign') ?? undefined;
       const plan = params?.get('plan') ?? undefined;
+      const cycle = params?.get('cycle') ?? undefined;
       const res = await fetch(`${apiUrl}/auth/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -63,7 +64,10 @@ const SignupHero = () => {
       // New accounts have no subscription yet — go straight to checkout (the
       // /app dashboard is gated until a plan is active). Carry the chosen plan
       // so checkout opens that plan's Paddle overlay directly.
-      router.push(plan ? `/checkout?plan=${encodeURIComponent(plan)}` : '/checkout');
+      const checkoutUrl = plan
+        ? `/checkout?plan=${encodeURIComponent(plan)}${cycle ? `&cycle=${encodeURIComponent(cycle)}` : ''}`
+        : '/checkout';
+      router.push(checkoutUrl);
     } catch {
       setError('Network error. Try again.');
       setPending(false);

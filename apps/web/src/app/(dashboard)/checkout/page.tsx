@@ -19,13 +19,16 @@ async function safeGet<T>(path: string): Promise<T | null> {
 export default async function CheckoutPage({
   searchParams,
 }: {
-  searchParams: Promise<{ plan?: string }>;
+  searchParams: Promise<{ plan?: string; cycle?: string }>;
 }) {
   const session = await auth();
   const organizationId = session?.user?.organizationId;
   const email = session?.user?.email ?? undefined;
-  // The plan the visitor picked on the pricing page, carried through signup.
-  const { plan: preselectedPlan } = await searchParams;
+  // The plan tier and billing cycle the visitor picked on the pricing page,
+  // carried through signup via URL params and sessionStorage.
+  const { plan: preselectedPlan, cycle: rawCycle } = await searchParams;
+  const preselectedCycle: "month" | "year" =
+    rawCycle === "year" ? "year" : "month";
 
   const sub = await safeGet<{ active?: boolean }>("/billing/subscription");
   if (sub?.active) {
@@ -49,6 +52,7 @@ export default async function CheckoutPage({
             organizationId={organizationId}
             customerEmail={email}
             preselectedPlan={preselectedPlan}
+            preselectedCycle={preselectedCycle}
           />
         </div>
       </main>

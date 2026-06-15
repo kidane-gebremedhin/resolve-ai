@@ -193,6 +193,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                           </div>
                           <PlanCta
                             tier={plan.tier}
+                            cycle={billingInterval}
                             className={cn('btn btn-md w-full', plan.planType === 'featured' ? 'btn-primary hover:btn-white border-0' : 'btn-white dark:btn-white-dark hover:btn-primary')}
                           >
                             <span>{plan.buttonText}</span>
