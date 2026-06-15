@@ -12,7 +12,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@csb/ui";
 import { clientApi } from "@/lib/api";
 import { isPaddleConfigured, openCheckout } from "@/lib/paddle";
-import { PLAN_STORAGE_KEY } from "./plan-cta";
+import { PLAN_STORAGE_KEY, CYCLE_STORAGE_KEY } from "./plan-cta";
 import { PlanHighlighter } from "./plan-highlighter";
 
 type Plan = {
@@ -29,17 +29,20 @@ export function CheckoutPlans({
   organizationId,
   customerEmail,
   preselectedPlan,
+  preselectedCycle = "month",
 }: {
   organizationId?: string;
   /** Logged-in user's email — pre-fills the Paddle overlay. */
   customerEmail?: string;
   /** Plan tier from the URL (?plan=); falls back to the sessionStorage choice. */
   preselectedPlan?: string;
+  /** Billing cycle from the URL (?cycle=); falls back to sessionStorage, then "month". */
+  preselectedCycle?: "month" | "year";
 }) {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[] | null>(null);
   const [chosenTier, setChosenTier] = useState<string | undefined>(preselectedPlan || undefined);
-  const [billingInterval, setBillingInterval] = useState<"month" | "year">("month");
+  const [billingInterval, setBillingInterval] = useState<"month" | "year">(preselectedCycle);
   const [busy, setBusy] = useState(false);
   const [polling, setPolling] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +54,7 @@ export function CheckoutPlans({
   const finishAndEnter = useCallback(() => {
     try {
       sessionStorage.removeItem(PLAN_STORAGE_KEY);
+      sessionStorage.removeItem(CYCLE_STORAGE_KEY);
     } catch {
       /* ignore */
     }
@@ -68,6 +72,19 @@ export function CheckoutPlans({
       /* sessionStorage unavailable */
     }
   }, [chosenTier]);
+
+  // Resolve the billing cycle: URL param / prop first, else the pricing-page
+  // selection stored in sessionStorage when the CTA was clicked.
+  useEffect(() => {
+    if (preselectedCycle !== "month") return; // URL/prop already has a non-default value
+    try {
+      const stored = sessionStorage.getItem(CYCLE_STORAGE_KEY);
+      if (stored === "year") setBillingInterval("year");
+    } catch {
+      /* sessionStorage unavailable */
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     clientApi
@@ -114,6 +131,7 @@ export function CheckoutPlans({
           clearInterval(iv);
           try {
             sessionStorage.removeItem(PLAN_STORAGE_KEY);
+            sessionStorage.removeItem(CYCLE_STORAGE_KEY);
           } catch {
             /* ignore */
           }
@@ -220,6 +238,7 @@ export function CheckoutPlans({
                 onClick={() => {
                   try {
                     sessionStorage.removeItem(PLAN_STORAGE_KEY);
+                    sessionStorage.removeItem(CYCLE_STORAGE_KEY);
                   } catch {
                     /* ignore */
                   }
