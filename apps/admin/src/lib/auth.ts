@@ -81,9 +81,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   providers: [
     Google({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      allowDangerousEmailAccountLinking: true,
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
     Credentials({
       name: "credentials",
@@ -115,6 +114,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           refreshToken?: string;
           expiresIn?: number;
         };
+        // Only platform admins may access this portal.
+        if (body.user.role !== "platform_admin") return null;
         return {
           id: body.user.id,
           email: body.user.email,
@@ -130,6 +131,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
+    async signIn({ user, account }) {
+      // For credentials: authorize() already set user.role — reject here as a
+      // belt-and-suspenders gate if somehow a non-admin slipped through.
+      // For Google OAuth: user.role is undefined at signIn time (it gets set
+      // in the jwt callback AFTER this runs). The jwt callback throws if the
+      // Google user isn't a platform_admin, so no additional check is needed here.
+      if (account?.provider === "credentials") {
+        if ((user as { role?: Role }).role !== "platform_admin") return false;
+      }
+      return true;
+    },
     async jwt({ token, user, account, profile }) {
       const t = token as Record<string, unknown>;
       if (user) {
@@ -140,6 +152,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         t.refreshToken = user.refreshToken;
         t.accessTokenExpires = expiresAtFrom(user.expiresIn);
       }
+
+      // Google SSO: exchange the id_token for API tokens. Only existing users
+      // with role=platform_admin are permitted — no new accounts are created via
+      // the admin portal's Google flow (the API upserts the user; we check the
+      // returned role immediately and throw if it's not platform_admin).
       if (account?.provider === "google" && account.id_token) {
         const email = profile?.email ?? user?.email;
         const name = profile?.name ?? user?.name ?? email;
@@ -151,29 +168,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             body: JSON.stringify({ idToken: account.id_token, email, name }),
           });
         } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error(`[auth] Google exchange could not reach API at ${apiUrl}/auth/google:`, (err as Error).message);
+          console.error(`[admin/auth] Google exchange could not reach API:`, (err as Error).message);
           throw new Error("Google sign-in failed: the API is unreachable.");
         }
         if (!res.ok) {
-          // Surface the backend rejection instead of swallowing it: silently
-          // accepting the sign-in leaves the session without an accessToken,
-          // which then crashes the dashboard with "Missing or malformed
-          // Authorization header" on the first protected API call.
           const detail = await res.text().catch(() => "");
-          // eslint-disable-next-line no-console
-          console.error(`[auth] Google exchange failed (${res.status}) at ${apiUrl}/auth/google: ${detail}`);
+          console.error(`[admin/auth] Google exchange failed (${res.status}): ${detail}`);
           throw new Error(`Google sign-in exchange failed (${res.status})`);
         }
         const body = (await res.json()) as {
-          user: { id: string; role?: Role; organizationId?: string };
+          user: { id: string; role?: string; organizationId?: string };
           accessToken: string;
           refreshToken?: string;
           expiresIn?: number;
         };
+        // Reject Google sign-in if the user is not an existing platform admin.
+        if (body.user.role !== "platform_admin") {
+          throw new Error("Access denied: not a platform administrator.");
+        }
         token.sub = body.user.id;
         t.organizationId = body.user.organizationId;
-        t.role = body.user.role;
+        t.role = body.user.role as Role;
         t.accessToken = body.accessToken;
         t.refreshToken = body.refreshToken;
         t.accessTokenExpires = expiresAtFrom(body.expiresIn);
@@ -181,14 +196,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       }
 
       // Not a fresh sign-in: rotate the access token before it expires so the
-      // 7d NextAuth session never outlives the 15m API token (which used to
-      // surface as "session expired" / "Invalid or expired access token").
+      // 7d NextAuth session never outlives the 15m API token.
       const expiresAt = t.accessTokenExpires as number | undefined;
       if (expiresAt && Date.now() < expiresAt - EXPIRY_SKEW_MS) {
         return token;
       }
-      // On a fresh sign-in we already set everything above and are still inside
-      // the validity window, so we only reach here when the token is stale.
       if (!user) {
         return (await refreshAccessToken(t)) as typeof token;
       }

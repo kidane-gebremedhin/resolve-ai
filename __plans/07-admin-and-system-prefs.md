@@ -38,7 +38,7 @@ Complete the platform admin panel (add the missing **Organizations** and **Agent
 > to **the widget**, and marketing pages obey it on every text/link/button/form.
 > Two-slot architecture and `inter`/`inter-tight` defaults unchanged. See
 > [`__specs/23-admin-and-system-preferences.md`](../__specs/23-admin-and-system-preferences.md)
-> (Decisions → Changelog 30) and [`CHANGELOGS_30.md`](../CHANGELOGS_30.md).
+> (Decisions → Changelog 30) and [`CHANGELOG_30.md`](../CHANGELOG_30.md).
 
 | # | Task | Files | Skill | Acceptance |
 |---|------|-------|-------|------------|
@@ -52,7 +52,7 @@ Complete the platform admin panel (add the missing **Organizations** and **Agent
 
 | # | Task | Files | Acceptance |
 |---|------|-------|------------|
-| 9 | Update spec 23 + this plan with deltas; append to `CHANGELOGS_*.md` | `__specs/23-*`, `__plans/07-*`, `CHANGELOGS_*.md` | Docs match shipped behavior |
+| 9 | Update spec 23 + this plan with deltas; append to `CHANGELOG_*.md` | `__specs/23-*`, `__plans/07-*`, `CHANGELOG_*.md` | Docs match shipped behavior |
 
 ## Decisions baked in (from spec)
 - Curated font list (not arbitrary) to preserve `next/font` optimization; default = current Inter/Inter Tight.

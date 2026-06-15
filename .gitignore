@@ -50,7 +50,7 @@ certs/
 # uploads (local file storage)
 uploads/
 
-CHANGELOGS_*.md
+CHANGELOG_*.md
 
 .claude
 

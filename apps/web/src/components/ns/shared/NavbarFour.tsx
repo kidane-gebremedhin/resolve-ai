@@ -2,7 +2,7 @@
 
 import { cn } from '@/utils/ns-cn';
 import { useEffect, useState } from 'react';
-import { APP_NAME } from '@/lib/app-config';
+import { NAVBAR_BRAND_NAME } from '@/lib/app-config';
 
 const navItems = [
   { id: 'features', label: 'Features', href: '/features' },
@@ -35,7 +35,7 @@ const NavbarFour = () => {
             <a href="/" className="inline-flex items-center gap-2.5">
               <span className="sr-only">Home</span>
               <img src="/images/shared/logo-green.svg" alt="" className="h-8 w-8" />
-              <span className="font-display text-[17px] font-semibold tracking-tight text-white">{APP_NAME}</span>
+              <span className="font-display text-[17px] font-semibold tracking-tight text-white">{NAVBAR_BRAND_NAME}</span>
             </a>
           </div>
           <div className="flex items-center gap-[76px]">
@@ -77,7 +77,7 @@ const NavbarFour = () => {
             <div className="flex items-center justify-between">
               <a href="/" onClick={() => setMobileOpen(false)} className="inline-flex items-center gap-2.5">
                 <img src="/images/shared/logo-green.svg" alt="" className="h-8 w-8" />
-                <span className="font-display text-[17px] font-semibold tracking-tight text-accent">{APP_NAME}</span>
+                <span className="font-display text-[17px] font-semibold tracking-tight text-accent">{NAVBAR_BRAND_NAME}</span>
               </a>
               <button onClick={() => setMobileOpen(false)} className="text-accent/60 hover:text-accent text-2xl" aria-label="Close">✕</button>
             </div>

@@ -30,7 +30,7 @@ Make two conversation behaviors org-configurable and enforced: (#9) allow/disall
 | 6 | **#10** `resolve_conversation` gains `confirmed:boolean`; executor rejects resolution unless confirmed (+ preceding affirmative) | `apps/api/src/services/ai/tools.ts`, `agent.service.ts` | express-mongoose-scaffold | Resolve rejected pre-confirm; succeeds after yes |
 | 7 | **#10** (optional) Inline quick-reply buttons (Yes, close / Not yet) on the AI confirm message; clicking sends the reply | `apps/widget/src/components/*` (chat area) | widget-embed-iframe | Buttons send messages; no new terminal state |
 | 8 | Settings UI: "Conversation" tab with two switches; save via `PATCH /orgs/current` | `apps/web` settings components | nextjs16-template-migration | Toggles persist + reflect saved state |
-| 9 | Update spec 26 + this plan with deltas; append `CHANGELOGS_*.md` | docs | — | Docs match shipped behavior |
+| 9 | Update spec 26 + this plan with deltas; append `CHANGELOG_*.md` | docs | — | Docs match shipped behavior |
 
 ## Decisions baked in (from spec)
 - Defaults preserve current behavior (escalation on, ask-before-resolve on).

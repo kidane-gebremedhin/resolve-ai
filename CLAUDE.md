@@ -6,7 +6,7 @@
 
 ### Always update existing specs, plans, README.md/RUNBOOK.md, etc.. to accomodate the new chages implemented, so that changes persist on brand new code regeneration from specs, plans, etc...
 
-### Always create new CHANGELOGS_[1-BASED INDEX NUMBER].md outlining only the new chages implemented (Don't outline changes from previous sessions), use the existing changelog index as base, don't consider deleted ones
+### Always create new CHANGELOG_[1-BASED INDEX NUMBER].md outlining only the new chages implemented (Don't outline changes from previous sessions), use the existing changelog index as base, don't consider deleted ones
 
 ### When creating new environment variable, make sure it is added to .env.example
 

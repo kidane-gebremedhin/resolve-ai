@@ -42,7 +42,7 @@
 
 | # | Task | Files | Acceptance |
 |---|------|-------|------------|
-| 8 | Rebuild widget; update specs 27/28 + this plan with deltas; append `CHANGELOGS_*.md` | docs, build | Docs match shipped behavior |
+| 8 | Rebuild widget; update specs 27/28 + this plan with deltas; append `CHANGELOG_*.md` | docs, build | Docs match shipped behavior |
 
 ## Decisions baked in (from specs)
 - Crawl ingests **all** discovered links, capped only by `FIRECRAWL_MAX_PAGES` (no domain restriction); favicon best-effort, non-blocking; avatar set only when none exists.
