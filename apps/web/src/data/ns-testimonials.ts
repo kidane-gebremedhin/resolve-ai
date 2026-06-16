@@ -31,7 +31,7 @@ export const testimonials = [
     id: 5,
     name: 'Lisa Thompson',
     position: 'Risk Officer, Global FX Partners',
-    quote: 'Nextsaas delivered our entire platform ahead of schedule. The support team is exceptional and the platform performance exceeds all our benchmarks.',
+    quote: 'Chataxis delivered our entire support stack ahead of schedule. The team is exceptional and the platform performance exceeds all our benchmarks.',
     avatar: '/images/avatar/avatar-5.png',
   },
 ];

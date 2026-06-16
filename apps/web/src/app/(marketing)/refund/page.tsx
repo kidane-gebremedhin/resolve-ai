@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import { LandingPageShell } from '@/components/ns/landing-page-shell';
+import { APP_NAME } from '@/lib/app-config';
 
 export const metadata: Metadata = {
   title: 'Refund Policy',
-  description: 'Refund policy for ShipFaster.',
+  description: `Refund policy for ${APP_NAME}.`,
 };
 
 export default function Page() {
@@ -24,7 +25,7 @@ export default function Page() {
               <h2 className="text-xl font-semibold text-primary mb-3">Refund Request Process</h2>
               <p className="mb-2">To request a refund, customers must contact:</p>
               <ul className="list-disc pl-6 space-y-1">
-                <li>Email: <a href="mailto:support@shipfaster.app" className="text-primary underline underline-offset-2">support@shipfaster.app</a></li>
+                <li>Email: <a href="mailto:support@chataxis.com" className="text-primary underline underline-offset-2">support@chataxis.com</a></li>
                 <li>Or contact Paddle directly</li>
               </ul>
               <p className="mt-2">Customers must include their order number and purchase email address in the request. Reimbursements are processed within 14 days using the original payment method, at no additional cost.</p>
@@ -54,7 +55,7 @@ export default function Page() {
 
             <div>
               <h2 className="text-xl font-semibold text-primary mb-3">Contact Us</h2>
-              <p>Email: <a href="mailto:support@shipfaster.app" className="text-primary underline underline-offset-2">support@shipfaster.app</a></p>
+              <p>Email: <a href="mailto:support@chataxis.com" className="text-primary underline underline-offset-2">support@chataxis.com</a></p>
               <p className="mt-1">Response time: Within 24–48 business hours</p>
             </div>
 
