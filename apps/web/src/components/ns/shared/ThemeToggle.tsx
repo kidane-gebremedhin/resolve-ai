@@ -33,7 +33,7 @@ const ThemeToggle = () => {
       type="button"
       onClick={mounted ? toggleTheme : undefined}
       aria-label="Toggle theme"
-      className="bg-background-8 fixed right-0 bottom-5 z-[9999] flex size-12 cursor-pointer items-center justify-center rounded-l-2xl transition-colors duration-200 hover:opacity-80 dark:bg-white"
+      className="bg-background-8 fixed left-0 bottom-5 z-[9999] flex size-12 cursor-pointer items-center justify-center rounded-r-2xl transition-colors duration-200 hover:opacity-80 dark:bg-white"
       suppressHydrationWarning
     >
       {mounted && isDark ? (

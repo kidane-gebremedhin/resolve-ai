@@ -56,7 +56,7 @@ const AffiliatesPageContent = () => {
                 </p>
                 <div className="mt-7 md:mt-10">
                   <LinkButton
-                    href="/signup"
+                    href="/register"
                     className="btn btn-primary btn-xl hover:btn-secondary dark:hover:btn-accent w-full md:w-auto block md:inline-block"
                   >
                     Join now
@@ -127,7 +127,7 @@ const AffiliatesPageContent = () => {
             <RevealAnimation delay={0.5}>
               <div className="text-center pt-4">
                 <LinkButton
-                  href="/signup"
+                  href="/register"
                   className="btn btn-primary btn-xl hover:btn-secondary dark:hover:btn-accent w-full md:w-auto block md:inline-block"
                 >
                   Apply now
