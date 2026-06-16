@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Check, X } from 'lucide-react';
 import RevealAnimation from '../animation/RevealAnimation';
 import SocialAuth from './SocialAuth';
 import { API_URL as apiUrl } from '@/lib/app-urls';
@@ -14,6 +14,32 @@ function readCookie(name: string): string | undefined {
   return m ? decodeURIComponent(m[1]) : undefined;
 }
 
+type PasswordStrength = {
+  minLength: boolean;
+  hasUpper: boolean;
+  hasLower: boolean;
+  hasNumber: boolean;
+  hasSpecial: boolean;
+};
+
+function checkPassword(pw: string): PasswordStrength {
+  return {
+    minLength: pw.length >= 8,
+    hasUpper: /[A-Z]/.test(pw),
+    hasLower: /[a-z]/.test(pw),
+    hasNumber: /[0-9]/.test(pw),
+    hasSpecial: /[^A-Za-z0-9]/.test(pw),
+  };
+}
+
+const PASSWORD_RULES: { key: keyof PasswordStrength; label: string }[] = [
+  { key: 'minLength', label: 'At least 8 characters' },
+  { key: 'hasUpper', label: 'One uppercase letter' },
+  { key: 'hasLower', label: 'One lowercase letter' },
+  { key: 'hasNumber', label: 'One number' },
+  { key: 'hasSpecial', label: 'One special character' },
+];
+
 const SignupHero = () => {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -21,12 +47,21 @@ const SignupHero = () => {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [passwordTouched, setPasswordTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  const pwStrength = checkPassword(password);
+  const pwValid = Object.values(pwStrength).every(Boolean);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+    if (!pwValid) {
+      setPasswordTouched(true);
+      setError('Password does not meet the requirements below.');
+      return;
+    }
     if (password !== confirm) {
       setError('Passwords do not match.');
       return;
@@ -116,9 +151,8 @@ const SignupHero = () => {
                     type={showPassword ? 'text' : 'password'}
                     id="password"
                     required
-                    minLength={8}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => { setPassword(e.target.value); setPasswordTouched(true); }}
                     className="auth-form-input pr-11"
                     placeholder="At least 8 characters"
                   />
@@ -131,6 +165,18 @@ const SignupHero = () => {
                     {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                {passwordTouched && (
+                  <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+                    {PASSWORD_RULES.map(({ key, label }) => (
+                      <li key={key} className={`flex items-center gap-1.5 text-xs ${pwStrength[key] ? 'text-green-600 dark:text-green-400' : 'text-foreground/50'}`}>
+                        {pwStrength[key]
+                          ? <Check className="h-3 w-3 shrink-0" />
+                          : <X className="h-3 w-3 shrink-0" />}
+                        {label}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </fieldset>
               <fieldset className="space-y-2 mb-3">
                 <label htmlFor="confirm-password" className="block text-tagline-2 font-medium text-foreground select-none">

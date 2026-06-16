@@ -23,15 +23,18 @@ export type BillingCatalogEntry = {
 export function BillingPlansGrid({
   catalog,
   currentPlan,
+  currentInterval = "month",
   organizationId,
   hasActiveSubscription,
 }: {
   catalog: BillingCatalogEntry[];
   currentPlan: string | null;
+  /** Billing interval of the org's active subscription — initializes the toggle. */
+  currentInterval?: "month" | "year";
   organizationId?: string;
   hasActiveSubscription: boolean;
 }) {
-  const [billingInterval, setBillingInterval] = useState<"month" | "year">("month");
+  const [billingInterval, setBillingInterval] = useState<"month" | "year">(currentInterval);
 
   return (
     <div>
@@ -68,7 +71,7 @@ export function BillingPlansGrid({
 
       <PlanHighlighter className="grid gap-4 md:grid-cols-3">
         {catalog.map((p) => {
-          const isCurrent = currentPlan === p.plan;
+          const isCurrent = currentPlan === p.plan && billingInterval === currentInterval;
           const highlighted = p.plan === "business";
           const priceId = billingInterval === "year" ? p.priceIdYearly : p.priceId;
           const priceUsd = billingInterval === "year" ? p.priceYearlyUsd : p.priceMonthlyUsd;

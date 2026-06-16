@@ -8,6 +8,7 @@ import { BillingPlansGrid, type BillingCatalogEntry } from "@/components/billing
 type Subscription = {
   plan: "pro" | "business" | "enterprise" | null;
   status: "active" | "trialing" | "past_due" | "canceled" | "paused";
+  billingInterval: "month" | "year";
   paddleSubscriptionId: string | null;
   paddleCustomerId: string | null;
   currentPeriodStart: string | null;
@@ -57,6 +58,7 @@ async function Page() {
   }
 
   const plan = sub?.plan ?? null;
+  const currentInterval: "month" | "year" = sub?.billingInterval ?? "month";
   const status = sub?.status ?? "active";
   const statusBadge = statusVariant(status);
   const hasPaddleCustomer = Boolean(sub?.paddleCustomerId);
@@ -148,6 +150,7 @@ async function Page() {
         <BillingPlansGrid
           catalog={catalog}
           currentPlan={plan}
+          currentInterval={currentInterval}
           organizationId={organizationId}
           hasActiveSubscription={hasActiveSubscription}
         />

@@ -53,7 +53,7 @@ const METER_LABELS: Record<MeterKey, { label: string; icon: React.ComponentType<
 };
 
 function formatLimit(limit: number): string {
-  if (!Number.isFinite(limit)) return "∞";
+  if (!Number.isFinite(limit)) return "Unlimited";
   return limit.toLocaleString();
 }
 
@@ -182,7 +182,8 @@ async function Page({ searchParams }: { searchParams: Promise<Record<string, str
         {meterKeys.map((key) => {
           const meta = METER_LABELS[key];
           const m = data?.usage[key];
-          const limit = m?.limit ?? 0;
+          // API serializes Infinity as null in JSON; treat null as unlimited.
+          const limit = m?.limit ?? Infinity;
           const used = m?.used ?? 0;
           const finiteLimit = Number.isFinite(limit) && limit > 0;
           const pct = finiteLimit ? Math.min(100, (used / limit) * 100) : 0;
@@ -206,7 +207,11 @@ async function Page({ searchParams }: { searchParams: Promise<Record<string, str
               </div>
               <div className="mt-2 flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">
-                  {finiteLimit ? `${pct.toFixed(0)}% used` : "Unlimited"}
+                  {finiteLimit
+                    ? `${pct.toFixed(0)}% used`
+                    : key === "messages" && cost?.orgMonthlyLimitUsd != null && cost.orgMonthlyLimitUsd > 0
+                      ? `AI budget: $${cost.orgMonthlyLimitUsd}/mo`
+                      : "Unlimited"}
                 </span>
                 {over && (
                   <span className="inline-flex items-center gap-1 text-warning">
