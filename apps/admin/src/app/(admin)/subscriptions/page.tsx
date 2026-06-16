@@ -7,7 +7,7 @@ import { buildListQuery, type ListEnvelope } from '@/lib/list-params';
 
 type SubsEnvelope = ListEnvelope<AdminSubscription> & { mrr: number };
 
-const KEYS = ['q', 'from', 'to', 'plan', 'status', 'page', 'pageSize'] as const;
+const KEYS = ['q', 'from', 'to', 'plan', 'status', 'cycle', 'page', 'pageSize'] as const;
 
 async function load(qs: string): Promise<SubsEnvelope & { error: string | null }> {
   try {
@@ -68,6 +68,14 @@ export default async function SubscriptionsPage({
               { value: 'past_due', label: 'Past due' },
               { value: 'canceled', label: 'Canceled' },
               { value: 'paused', label: 'Paused' },
+            ]}
+          />
+          <FilterSelect
+            param="cycle"
+            label="Cycle"
+            options={[
+              { value: 'month', label: 'Monthly' },
+              { value: 'year', label: 'Yearly' },
             ]}
           />
         </ListToolbar>

@@ -60,6 +60,7 @@ export type AdminSubscription = {
   paddleSubscriptionId: string;
   paddleCustomerId: string;
   plan: "pro" | "business" | "enterprise";
+  billingInterval?: "month" | "year";
   status: "active" | "trialing" | "past_due" | "canceled" | "paused";
   currentPeriodStart: string;
   currentPeriodEnd: string;

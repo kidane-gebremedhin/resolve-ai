@@ -18,7 +18,7 @@ export function Logo({ className = '' }: { className?: string }) {
           <circle cx="15.5" cy="10" r="1.1" fill="white" />
         </svg>
       </span>
-      <span className="font-display text-[15px] font-semibold tracking-tight">{NAVBAR_BRAND_NAME}</span>
+      <span className="font-display text-[15px] font-semibold tracking-tight text-foreground">{NAVBAR_BRAND_NAME}</span>
     </Link>
   );
 }

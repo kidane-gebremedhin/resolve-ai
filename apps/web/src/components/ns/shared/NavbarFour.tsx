@@ -51,7 +51,7 @@ const NavbarFour: FC<NavbarFourProps> = ({
             </ul>
           </nav>
 
-          <NavCTAButton href="/signup" btnClassName={btnClassName} label="Get started" />
+          <NavCTAButton href="/login" btnClassName={btnClassName} label="Login" />
 
           <MobileMenuButton />
         </div>

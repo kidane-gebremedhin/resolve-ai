@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 3001",
     "build": "next build",
+    "postbuild": "cp -r .next/static .next/standalone/apps/widget/.next/static && cp -r public .next/standalone/apps/widget/public",
     "start": "PORT=3001 HOSTNAME=0.0.0.0 node .next/standalone/apps/widget/server.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",

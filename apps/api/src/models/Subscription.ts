@@ -13,6 +13,7 @@ const subscriptionSchema = new Schema(
     },
     currentPeriodStart: { type: Date, required: true },
     currentPeriodEnd: { type: Date, required: true },
+    billingInterval: { type: String, enum: ["month", "year"], default: "month" },
     canceledAt: { type: Date },
     trialEndAt: { type: Date },
     paddleData: { type: Schema.Types.Mixed },

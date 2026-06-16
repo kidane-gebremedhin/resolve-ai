@@ -58,10 +58,24 @@ router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: R
   // there is no subscription we report status "none" (NOT "active") so the
   // dashboard gate redirects unpaid orgs to checkout.
   const active = Boolean(sub && (sub.status === "active" || sub.status === "trialing"));
+
+  // Prefer the stored billingInterval field; fall back to deriving from paddleData.
+  let billingInterval: "month" | "year" = (sub?.billingInterval as "month" | "year" | undefined) ?? "month";
+  if (!sub?.billingInterval) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const subPriceId: string | undefined = (sub?.paddleData as any)?.data?.items?.[0]?.price?.id;
+    if (subPriceId) {
+      const catalog = await loadPlanCatalog();
+      const yearlyIds = new Set(catalog.map((c) => c.priceIdYearly).filter(Boolean));
+      if (yearlyIds.has(subPriceId)) billingInterval = "year";
+    }
+  }
+
   res.json({
     plan: sub?.plan ?? org?.plan ?? null,
     status: sub?.status ?? "none",
     active,
+    billingInterval,
     paddleSubscriptionId: sub?.paddleSubscriptionId ?? null,
     paddleCustomerId: sub?.paddleCustomerId ?? null,
     currentPeriodStart: sub?.currentPeriodStart ?? null,
