@@ -4,7 +4,7 @@ import Clients from '@/components/ns/homepage-34/Clients';
 import Contact from '@/components/ns/homepage-34/Contact';
 import CTA from '@/components/ns/homepage-34/CTA';
 import Feature from '@/components/ns/homepage-34/Feature';
-import Hero from '@/components/ns/homepage-34/Hero';
+import Hero from '@/components/ns/homepage-01/Hero';
 import Pricing from '@/components/ns/homepage-34/Pricing';
 import Services from '@/components/ns/homepage-34/Services';
 import Steps from '@/components/ns/homepage-34/Steps';

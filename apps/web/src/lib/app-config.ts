@@ -2,7 +2,7 @@
 // `NEXT_PUBLIC_APP_NAME` and friends so we can rebrand without grepping for
 // "NextSaaS" / "Helio" across the codebase.
 
-export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "Helio";
+export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "Chataxis";
 
 // Brand name shown specifically in the navbar/logo. Falls back to APP_NAME.
 export const NAVBAR_BRAND_NAME = process.env.NEXT_PUBLIC_NAVBAR_BRAND_NAME ?? APP_NAME;

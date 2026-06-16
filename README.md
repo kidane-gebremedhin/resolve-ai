@@ -84,7 +84,7 @@ account (there is no demo seed data — onboard via the sign-up flow).
 | [E2E_FLOW.md](E2E_FLOW.md) | **RAG flow** — indexing → retrieval → generation, end to end. |
 | [IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md) | Spec-by-spec implementation status. |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | Conventions for AI coding agents working in this repo. |
-| `CHANGELOG_*.md` | Per-session change logs (latest: [CHANGELOG_17.md](CHANGELOG_17.md)). |
+| `CHANGELOG_*.md` | Per-session change logs (latest: [CHANGELOG_1.md](CHANGELOG_1.md)). |
 
 ---
 
