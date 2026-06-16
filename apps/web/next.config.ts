@@ -8,6 +8,16 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
   },
+  async headers() {
+    return [
+      {
+        // Allow the widget proxy (back.chataxis.pro) to load fonts that are
+        // self-hosted under _next/static/media/ from chataxis.pro.
+        source: "/_next/static/media/:path*",
+        headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
+      },
+    ];
+  },
 };
 
 export default nextConfig;
