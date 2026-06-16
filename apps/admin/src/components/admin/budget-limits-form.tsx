@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, ApiError } from "@/lib/api";
+import { clientApi as api, ApiError } from "@/lib/api";
 
 type BudgetEntry = {
   plan: "pro" | "business" | "enterprise";
@@ -10,9 +10,9 @@ type BudgetEntry = {
 };
 
 const DEFAULTS: BudgetEntry[] = [
-  { plan: "pro", orgMonthlyLimitUsd: 50, websiteMonthlyLimitUsd: 10 },
-  { plan: "business", orgMonthlyLimitUsd: 200, websiteMonthlyLimitUsd: 25 },
-  { plan: "enterprise", orgMonthlyLimitUsd: 0, websiteMonthlyLimitUsd: 0 },
+  { plan: "pro", orgMonthlyLimitUsd: 20, websiteMonthlyLimitUsd: 20 },
+  { plan: "business", orgMonthlyLimitUsd: 50, websiteMonthlyLimitUsd: 50 },
+  { plan: "enterprise", orgMonthlyLimitUsd: 100, websiteMonthlyLimitUsd: 100 },
 ];
 
 const PLAN_LABELS: Record<string, string> = {

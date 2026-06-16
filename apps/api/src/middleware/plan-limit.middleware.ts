@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
-import { Organization, Message, KnowledgeSource, Website, Membership } from "../models/index.js";
+import { Organization, Subscription, Message, KnowledgeSource, Website, Membership } from "../models/index.js";
 import { ForbiddenError } from "../utils/errors.js";
 import { limitsForPlan, type Plan } from "../config/plans.js";
 
@@ -7,7 +7,16 @@ export { limitsForPlan };
 
 async function planFor(orgId: string): Promise<string | null> {
   const org = await Organization.findById(orgId).select("plan").lean();
-  return (org?.plan as string) || null;
+  if (org?.plan) return org.plan as string;
+  // Fallback: when org.plan hasn't been mirrored yet (e.g. webhook delay,
+  // yearly priceId mapping gap), read directly from an active subscription.
+  const sub = await Subscription.findOne({ organizationId: orgId })
+    .select("plan status")
+    .lean();
+  if (sub && (sub.status === "active" || sub.status === "trialing") && sub.plan) {
+    return sub.plan as string;
+  }
+  return null;
 }
 
 function startOfMonth(): Date {
@@ -102,13 +111,9 @@ export async function enforceTeamMemberQuota(
 }
 
 export function requirePaidPlan(req: Request, _res: Response, next: NextFunction): void {
-  Organization.findById(req.orgId)
-    .select("plan")
-    .lean()
-    .then((org) => {
-      if (!org?.plan) {
-        throw new ForbiddenError("This feature requires a paid plan.");
-      }
+  planFor(req.orgId!)
+    .then((plan) => {
+      if (!plan) throw new ForbiddenError("This feature requires a paid plan.");
       next();
     })
     .catch(next);

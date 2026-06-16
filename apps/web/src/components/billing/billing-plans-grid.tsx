@@ -72,7 +72,7 @@ export function BillingPlansGrid({
       <PlanHighlighter className="grid gap-4 md:grid-cols-3">
         {catalog.map((p) => {
           const isCurrent = currentPlan === p.plan && billingInterval === currentInterval;
-          const highlighted = p.plan === "business";
+          const highlighted = !hasActiveSubscription && p.plan === "business";
           const priceId = billingInterval === "year" ? p.priceIdYearly : p.priceId;
           const priceUsd = billingInterval === "year" ? p.priceYearlyUsd : p.priceMonthlyUsd;
           const cadence = billingInterval === "year" ? "/yr" : "/mo";
@@ -84,7 +84,7 @@ export function BillingPlansGrid({
               data-plan-card
               className={`cursor-pointer rounded-xl border bg-card p-5 transition ${
                 isCurrent
-                  ? "border-foreground"
+                  ? "border-primary border-2"
                   : highlighted
                     ? "border-primary/50"
                     : "border-border"

@@ -59,15 +59,16 @@ router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: R
   // dashboard gate redirects unpaid orgs to checkout.
   const active = Boolean(sub && (sub.status === "active" || sub.status === "trialing"));
 
-  // Derive billing interval from the Paddle price ID stored in paddleData.
-  // If the priceId matches a yearly entry in the catalog, interval is "year".
-  let billingInterval: "month" | "year" = "month";
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const subPriceId: string | undefined = (sub?.paddleData as any)?.data?.items?.[0]?.price?.id;
-  if (subPriceId) {
-    const catalog = await loadPlanCatalog();
-    const yearlyIds = new Set(catalog.map((c) => c.priceIdYearly).filter(Boolean));
-    if (yearlyIds.has(subPriceId)) billingInterval = "year";
+  // Prefer the stored billingInterval field; fall back to deriving from paddleData.
+  let billingInterval: "month" | "year" = (sub?.billingInterval as "month" | "year" | undefined) ?? "month";
+  if (!sub?.billingInterval) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const subPriceId: string | undefined = (sub?.paddleData as any)?.data?.items?.[0]?.price?.id;
+    if (subPriceId) {
+      const catalog = await loadPlanCatalog();
+      const yearlyIds = new Set(catalog.map((c) => c.priceIdYearly).filter(Boolean));
+      if (yearlyIds.has(subPriceId)) billingInterval = "year";
+    }
   }
 
   res.json({

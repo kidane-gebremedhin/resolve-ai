@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { Organization, Subscription, ProcessedWebhook } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { NotFoundError } from "../utils/errors.js";
-import { planByPriceId } from "../config/plans.js";
+import { planByPriceId, loadPlanCatalog } from "../config/plans.js";
 import { recordEarnedCommissionForOrg } from "./affiliate.service.js";
 
 const PADDLE_API_BASE =
@@ -77,7 +77,10 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
     return;
   }
   const priceId = data.items?.[0]?.price?.id;
+  const catalog = await loadPlanCatalog();
   const plan = (priceId && (await planByPriceId())[priceId]) ?? "pro";
+  const yearlyPriceIds = new Set(catalog.map((c) => c.priceIdYearly).filter(Boolean));
+  const billingInterval: "month" | "year" = priceId && yearlyPriceIds.has(priceId) ? "year" : "month";
 
   await Subscription.findOneAndUpdate(
     { organizationId },
@@ -86,6 +89,7 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
       paddleSubscriptionId: data.id,
       paddleCustomerId: data.customer_id,
       plan,
+      billingInterval,
       status: data.status,
       currentPeriodStart: data.current_billing_period?.starts_at
         ? new Date(data.current_billing_period.starts_at)

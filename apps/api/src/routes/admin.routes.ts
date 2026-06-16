@@ -103,12 +103,15 @@ router.get("/users", async (req: Request, res: Response) => {
 
 router.get("/subscriptions", async (req: Request, res: Response) => {
   const params = parseListParams(req.query, { defaultPageSize: DEFAULT_PAGE_SIZE });
-  const { plan, status } = req.query as Record<string, string | undefined>;
+  const { plan, status, cycle } = req.query as Record<string, string | undefined>;
   const match = mergeFilters(
     searchFilter(params.q, ["paddleSubscriptionId", "paddleCustomerId"]),
     dateRangeFilter("createdAt", params.from, params.to),
     plan && ["pro", "business", "enterprise"].includes(plan) ? { plan } : {},
     status && ["active", "trialing", "past_due", "canceled", "paused"].includes(status) ? { status } : {},
+    cycle === "year" ? { billingInterval: "year" } :
+    cycle === "month" ? { $or: [{ billingInterval: "month" }, { billingInterval: { $exists: false } }] } :
+    {},
   ) as Record<string, unknown>;
 
   const page = await paginateAggregate(
