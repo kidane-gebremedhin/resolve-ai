@@ -336,17 +336,17 @@
 .dark .ns-theme h1, .dark .ns-theme h2, .dark .ns-theme h3, .dark .ns-theme h4, .dark .ns-theme h5, .dark .ns-theme h6 {
   color: #fcfcfc;
 }
-.ns-theme h1 { font-size: 2rem; line-height: 130%; font-weight: 500; }
-@media (min-width: 640px) { .ns-theme h1 { font-size: 2.5rem; } }
-@media (min-width: 768px) { .ns-theme h1 { font-size: 3.25rem; } }
-@media (min-width: 1280px) { .ns-theme h1 { font-size: 4.25rem; line-height: 110%; } }
-.ns-theme h2 { font-size: 1.5rem; line-height: 140%; font-weight: 400; }
-@media (min-width: 640px) { .ns-theme h2 { font-size: 2rem; } }
-@media (min-width: 768px) { .ns-theme h2 { font-size: 2.5rem; } }
-@media (min-width: 1280px) { .ns-theme h2 { font-size: 3.25rem; line-height: 120%; } }
-.ns-theme h3 { font-size: 1.5rem; line-height: 140%; font-weight: 400; }
-@media (min-width: 768px) { .ns-theme h3 { font-size: 2rem; } }
-@media (min-width: 1280px) { .ns-theme h3 { font-size: 2.5rem; line-height: 120%; } }
+.ns-theme h1 { font-size: 1.75rem; line-height: 130%; font-weight: 500; }
+@media (min-width: 640px) { .ns-theme h1 { font-size: 2.25rem; } }
+@media (min-width: 768px) { .ns-theme h1 { font-size: 2.75rem; } }
+@media (min-width: 1280px) { .ns-theme h1 { font-size: 3.5rem; line-height: 110%; } }
+.ns-theme h2 { font-size: 1.375rem; line-height: 140%; font-weight: 400; }
+@media (min-width: 640px) { .ns-theme h2 { font-size: 1.75rem; } }
+@media (min-width: 768px) { .ns-theme h2 { font-size: 2.125rem; } }
+@media (min-width: 1280px) { .ns-theme h2 { font-size: 2.75rem; line-height: 120%; } }
+.ns-theme h3 { font-size: 1.25rem; line-height: 140%; font-weight: 400; }
+@media (min-width: 768px) { .ns-theme h3 { font-size: 1.75rem; } }
+@media (min-width: 1280px) { .ns-theme h3 { font-size: 2.125rem; line-height: 120%; } }
 /* Landing body copy sized for readability like chatbase.co — a generous ~1rem
    on mobile stepping up to ~1.125rem on larger screens, with relaxed leading. */
 .ns-theme p { font-size: 1rem; line-height: 160%; color: rgba(26,26,28,0.6); font-weight: 400; }

@@ -389,7 +389,7 @@ function EmbedDialog({
   const [copied, setCopied] = useState(false);
   const snippet = `<script>
   (function(w,d){
-    w.HelioConfig = {
+    w.ChataxisConfig = {
       apiBase: "${apiBaseUrl}",
       websiteId: "${website._id}",${agent ? `\n      agentId: "${agent._id}",` : ""}
       domain: "${website.domain}"

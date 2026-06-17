@@ -9,13 +9,21 @@ const MobileMenuButton = () => {
     <div className="block xl:hidden">
       <button
         onClick={openMenu}
-        className="bg-background-4 dark:bg-background-6 hover:bg-background-5 dark:hover:bg-background-7 flex size-12 cursor-pointer flex-col items-center justify-center gap-[5px] rounded-full transition-all duration-200 hover:scale-105 group"
+        className="bg-background-4 dark:bg-background-6 hover:bg-background-5 dark:hover:bg-background-7 flex size-12 cursor-pointer items-center justify-center rounded-full transition-all duration-200 hover:scale-105 group"
         aria-label="Open mobile menu"
       >
         <span className="sr-only">Menu</span>
-        <span className="bg-secondary group-hover:bg-secondary/80 dark:bg-stroke-1 block h-0.5 w-6 transition-all duration-200" />
-        <span className="bg-secondary group-hover:bg-secondary/80 dark:bg-stroke-1 block h-0.5 w-6 transition-all duration-200" />
-        <span className="bg-secondary group-hover:bg-secondary/80 dark:bg-stroke-1 block h-0.5 w-6 transition-all duration-200" />
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.75}
+          stroke="currentColor"
+          aria-hidden
+          className="size-6 text-secondary dark:text-stroke-1 group-hover:text-secondary/80 dark:group-hover:text-white"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+        </svg>
       </button>
     </div>
   );

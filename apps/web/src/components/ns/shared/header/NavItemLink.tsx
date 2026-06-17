@@ -18,7 +18,7 @@ interface NavItemLinkProps {
 const getVariantClasses = (variant: NavItemVariant = 'default'): string => {
   const variants = {
     default:
-      'flex items-center gap-1 px-4 py-2 border border-transparent group-hover/nav:border-stroke-2 group-hover/nav:dark:border-stroke-7 rounded-full group-hover/nav:bg-accent/20 group-hover/nav:dark:bg-transparent text-tagline-1 font-normal text-[#1a1a1c]/70 group-hover/nav:text-[#1a1a1c] dark:text-[#fcfcfc]/70 group-hover/nav:dark:text-[#fcfcfc] transition-all duration-200',
+      'flex items-center gap-1 px-3.5 py-2 border border-transparent group-hover/nav:border-stroke-2 group-hover/nav:dark:border-stroke-7 rounded-full group-hover/nav:bg-accent/20 group-hover/nav:dark:bg-transparent text-tagline-2 font-normal text-[#1a1a1c]/70 group-hover/nav:text-[#1a1a1c] dark:text-[#fcfcfc]/70 group-hover/nav:dark:text-[#fcfcfc] transition-all duration-200',
     border:
       "flex items-center gap-1 h-full relative text-tagline-1 font-normal text-secondary/60 group-hover/nav:text-secondary group-hover/nav:dark:text-accent dark:text-accent transition-all duration-200 overflow-hidden before:absolute before:bottom-0 before:left-0 before:h-px before:w-full before:origin-right before:scale-x-0 before:transition-transform before:duration-500 before:content-[''] hover:before:origin-left hover:before:scale-x-100 dark:before:bg-white before:bg-secondary",
     white:

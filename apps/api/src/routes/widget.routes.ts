@@ -293,7 +293,7 @@ router.get(
       upstream = await fetch(target.toString(), {
         redirect: "follow",
         headers: {
-          "user-agent": "Mozilla/5.0 (compatible; HelioWidget/1.0)",
+          "user-agent": "Mozilla/5.0 (compatible; ChataxisWidget/1.0)",
           accept: "text/html,application/xhtml+xml,*/*",
         },
         signal: AbortSignal.timeout(10_000),
@@ -312,21 +312,12 @@ router.get(
     res.setHeader("Content-Type", ctype);
     res.setHeader("Cache-Control", "public, max-age=300");
 
-    // Allow cross-origin font requests from the widget iframe (fonts are loaded
-    // from chataxis.pro but the proxied document origin is back.chataxis.pro).
-    res.setHeader("Access-Control-Allow-Origin", "*");
-
     if (/\btext\/html\b/i.test(ctype)) {
       const html = await upstream.text();
       const baseTag = `<base href="${target.toString().replace(/"/g, "&quot;")}">`;
-      // Injected before any other script so history mutations from Next.js/SPA
-      // routers don't throw SecurityError when the proxied page URL doesn't
-      // match our back.chataxis.pro proxy origin.
-      const historyPatch = `<script>(function(){function s(f){return function(){try{f.apply(this,arguments)}catch(e){}}}if(window.history){history.pushState=s(history.pushState);history.replaceState=s(history.replaceState)}})()</script>`;
-      const inject = historyPatch + baseTag;
       const out = /<head[^>]*>/i.test(html)
-        ? html.replace(/(<head[^>]*>)/i, `$1${inject}`)
-        : `${inject}${html}`;
+        ? html.replace(/(<head[^>]*>)/i, `$1${baseTag}`)
+        : `${baseTag}${html}`;
       res.send(out);
     } else {
       res.send(Buffer.from(await upstream.arrayBuffer()));

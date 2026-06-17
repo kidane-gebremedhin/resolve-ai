@@ -49,11 +49,12 @@ const IFRAME_ID = "csb-widget-iframe";
 const LAUNCHER_ID = "csb-widget-launcher";
 
 // Launcher icons. Chat bubble when closed; ✕ when open (the launcher stays put
-// and toggles, so it never disappears).
+// and toggles, so it never disappears). Heroicons (https://heroicons.com) paths
+// inlined so the embed bundle stays dependency-free.
 const CHAT_ICON_SVG =
-  '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155"/></svg>';
 const CLOSE_ICON_SVG =
-  '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg>';
 
 (async function bootstrap(): Promise<void> {
   const currentScript = (document.currentScript as HTMLScriptElement | null) ?? null;
@@ -324,8 +325,8 @@ function injectStyles(position: Position): void {
     #${LAUNCHER_ID} {
       position: fixed;
       ${positionCss(position)}
-      width: 60px;
-      height: 60px;
+      width: 56px;
+      height: 56px;
       border-radius: 9999px;
       border: 0;
       cursor: pointer;
@@ -334,13 +335,14 @@ function injectStyles(position: Position): void {
       justify-content: center;
       background: #111827;
       color: #ffffff;
-      box-shadow: 0 10px 28px rgba(0,0,0,0.24);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 2px 4px rgba(0,0,0,0.06);
       z-index: 2147483647;
-      transition: transform 140ms ease, box-shadow 140ms ease;
+      transition: transform 200ms cubic-bezier(0.16,1,0.3,1), box-shadow 200ms ease, filter 200ms ease;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
-    #${LAUNCHER_ID}:hover { transform: scale(1.06); box-shadow: 0 14px 34px rgba(0,0,0,0.28); }
-    #${LAUNCHER_ID}:active { transform: scale(0.96); }
+    #${LAUNCHER_ID}:hover { transform: translateY(-1px); box-shadow: 0 12px 28px rgba(0,0,0,0.22), 0 3px 6px rgba(0,0,0,0.08); filter: brightness(1.04); }
+    #${LAUNCHER_ID}:active { transform: translateY(0) scale(0.98); }
+    #${LAUNCHER_ID}:focus-visible { outline: 2px solid #ffffff; outline-offset: 3px; }
     @media (max-width: 480px) {
       /* Phones: the panel fills the whole screen (except the floating launcher,
          which sits on top via its higher z-index). !important beats the inline

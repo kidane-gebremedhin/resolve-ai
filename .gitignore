@@ -10,6 +10,9 @@ node_modules
 !.yarn/releases
 !.yarn/versions
 
+# vendored template (not part of the app)
+nextsaas/
+
 # build artifacts
 .next/
 out/

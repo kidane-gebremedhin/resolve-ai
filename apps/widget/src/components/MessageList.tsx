@@ -10,6 +10,7 @@
 
 import { useEffect, useRef } from "react";
 import type { WidgetMessage } from "../lib/api-client";
+import { DocumentIcon } from "./icons";
 
 function formatTime(iso: string): string {
   try {
@@ -20,15 +21,16 @@ function formatTime(iso: string): string {
   }
 }
 
-// Animated "AI is typing" bubble — three dots bouncing in sequence. Styled to
-// match an AI message bubble (left-aligned, neutral background).
+// Animated "AI is typing" bubble — three dots with a wave-style scale loop so
+// the indicator feels alive (a step up from `animate-bounce`). Styled to match
+// an AI message bubble (left-aligned, neutral background).
 function TypingIndicator() {
   return (
     <div className="group flex max-w-full flex-col" aria-live="polite" aria-label="Assistant is typing">
-      <div className="mr-auto flex items-center gap-1 rounded-2xl bg-neutral-100 px-3.5 py-3 dark:bg-neutral-800">
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-400 [animation-delay:-300ms] dark:bg-neutral-500" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-400 [animation-delay:-150ms] dark:bg-neutral-500" />
-        <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-neutral-400 dark:bg-neutral-500" />
+      <div className="csb-typing mr-auto flex items-center gap-1 rounded-2xl bg-neutral-100 px-3.5 py-3 dark:bg-neutral-800">
+        <span className="csb-typing-dot block h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
+        <span className="csb-typing-dot block h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
+        <span className="csb-typing-dot block h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
       </div>
     </div>
   );
@@ -114,10 +116,10 @@ export function MessageList({
         const isOperator = m.role === "operator";
 
         const bubbleClass = isCustomer
-          ? "ml-auto text-white"
+          ? "ml-auto rounded-br-md text-white shadow-[0_1px_2px_rgba(0,0,0,0.06)]"
           : isOperator
-            ? "mr-auto text-neutral-900 dark:text-neutral-100"
-            : "mr-auto bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
+            ? "mr-auto rounded-bl-md text-neutral-900 dark:text-neutral-100"
+            : "mr-auto rounded-bl-md bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100";
 
         // Customer uses primaryColor; operator gets a tinted background
         // derived from primaryColor at low opacity. AI keeps the neutral bg.
@@ -130,7 +132,7 @@ export function MessageList({
         return (
           <div
             key={m._id}
-            className="group flex max-w-full flex-col"
+            className="csb-bubble-in group flex max-w-full flex-col"
             title={formatTime(m.createdAt)}
           >
             {isOperator ? (
@@ -173,10 +175,7 @@ export function MessageList({
                           rel="noopener noreferrer"
                           className="flex items-center gap-2 rounded-lg border border-black/10 bg-white/60 px-2.5 py-1.5 text-[11px] text-current no-underline transition hover:bg-white/90 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"
                         >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 opacity-70">
-                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                          </svg>
+                          <DocumentIcon className="h-4 w-4 shrink-0 opacity-70" />
                           <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
                           {a.size ? <span className="shrink-0 opacity-60">{formatBytes(a.size)}</span> : null}
                         </a>

@@ -32,7 +32,7 @@ const MobileMenu = ({ items }: MobileMenuProps) => {
     <aside
       ref={sidebarRef}
       className={cn(
-        'dark:bg-background-7 scroll-bar fixed top-0 right-0 z-[999] h-screen w-full bg-white transition-transform duration-300 ease-in-out sm:w-1/2 xl:hidden',
+        'dark:bg-background-7 scroll-bar fixed top-0 right-0 z-999 h-screen w-full bg-white transition-transform duration-300 ease-in-out sm:w-1/2 xl:hidden',
         isOpen ? 'translate-x-0' : 'translate-x-full',
       )}
     >
@@ -41,18 +41,27 @@ const MobileMenu = ({ items }: MobileMenuProps) => {
           <Link href="/" onClick={closeMenu} className="inline-flex items-center gap-2.5">
             <span className="sr-only">Home</span>
             <img src="/images/shared/logo-green.svg" alt="" className="h-9 w-9" />
-            <span className="font-display text-[17px] font-semibold tracking-tight text-[#1a1a1c] dark:text-[#fcfcfc]">
+            <span className="font-display text-[17px] font-semibold tracking-tight text-secondary dark:text-accent">
               {NAVBAR_BRAND_NAME}
             </span>
           </Link>
           <button
             onClick={closeMenu}
-            className="bg-background-4 dark:bg-background-9 hover:bg-background-5 dark:hover:bg-background-8 relative flex size-10 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-full transition-all duration-200 hover:scale-105 group"
+            className="bg-background-4 dark:bg-background-9 hover:bg-background-5 dark:hover:bg-background-8 flex size-10 cursor-pointer items-center justify-center rounded-full transition-all duration-200 hover:scale-105 group"
             aria-label="Close mobile menu"
           >
             <span className="sr-only">Close Menu</span>
-            <span className="bg-secondary/60 dark:bg-stroke-1 absolute block h-0.5 w-4 rotate-45 transition-all duration-200 group-hover:bg-secondary dark:group-hover:bg-stroke-1" />
-            <span className="bg-secondary/60 dark:bg-stroke-1 absolute block h-0.5 w-4 -rotate-45 transition-all duration-200 group-hover:bg-secondary dark:group-hover:bg-stroke-1" />
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              strokeWidth={2}
+              stroke="currentColor"
+              aria-hidden
+              className="size-5 text-secondary/70 dark:text-stroke-1 group-hover:text-secondary dark:group-hover:text-white"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
 
@@ -71,7 +80,7 @@ const MobileMenu = ({ items }: MobileMenuProps) => {
             ))}
             <li className="pt-4 px-4">
               <Link
-                href="/register"
+                href="/signup"
                 onClick={closeMenu}
                 className="btn btn-primary btn-md w-full"
               >

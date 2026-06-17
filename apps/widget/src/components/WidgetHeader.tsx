@@ -23,7 +23,7 @@ export function WidgetHeader({
 
   return (
     <header
-      className="flex items-center gap-3 px-4 py-3 text-white"
+      className="relative flex items-center gap-3 px-4 py-3 text-white shadow-[0_1px_0_rgba(0,0,0,0.06)] dark:shadow-[0_1px_0_rgba(0,0,0,0.4)]"
       // Accent-coloured header with a subtle diagonal cross-hatch grid overlay
       // (per the reference). Base = the operator's selected accent; the grid is a
       // faint translucent-white pattern layered on top.

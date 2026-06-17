@@ -24,7 +24,7 @@ const navigationItems: NavigationItem[] = [
 ];
 
 const NavbarFour: FC<NavbarFourProps> = ({
-  className = 'border-stroke-2 dark:border-stroke-6 bg-accent dark:bg-background-9 border',
+  className = 'border-stroke-2 dark:border-stroke-6 bg-accent/80 dark:bg-background-9/90 border backdrop-blur-[25px] shadow-[0_8px_30px_rgb(0,0,0,0.06)]',
   btnClassName = 'btn-primary hover:btn-white-dark dark:hover:btn-white',
 }) => {
   const { isScrolled } = useNavbarScroll(100);
@@ -51,7 +51,7 @@ const NavbarFour: FC<NavbarFourProps> = ({
             </ul>
           </nav>
 
-          <NavCTAButton href="/login" btnClassName={btnClassName} label="Login" />
+          <NavCTAButton href="/signup" btnClassName={btnClassName} label="Get started" />
 
           <MobileMenuButton />
         </div>

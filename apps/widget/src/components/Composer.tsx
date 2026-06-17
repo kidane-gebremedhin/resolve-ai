@@ -8,6 +8,13 @@
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { WidgetAttachment } from "../lib/api-client";
+import {
+  DocumentIcon,
+  FaceSmileIcon,
+  PaperAirplaneIcon,
+  PaperClipIcon,
+  XMarkIcon,
+} from "./icons";
 
 // emoji-mart is heavy (~picker UI + data). Load it lazily so it stays out of
 // the widget's initial bundle and only downloads when the user opens it.
@@ -192,10 +199,7 @@ export function Composer({
                 <img src={p.previewUrl} alt={p.attachment.fileName ?? "image"} className="h-10 w-10 rounded object-cover" />
               ) : (
                 <span className="flex h-10 items-center gap-1.5 px-1.5 text-[11px] text-neutral-700 dark:text-neutral-200">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden className="opacity-70">
-                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                    <polyline points="14 2 14 8 20 8" />
-                  </svg>
+                  <DocumentIcon className="h-3.5 w-3.5 opacity-70" />
                   <span className="max-w-[120px] truncate">{p.attachment.fileName ?? "file"}</span>
                 </span>
               )}
@@ -205,10 +209,7 @@ export function Composer({
                 aria-label="Remove attachment"
                 className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-neutral-900/70 text-white hover:bg-neutral-900"
               >
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden>
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
+                <XMarkIcon className="h-2.5 w-2.5" strokeWidth={3} />
               </button>
             </div>
           ))}
@@ -237,9 +238,7 @@ export function Composer({
             aria-label="Attach a file"
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-neutral-500 hover:bg-neutral-100 disabled:opacity-50 dark:text-neutral-400 dark:hover:bg-neutral-800"
           >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-            </svg>
+            <PaperClipIcon className="h-[18px] w-[18px]" />
           </button>
         </>
       ) : null}
@@ -252,12 +251,7 @@ export function Composer({
         aria-expanded={showEmoji}
         className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800 ${showEmoji ? "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100" : "text-neutral-500 dark:text-neutral-400"}`}
       >
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <circle cx="12" cy="12" r="10" />
-          <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-          <line x1="9" y1="9" x2="9.01" y2="9" />
-          <line x1="15" y1="9" x2="15.01" y2="9" />
-        </svg>
+        <FaceSmileIcon className="h-[18px] w-[18px]" />
       </button>
 
       <textarea
@@ -271,7 +265,7 @@ export function Composer({
         rows={1}
         placeholder={placeholder}
         disabled={busy}
-        className="min-h-[36px] flex-1 resize-none overflow-y-auto rounded-2xl border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-400 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-neutral-500"
+        className="min-h-[36px] flex-1 resize-none overflow-y-auto rounded-2xl border border-neutral-200 bg-neutral-50 px-3.5 py-2 text-sm text-neutral-900 outline-none transition-colors placeholder:text-neutral-400 focus:border-neutral-300 focus:bg-white disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:placeholder:text-neutral-500 dark:focus:border-neutral-500 dark:focus:bg-neutral-800"
       />
 
       <button
@@ -282,10 +276,7 @@ export function Composer({
         className="group inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-white shadow-sm transition-all duration-150 hover:brightness-95 hover:shadow active:scale-95 disabled:opacity-45 disabled:shadow-none disabled:hover:brightness-100"
         style={{ background: primaryColor }}
       >
-        {/* Filled paper-plane — modern, well-filled send glyph. */}
-        <svg width="19" height="19" viewBox="0 0 24 24" fill="currentColor" aria-hidden className="translate-x-px">
-          <path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z" />
-        </svg>
+        <PaperAirplaneIcon className="h-[18px] w-[18px] -translate-x-px" />
       </button>
       </div>
     </footer>
