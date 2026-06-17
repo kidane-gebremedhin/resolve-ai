@@ -128,7 +128,7 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 | `NEXT_PUBLIC_SOCKET_URL` | ✅ | `http://localhost:4000` | Socket.io server URL |
 | `NEXT_PUBLIC_WIDGET_URL` | ✅ | `http://localhost:3001` | Widget app URL (for preview) |
 | `NEXT_PUBLIC_EMBED_URL` | ✅ | `http://localhost:3002/widget.js` | Embed script URL |
-| `NEXT_PUBLIC_APP_NAME` | — | `Helio` | App display name. Drives navbar wordmark, document `<title>` template, footer logo alt, marketing body copy via `apps/web/src/lib/app-config.ts`. |
+| `NEXT_PUBLIC_APP_NAME` | — | `Chataxis` | App display name. Drives navbar wordmark, document `<title>` template, footer logo alt, marketing body copy via `apps/web/src/lib/app-config.ts`. |
 | `NEXT_PUBLIC_APP_TAGLINE` | — | `AI customer support for modern websites` | Marketing tagline appended after `APP_NAME` in the home `<title>` and OG description. |
 | `NEXT_PUBLIC_APP_LEGAL_NAME` | — | `${APP_NAME} AI, Inc.` | Footer copyright entity. |
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | — | `hello@${APP_NAME.toLowerCase()}.com` | Contact section email (homepage-34 `Contact.tsx`). |

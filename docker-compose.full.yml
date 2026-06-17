@@ -83,7 +83,7 @@ services:
         NEXT_PUBLIC_WIDGET_URL: ${NEXT_PUBLIC_WIDGET_URL:?set NEXT_PUBLIC_WIDGET_URL in .env}
         NEXT_PUBLIC_EMBED_URL: ${NEXT_PUBLIC_EMBED_URL:?set NEXT_PUBLIC_EMBED_URL in .env}
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL in .env}
-        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Helio}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Chataxis}
         NEXT_PUBLIC_PADDLE_CLIENT_TOKEN: ${NEXT_PUBLIC_PADDLE_CLIENT_TOKEN-}
         NEXT_PUBLIC_PADDLE_ENV: ${NEXT_PUBLIC_PADDLE_ENV-}
     env_file: ['.env']
@@ -110,7 +110,7 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL in .env}
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:?set NEXT_PUBLIC_SOCKET_URL in .env}
         # Branding for the widget's "Powered by <name>" attribution.
-        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Helio}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Chataxis}
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
     env_file: ['.env']
     environment:
@@ -127,7 +127,7 @@ services:
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL in .env}
         NEXT_PUBLIC_SOCKET_URL: ${NEXT_PUBLIC_SOCKET_URL:?set NEXT_PUBLIC_SOCKET_URL in .env}
-        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Helio}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Chataxis}
     env_file: ['.env']
     environment:
       PORT: 3003

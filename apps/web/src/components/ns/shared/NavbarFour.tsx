@@ -24,7 +24,7 @@ const navigationItems: NavigationItem[] = [
 ];
 
 const NavbarFour: FC<NavbarFourProps> = ({
-  className = 'border-stroke-2 dark:border-stroke-6 bg-accent/80 dark:bg-background-9/90 border backdrop-blur-[25px] shadow-[0_8px_30px_rgb(0,0,0,0.06)]',
+  className = 'border-stroke-2 dark:border-stroke-6 bg-accent dark:bg-background-9 border',
   btnClassName = 'btn-primary hover:btn-white-dark dark:hover:btn-white',
 }) => {
   const { isScrolled } = useNavbarScroll(100);

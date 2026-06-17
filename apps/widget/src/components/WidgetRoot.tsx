@@ -667,7 +667,7 @@ export function WidgetRoot({
 
   return (
     <div
-      className={`${isDark ? "dark " : ""}fixed inset-0 z-[2147483000] flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl dark:bg-neutral-900 sm:inset-auto sm:h-[600px] sm:max-h-[80vh] sm:w-[400px] sm:rounded-2xl ${positionClass}`}
+      className={`${isDark ? "dark " : ""}fixed inset-0 z-[2147483647] flex h-[100dvh] w-full flex-col overflow-hidden bg-white shadow-2xl dark:bg-neutral-900 sm:inset-auto sm:h-[600px] sm:max-h-[80vh] sm:w-[400px] sm:rounded-2xl ${positionClass}`}
       style={{ ["--widget-primary" as string]: primaryColor }}
     >
       {/* Inner relative wrapper so absolute overlays (contact_prompt) anchor
