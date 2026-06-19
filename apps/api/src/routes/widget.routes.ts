@@ -314,10 +314,51 @@ router.get(
 
     if (/\btext\/html\b/i.test(ctype)) {
       const html = await upstream.text();
+
+      // 1. <base> keeps relative asset URLs pointing at the source origin.
       const baseTag = `<base href="${target.toString().replace(/"/g, "&quot;")}">`;
-      const out = /<head[^>]*>/i.test(html)
-        ? html.replace(/(<head[^>]*>)/i, `$1${baseTag}`)
-        : `${baseTag}${html}`;
+
+      // 2. Silence cross-origin history.replaceState/pushState errors thrown by
+      //    SPA routers (e.g. Next.js) that try to update the URL to their own
+      //    origin while running inside an iframe on a different origin. We patch
+      //    History.prototype (not just the instance) so EVERY call path is
+      //    covered — including `History.prototype.replaceState.call(history,…)`,
+      //    which an instance-only override would miss. This inline script is the
+      //    first child of <head>, so it runs before any framework bootstrap.
+      const historyPatch =
+        `<script>(function(){try{` +
+        `var P=window.History&&window.History.prototype;if(!P)return;` +
+        `var _r=P.replaceState,_p=P.pushState;` +
+        `P.replaceState=function(s,t,u){try{return _r.call(this,s,t,u)}catch(e){}};` +
+        `P.pushState=function(s,t,u){try{return _p.call(this,s,t,u)}catch(e){}};` +
+        `}catch(e){}})()</script>`;
+
+      // 3. Prevent cross-origin CORS errors for fonts. Because this proxy
+      //    serves content under a different origin (back.*) than the source
+      //    (chataxis.pro), the browser sends an Origin header when fetching
+      //    fonts and blocks them when the source doesn't return
+      //    Access-Control-Allow-Origin. We strip <link rel=preload as=font>
+      //    prefetch hints (they always fire eagerly and fail loudly) and inject
+      //    a high-specificity CSS rule that substitutes system fonts so no
+      //    @font-face download is ever triggered.
+      const fontOverride =
+        `<style>` +
+        `*:not(code):not(pre):not(kbd):not(samp){font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif!important}` +
+        `code,pre,kbd,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace!important}` +
+        `</style>`;
+
+      const stripped = html
+        // Remove X-Frame-Options / CSP <meta> equivalents (HTTP headers already gone).
+        .replace(/<meta[^>]+http-equiv=["']?x-frame-options["']?[^>]*>/gi, "")
+        .replace(/<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/gi, "")
+        // Remove font preload hints — they fire before our style override and
+        // cause loud CORS errors even though the font is never ultimately used.
+        .replace(/<link[^>]+as=["']?font["']?[^>]*\/?>/gi, "");
+
+      const inject = baseTag + historyPatch + fontOverride;
+      const out = /<head[^>]*>/i.test(stripped)
+        ? stripped.replace(/(<head[^>]*>)/i, `$1${inject}`)
+        : `${inject}${stripped}`;
       res.send(out);
     } else {
       res.send(Buffer.from(await upstream.arrayBuffer()));
