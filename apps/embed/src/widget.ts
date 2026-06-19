@@ -36,6 +36,7 @@ interface HostConfig {
   locale: string;
   position: Position;
   theme: string;
+  fullscreen: boolean;
 }
 
 interface IncomingMessage {
@@ -232,9 +233,21 @@ const CLOSE_ICON_SVG =
         "en",
       position,
       theme,
+      fullscreen: isFullscreenViewport(),
     };
     iframe.contentWindow.postMessage(config, widgetOrigin);
   }
+
+  // Re-send host config on resize so the widget knows when to show/hide its
+  // own close button (fullscreen on phones vs. floating card on desktop).
+  let lastFullscreen = isFullscreenViewport();
+  window.addEventListener("resize", () => {
+    const nowFullscreen = isFullscreenViewport();
+    if (nowFullscreen !== lastFullscreen) {
+      lastFullscreen = nowFullscreen;
+      sendHostConfig();
+    }
+  });
 
   // If the widget loads quickly we may have missed `csb:ready`; resend on iframe load.
   // We can't bind to iframe.load before it exists, so listen lazily.
