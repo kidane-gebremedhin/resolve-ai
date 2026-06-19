@@ -52,8 +52,7 @@ const getIcon = (type: string) => {
 
 const Contact = () => {
   return (
-    <RevealAnimation delay={0.1}>
-      <section className="py-[100px] bg-background-3 dark:bg-background-5">
+      <section className="py-[100px] bg-background-3 dark:bg-background-5 hero-reveal-up" style={{ animationDelay: '0.1s' }}>
         <div className="main-container">
           <div className="flex lg:gap-10 flex-col space-y-18 lg:space-y-0 lg:flex-row lg:justify-between">
             <div className="space-y-9 flex-1 flex lg:flex-col md:flex-row flex-col justify-between md:gap-10 lg:gap-0">
@@ -63,7 +62,7 @@ const Contact = () => {
                     <h2 className="max-w-[517px]">Support when you need It</h2>
                   </RevealAnimation>
                   <RevealAnimation delay={0.2}>
-                    <p className="max-w-[372px]">Our support team is here to guide you—whether you're picking a plan or filing a claim.</p>
+                    <p className="max-w-[372px]">Our support team is here to guide you, whether you're picking a plan or filing a claim.</p>
                   </RevealAnimation>
                 </div>
                 <RevealAnimation delay={0.3}>
@@ -116,7 +115,7 @@ const Contact = () => {
                     </label>
                     <label htmlFor="agree-terms" className="text-tagline-3 cursor-pointer text-foreground/70">
                       I agree with the{' '}
-                      <a href="#" className="text-primary-500 underline text-tagline-3">terms and conditions</a>
+                      <a href="/terms" className="text-primary-500 underline text-tagline-3">terms and conditions</a>
                     </label>
                   </fieldset>
                   <button type="submit" className="btn btn-secondary dark:btn-accent btn-md w-full before:content-none first-letter:uppercase hover:btn-green">
@@ -128,7 +127,6 @@ const Contact = () => {
           </div>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

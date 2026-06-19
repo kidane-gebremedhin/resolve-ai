@@ -21,6 +21,7 @@ services:
     environment:
       NODE_ENV: production
       MONGODB_URI: ${MONGODB_URI}
+      WEB_INTERNAL_URL: http://web:3000
     labels:
       - traefik.enable=true
       - traefik.http.routers.api.rule=Host(`api.example.com`)

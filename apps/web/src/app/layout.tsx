@@ -32,19 +32,19 @@ async function getTheming(): Promise<{ fontSans?: string; fontDisplay?: string }
 
 export const metadata: Metadata = {
   title: {
-    default: `${APP_NAME} — ${APP_TAGLINE}`,
-    template: `%s — ${APP_NAME}`,
+    default: `${APP_NAME} | ${APP_TAGLINE}`,
+    template: `%s | ${APP_NAME}`,
   },
-  description: `${APP_NAME} — AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
+  description: `${APP_NAME}: AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
   openGraph: {
-    title: `${APP_NAME} — ${APP_TAGLINE}`,
-    description: `${APP_NAME} — AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
+    title: `${APP_NAME} | ${APP_TAGLINE}`,
+    description: `${APP_NAME}: AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
     type: 'website',
   },
   twitter: {
     card: 'summary',
-    title: `${APP_NAME} — ${APP_TAGLINE}`,
-    description: `${APP_NAME} — AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
+    title: `${APP_NAME} | ${APP_TAGLINE}`,
+    description: `${APP_NAME}: AI agent, unified inbox and analytics that resolve 68% of tickets automatically.`,
   },
 };
 

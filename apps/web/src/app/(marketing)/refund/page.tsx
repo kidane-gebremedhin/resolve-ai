@@ -44,7 +44,7 @@ export default function Page() {
               <ul className="list-disc pl-6 space-y-1">
                 <li>Recurring subscriptions renew automatically until cancelled.</li>
                 <li>Cancellation requests require at least 48 hours advance notice before the end of a billing cycle.</li>
-                <li>The 14-day refund window applies only to the initial purchase — subsequent renewal periods are not eligible for refunds.</li>
+                <li>The 14-day refund window applies only to the initial purchase; subsequent renewal periods are not eligible for refunds.</li>
               </ul>
             </div>
 

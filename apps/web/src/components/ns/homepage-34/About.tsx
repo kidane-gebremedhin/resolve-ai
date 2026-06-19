@@ -9,8 +9,8 @@ const tabs = [
     id: 0,
     label: 'Our Mission',
     title: 'Helping teams deliver great support at scale',
-    description: `We built ${APP_NAME} to give every support team—from scrappy startups to global enterprises—access to AI-powered tools that actually work. Our mission is to make exceptional customer support the default, not the exception.`,
-    image: '/images/home-page-34/about-img-02.png',
+    description: `We built ${APP_NAME} to give every support team, from scrappy startups to global enterprises, access to AI-powered tools that actually work. Our mission is to make exceptional customer support the default, not the exception.`,
+    image: '/images/home-page-34/about-img-02.svg',
     stats: [
       { value: '2.18M+', label: 'Tickets resolved' },
       { value: '70+', label: 'Countries served' },
@@ -21,7 +21,7 @@ const tabs = [
     label: 'Our Story',
     title: 'Built by support leaders, for support leaders',
     description: `Founded in 2019, ${APP_NAME} started as an internal tool used by a small team obsessed with cutting response times. Today it's a full-featured AI platform serving hundreds of companies globally, with 24/7 uptime and enterprise-grade security.`,
-    image: '/images/home-page-34/about-img-03.png',
+    image: '/images/home-page-34/about-img-03.svg',
     stats: [
       { value: '2019', label: 'Year founded' },
       { value: '150+', label: 'Enterprise clients' },
@@ -31,8 +31,8 @@ const tabs = [
     id: 2,
     label: 'Our Values',
     title: 'Speed, empathy, and continuous improvement',
-    description: 'We believe great support software starts with great values. We\'re rigorous about accuracy, relentless about performance, and always listening to customers—because your trust is everything.',
-    image: '/images/home-page-34/about-img-02.png',
+    description: 'We believe great support software starts with great values. We\'re rigorous about accuracy, relentless about performance, and always listening to customers, because your trust is everything.',
+    image: '/images/home-page-34/about-img-02.svg',
     stats: [
       { value: '99.9%', label: 'Platform uptime' },
       { value: '94%', label: 'Avg CSAT score' },
@@ -45,8 +45,7 @@ const About = () => {
   const tab = tabs[activeTab];
 
   return (
-    <RevealAnimation delay={0.3}>
-      <section className="dark:bg-background-6 overflow-hidden bg-white pt-20 pb-14 sm:pb-36 lg:pt-[88px] xl:pt-[100px] xl:pb-[176px]">
+      <section className="dark:bg-background-6 overflow-hidden bg-white pt-20 pb-14 sm:pb-36 lg:pt-[88px] xl:pt-[100px] xl:pb-[176px] hero-reveal-up" style={{ animationDelay: '0.1s' }}>
         <div className="main-container">
           <div className="grid grid-cols-12 gap-8 items-center">
             <div className="col-span-12 lg:col-span-6 space-y-8">
@@ -89,7 +88,6 @@ const About = () => {
           </div>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

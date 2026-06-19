@@ -8,7 +8,7 @@ const stepCards = [
   {
     id: 1,
     title: 'AI Resolution Agent',
-    description: `Train once on your docs—${APP_NAME} resolves tickets automatically and knows when to escalate.`,
+    description: `Train once on your docs. ${APP_NAME} resolves tickets automatically and knows when to escalate.`,
     gradient: '/images/gradient/gradient-32.png',
     stepImg: '/images/home-page-34/step-1.png',
     stepDarkImg: null,
@@ -17,7 +17,7 @@ const stepCards = [
   {
     id: 2,
     title: 'Unified Inbox',
-    description: 'Every channel in one place—email, chat, WhatsApp, Slack—with smart priority queuing.',
+    description: 'Every channel in one place: email, chat, WhatsApp, Slack, with smart priority queuing.',
     gradient: '/images/gradient/gradient-33.png',
     stepImg: '/images/home-page-34/step-2.png',
     stepDarkImg: '/images/home-page-34/step-2-dark.png',
@@ -45,8 +45,7 @@ const stepCards = [
 
 const Steps = () => {
   return (
-    <RevealAnimation delay={0.1}>
-      <section className="relative py-16 md:py-20 lg:py-[100px] bg-background-2 dark:bg-background-5" aria-label="Features section">
+      <section className="relative py-16 md:py-20 lg:py-[100px] bg-background-2 dark:bg-background-5 hero-reveal-up" aria-label="Features section" style={{ animationDelay: '0.1s' }}>
         <div className="main-container">
           <div className="grid grid-cols-12 xl:gap-[60px] gap-y-14 items-start justify-items-center">
             <div className="col-span-12 lg:col-span-6 lg:sticky lg:top-28">
@@ -102,7 +101,6 @@ const Steps = () => {
           </div>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

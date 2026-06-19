@@ -13,11 +13,11 @@ const reasons = [
   },
   {
     title: 'Trusted by support teams worldwide:',
-    body: `${APP_NAME} is built to scale with companies of every size — making it an easy yes for a wide variety of clients.`,
+    body: `${APP_NAME} is built to scale with companies of every size, making it an easy yes for a wide variety of clients.`,
   },
   {
     title: 'Attractive recurring commission:',
-    body: 'Earn a share of every subscription you bring in — for as long as the customer stays on the platform.',
+    body: 'Earn a share of every subscription you bring in, for as long as the customer stays on the platform.',
   },
 ];
 
@@ -52,7 +52,7 @@ const AffiliatesPageContent = () => {
                 <h2 className="text-heading-4">Earn up to 30% recurring commission</h2>
                 <p>
                   Become part of the {APP_NAME} family. Help businesses resolve more tickets with AI
-                  customer support while you earn generous, recurring commissions — it&apos;s a win-win.
+                  customer support while you earn generous, recurring commissions. It&apos;s a win-win.
                 </p>
                 <div className="mt-7 md:mt-10">
                   <LinkButton

@@ -12,7 +12,7 @@ const CheckIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
-const featureLabels = ['AI messages / mo', 'Websites', 'Knowledge sources', 'Team members', 'Priority support'];
+const featureLabels = ['Websites', 'Knowledge sources', 'Team members', 'Priority support'];
 
 const pricingPlans = [
   {
@@ -21,12 +21,11 @@ const pricingPlans = [
     monthlyPrice: '$70',
     yearlyPrice: '$588',
     yearlyPerMonth: '$49',
-    description: 'For small teams getting started',
+    description: 'For small teams',
     buttonText: 'Get started',
     planType: 'basic' as const,
     tier: 'pro',
     features: [
-      { label: 'AI messages / mo', value: '2,000' },
       { label: 'Websites', value: '3' },
       { label: 'Knowledge sources', value: '25' },
       { label: 'Team members', value: '5' },
@@ -44,7 +43,6 @@ const pricingPlans = [
     planType: 'featured' as const,
     tier: 'business',
     features: [
-      { label: 'AI messages / mo', value: '20,000' },
       { label: 'Websites', value: '10' },
       { label: 'Knowledge sources', value: '200' },
       { label: 'Team members', value: '25' },
@@ -62,7 +60,6 @@ const pricingPlans = [
     planType: 'premium' as const,
     tier: 'enterprise',
     features: [
-      { label: 'AI messages / mo', value: 'Unlimited' },
       { label: 'Websites', value: 'Unlimited' },
       { label: 'Knowledge sources', value: 'Unlimited' },
       { label: 'Team members', value: 'Unlimited' },
@@ -83,8 +80,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
   const byTier = new Map(catalog.map((c) => [c.plan, c]));
 
   return (
-    <RevealAnimation delay={0.1}>
-      <section className="lg:py-[100px] py-16 md:py-20 bg-background-2 dark:bg-background-5">
+      <section className="lg:py-[100px] py-16 md:py-20 bg-background-2 dark:bg-background-5 hero-reveal-up" style={{ animationDelay: '0.1s' }}>
         <div className="max-w-[1440px] mx-auto">
           <div className="lg:py-[100px] py-[50px] lg:px-16 px-6 space-y-10 sm:space-y-[70px]">
             <div className="text-center space-y-5">
@@ -136,6 +132,7 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                     <div className="md:h-[215px] md:w-[290px]" />
                     <div className="space-y-2.5">
                       <h3 className="text-[1.25rem] leading-[140%]">What&apos;s included</h3>
+                      <div className="h-[1px]">&nbsp;</div>
                       <ul>
                         {featureLabels.map((feature, index) => (
                           <li key={feature} className={cn('text-[#1a1a1c]/60 dark:text-[#fcfcfc]/60 text-[1rem] leading-[150%] font-normal py-4 pr-6', index < featureLabels.length - 1 && 'border-b border-b-stroke-4 dark:border-b-stroke-8')}>
@@ -223,7 +220,6 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
           </div>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

@@ -93,11 +93,11 @@ const MobileMenu = ({ items }: MobileMenuProps) => {
             ))}
             <li className="pt-4 px-4">
               <Link
-                href="/signup"
+                href="/login"
                 onClick={closeMenu}
                 className="btn btn-primary btn-md w-full"
               >
-                <span>Get started</span>
+                <span>Login</span>
               </Link>
             </li>
           </ul>
