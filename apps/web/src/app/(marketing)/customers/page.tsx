@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   title: 'Customers',
   description: `How teams ship calmer support with ${APP_NAME}.`,
   openGraph: {
-    title: `Customers — ${APP_NAME}`,
+    title: `Customers | ${APP_NAME}`,
     description: `Real teams, real results with ${APP_NAME}.`,
   },
 };

@@ -18,7 +18,6 @@ interface NavbarFourProps {
 const navigationItems: NavigationItem[] = [
   { id: 'features', label: 'Features', href: '/features', hasDropdown: false },
   { id: 'pricing', label: 'Pricing', href: '/pricing', hasDropdown: false },
-  { id: 'blog', label: 'Blog', href: '/blog', hasDropdown: false },
   { id: 'affiliates', label: 'Affiliates', href: '/affiliates', hasDropdown: false },
   { id: 'contact', label: 'Contact Us', href: '/contact', hasDropdown: false },
 ];
@@ -51,7 +50,7 @@ const NavbarFour: FC<NavbarFourProps> = ({
             </ul>
           </nav>
 
-          <NavCTAButton href="/signup" btnClassName={btnClassName} label="Get started" />
+          <NavCTAButton href="/login" btnClassName={btnClassName} label="Login" />
 
           <MobileMenuButton />
         </div>

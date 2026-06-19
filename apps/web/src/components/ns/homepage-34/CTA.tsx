@@ -3,8 +3,7 @@ import LinkButton from '../ui/button/LinkButton';
 
 const CTA = () => {
   return (
-    <RevealAnimation delay={0.1}>
-      <section className="md:py-16 py-20 lg:py-[76px] bg-secondary dark:bg-background-6">
+      <section className="md:py-16 py-20 lg:py-[76px] bg-secondary dark:bg-background-6 hero-reveal-up" style={{ animationDelay: '0.1s' }}>
         <div className="main-container">
           <div className="text-center">
             <RevealAnimation delay={0.1}>
@@ -28,7 +27,6 @@ const CTA = () => {
           </div>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

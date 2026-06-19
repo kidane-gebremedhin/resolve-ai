@@ -6,8 +6,7 @@ import LinkButton from '../ui/button/LinkButton';
 
 const Blog = () => {
   return (
-    <RevealAnimation delay={0.1}>
-      <section className="lg:py-[100px] py-20 sm:py-24 bg-background-2 dark:bg-background-5">
+      <section className="lg:py-[100px] py-20 sm:py-24 bg-background-2 dark:bg-background-5 hero-reveal-up" style={{ animationDelay: '0.1s' }}>
         <div className="main-container">
           <div className="text-center space-y-5 md:mb-[70px] mb-10">
             <RevealAnimation delay={0.1}>
@@ -48,7 +47,6 @@ const Blog = () => {
           </RevealAnimation>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

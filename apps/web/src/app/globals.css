@@ -370,6 +370,14 @@
 /* NS Reveal animation initial state */
 [data-ns-animate] { opacity: 0; }
 
+/* Hero direct-render reveal — for elements that bypass RevealAnimation (avoids RSC hydration mismatch) */
+@keyframes ns-hero-reveal-up {
+  from { opacity: 0; filter: blur(16px); transform: translateY(60px); }
+  to   { opacity: 1; filter: blur(0px);  transform: translateY(0); }
+}
+.hero-reveal-up      { animation: ns-hero-reveal-up 0.6s ease-out both; }
+.hero-reveal-up-slow { animation: ns-hero-reveal-up 2s   ease-out both; }
+
 /* NS Footer links */
 .footer-link {
   font-size: 1rem;

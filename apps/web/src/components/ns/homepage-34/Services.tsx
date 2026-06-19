@@ -1,5 +1,4 @@
 import { cn } from '@/utils/ns-cn';
-import RevealAnimation from '../animation/RevealAnimation';
 import ClientMarquee from '../ClientMarquee';
 
 const serviceCards = [
@@ -12,8 +11,7 @@ const serviceCards = [
 
 const Services = () => {
   return (
-    <RevealAnimation delay={0.1}>
-      <section className="xl:py-[200px] md:py-[100px] py-24 bg-white dark:bg-black">
+      <section className="xl:py-[200px] md:py-[100px] py-24 bg-white dark:bg-black hero-reveal-up" style={{ animationDelay: '0.1s' }}>
         <div className="relative">
           <div className="from-white dark:from-black absolute top-0 left-0 z-40 h-full w-[15%] bg-gradient-to-r to-transparent md:w-[20%]" />
           <div className="from-white dark:from-black absolute top-0 right-0 z-40 h-full w-[15%] bg-gradient-to-l to-transparent md:w-[20%]" />
@@ -47,7 +45,6 @@ const Services = () => {
           </ClientMarquee>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

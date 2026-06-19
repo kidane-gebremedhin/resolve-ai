@@ -8,15 +8,11 @@ import { APP_NAME } from '@/lib/app-config';
 
 const heroAssetLight = {
   one: '/images/home-page-1/hero-asset-1.svg',
-  two: '/images/home-page-1/hero-asset-2.png',
-  three: '/images/home-page-1/hero-asset-3.png',
   four: '/images/home-page-1/hero-asset-4.svg',
 };
 
 const heroAssetDark = {
   one: '/images/home-page-1/hero-asset-dark-1.svg',
-  two: '/images/home-page-1/hero-asset-2-dark.png',
-  three: '/images/home-page-1/hero-asset-dark-3.png',
   four: '/images/home-page-1/hero-asset-dark-4.svg',
 };
 
@@ -36,12 +32,11 @@ const clientLogos = [
 
 const Hero = () => {
   return (
-    <RevealAnimation direction="up" offset={0}>
-      <section className="bg-background-3 dark:bg-background-5 relative overflow-hidden pt-[200px] pb-16 lg:pb-[100px] 2xl:pt-[250px]">
+    <section className="bg-background-3 dark:bg-background-5 relative overflow-hidden pt-[200px] pb-16 lg:pb-[100px] 2xl:pt-[250px]">
         <HeroDotBg />
         <VerticalLine />
 
-        <div className="main-container relative z-20 flex flex-col items-center text-center">
+        <div className="main-container relative z-20 flex flex-col items-center text-center" suppressHydrationWarning>
           <RevealAnimation delay={0.1} duration={2} useSpring={true}>
             <figure className="absolute -top-[12%] -left-[3%] w-[150px] rotate-[-7deg] min-[1535px]:!-left-[10%] min-[1735px]:!-left-[16%] sm:-top-[15%] sm:w-[200px] lg:-top-[5%] lg:-left-[1%] lg:w-[220px] xl:w-[350px] 2xl:w-fit">
               <Image
@@ -61,82 +56,40 @@ const Hero = () => {
             </figure>
           </RevealAnimation>
 
-          <RevealAnimation delay={0.2} duration={2} useSpring={true}>
-            <figure className="absolute hidden rotate-[11deg] min-[1535px]:!bottom-[18%] min-[1535px]:!-left-[5%] min-[1735px]:!bottom-[18%] min-[1735px]:!-left-[12.5%] md:bottom-[67%] md:left-[1%] md:block md:w-[140px] lg:bottom-[52%] lg:left-[2%] lg:w-[180px] xl:bottom-[30%] xl:w-[250px] 2xl:w-[275px]">
-              <Image
-                src={heroAssetLight.two}
-                alt="Hero asset 2"
-                width={275}
-                height={275}
-                className="inline-block h-full w-full object-cover shadow-none outline-0 dark:hidden"
-              />
-              <Image
-                src={heroAssetDark.two}
-                alt="Hero asset 2"
-                width={275}
-                height={275}
-                className="hidden h-full w-full object-cover shadow-none outline-0 dark:inline-block"
-              />
-            </figure>
-          </RevealAnimation>
 
-          <RevealAnimation delay={0.1} duration={2} useSpring={true}>
-            <figure className="absolute -top-[12%] right-[4%] w-[120px] rotate-[4deg] sm:-top-[14%] md:w-[140px] lg:-top-[1.4%] lg:right-[2%] lg:w-[170px] xl:top-[5%] xl:right-[3%] xl:w-[200px] 2xl:top-[1%] 2xl:-right-[8.0%] 2xl:w-[280px]">
-              <Image
-                src={heroAssetLight.three}
-                alt="Hero asset 3"
-                width={280}
-                height={280}
-                className="inline-block h-full w-full rounded-2xl object-cover dark:hidden"
-              />
-              <Image
-                src={heroAssetDark.three}
-                alt="Hero asset 3"
-                width={280}
-                height={280}
-                className="hidden h-full w-full rounded-2xl object-cover dark:inline-block"
-              />
-            </figure>
-          </RevealAnimation>
+          <figure
+            className="absolute right-[4%] hidden rotate-[-7deg] min-[1535px]:!-right-[12%] min-[1735px]:!-right-[18%] md:bottom-[67%] md:block md:w-[140px] lg:right-[1%] lg:bottom-[57%] lg:w-[180px] xl:-right-[1%] xl:bottom-[41%] xl:w-[250px] 2xl:bottom-[20%] 2xl:w-fit hero-reveal-up-slow"
+            style={{ animationDelay: '0.2s' }}
+          >
+            <Image
+              src={heroAssetLight.four}
+              alt="Hero asset 4"
+              width={275}
+              height={275}
+              className="inline-block h-full w-full rounded-2xl object-cover dark:hidden"
+            />
+            <Image
+              src={heroAssetDark.four}
+              alt="Hero asset 4"
+              width={275}
+              height={275}
+              className="hidden h-full w-full rounded-2xl object-cover dark:inline-block"
+            />
+          </figure>
 
-          <RevealAnimation delay={0.2} duration={2} useSpring={true}>
-            <figure className="absolute right-[4%] hidden rotate-[-7deg] min-[1535px]:!-right-[12%] min-[1735px]:!-right-[18%] md:bottom-[67%] md:block md:w-[140px] lg:right-[1%] lg:bottom-[57%] lg:w-[180px] xl:-right-[1%] xl:bottom-[41%] xl:w-[250px] 2xl:bottom-[20%] 2xl:w-fit">
-              <Image
-                src={heroAssetLight.four}
-                alt="Hero asset 4"
-                width={275}
-                height={275}
-                className="inline-block h-full w-full rounded-2xl object-cover dark:hidden"
-              />
-              <Image
-                src={heroAssetDark.four}
-                alt="Hero asset 4"
-                width={275}
-                height={275}
-                className="hidden h-full w-full rounded-2xl object-cover dark:inline-block"
-              />
-            </figure>
-          </RevealAnimation>
+          <span className="badge badge-green mb-5 hero-reveal-up" style={{ animationDelay: '0.05s' }}>AI customer support</span>
 
-          <RevealAnimation delay={0.05}>
-            <span className="badge badge-green mb-5">AI customer support</span>
-          </RevealAnimation>
+          <h1 className="mb-4 font-medium hero-reveal-up" style={{ animationDelay: '0.1s' }}>
+            Resolve tickets faster with <span className="text-primary-500">{APP_NAME}</span>
+            <br className="hidden md:block" />
+            on every page of your site.
+          </h1>
 
-          <RevealAnimation delay={0.1}>
-            <h1 className="mb-4 font-medium">
-              Resolve tickets faster with <span className="text-primary-500">{APP_NAME}</span>
-              <br className="hidden md:block" />
-              on every page of your site.
-            </h1>
-          </RevealAnimation>
-
-          <RevealAnimation delay={0.2}>
-            <p className="mb-7 max-w-[700px] md:mb-10 lg:mb-14">
-              {APP_NAME} embeds a grounded AI agent in your website, plugs into a unified inbox,
-              and resolves 68% of tickets automatically — so your team focuses on the ones that
-              really need a human.
-            </p>
-          </RevealAnimation>
+          <p className="mb-7 max-w-[700px] md:mb-10 lg:mb-14 hero-reveal-up" style={{ animationDelay: '0.2s' }}>
+            {APP_NAME} embeds a grounded AI agent in your website, plugs into a unified inbox,
+            and resolves 68% of tickets automatically, so your team focuses on the ones that
+            really need a human.
+          </p>
 
           <ul className="mx-auto mb-9 flex flex-col gap-4 max-md:w-full md:mx-0 md:mb-11 md:w-auto md:flex-row lg:mb-14">
             <RevealAnimation delay={0.3} direction="left" offset={50}>
@@ -223,7 +176,6 @@ const Hero = () => {
           </RevealAnimation>
         </div>
       </section>
-    </RevealAnimation>
   );
 };
 

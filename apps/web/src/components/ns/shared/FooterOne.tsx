@@ -56,7 +56,6 @@ const FooterOne = () => {
                   <ul className="space-y-3 sm:space-y-5">
                     <li><a href="/about" className="footer-link">About Us</a></li>
                     <li><a href="/careers" className="footer-link">Career</a></li>
-                    <li><a href="/blog" className="footer-link">Blog</a></li>
                     <li><a href="/contact" className="footer-link">Contact Us</a></li>
                   </ul>
                 </div>

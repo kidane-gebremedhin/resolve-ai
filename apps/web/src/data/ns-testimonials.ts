@@ -17,7 +17,7 @@ export const testimonials = [
     id: 3,
     name: 'Emma Williams',
     position: 'Lead Trader, Horizon Fund',
-    quote: 'The multi-device access means I can monitor and adjust my trades from anywhere. The mobile experience is just as powerful as desktop—truly impressive.',
+    quote: 'The multi-device access means I can monitor and adjust my trades from anywhere. The mobile experience is just as powerful as desktop, truly impressive.',
     avatar: '/images/avatar/avatar-3.png',
   },
   {
