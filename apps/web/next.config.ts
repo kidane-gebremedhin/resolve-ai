@@ -11,9 +11,10 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Allow the widget proxy (back.chataxis.pro) to load fonts that are
-        // self-hosted under _next/static/media/ from chataxis.pro.
-        source: "/_next/static/media/:path*",
+        // Allow the widget proxy (back.chataxis.pro) to load any Next.js static
+        // asset (fonts, chunks, CSS) from chataxis.pro without CORS errors.
+        // Covers /_next/static/media/ (fonts), /_next/static/css/, /_next/static/chunks/.
+        source: "/_next/static/:path*",
         headers: [{ key: "Access-Control-Allow-Origin", value: "*" }],
       },
     ];

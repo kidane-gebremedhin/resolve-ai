@@ -194,6 +194,12 @@ const CLOSE_ICON_SVG =
         sendHostConfig();
         break;
       }
+      case "csb:request-config": {
+        // The widget mounted its listener and is asking for host-config. Reply
+        // so it learns the fullscreen state without racing the load-time send.
+        sendHostConfig();
+        break;
+      }
       case "csb:resize": {
         if (!iframe) break;
         // On phones the panel is fullscreen (CSS above, with !important). Ignore
@@ -249,10 +255,12 @@ const CLOSE_ICON_SVG =
     }
   });
 
-  // If the widget loads quickly we may have missed `csb:ready`; resend on iframe load.
-  // We can't bind to iframe.load before it exists, so listen lazily.
+  // Send host-config (including fullscreen state) every time the iframe loads so
+  // the widget knows whether to show its mobile close button. We always send —
+  // not just when `initialised` is true — because the widget doesn't emit
+  // csb:ready, so `initialised` is never set and the button would stay hidden.
   const onIframeLoad = (): void => {
-    if (initialised) sendHostConfig();
+    sendHostConfig();
   };
   const mo = new MutationObserver(() => {
     const el = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null;

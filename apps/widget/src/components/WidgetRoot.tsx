@@ -116,9 +116,9 @@ export function WidgetRoot({
   const [country, setCountry] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const [busy, setBusy] = useState(false);
-  // True when the embed is running in fullscreen mode (phones ≤480px). The
-  // embed sends this via csb:host-config; defaults to false so the close
-  // button stays hidden until we know for sure we're on a phone.
+  // True when the widget is rendered fullscreen (phones). Self-detected below
+  // and optionally overridden by the embed's csb:host-config. Defaults false so
+  // the close button stays hidden until we confirm we're on a phone.
   const [isFullscreen, setIsFullscreen] = useState(false);
   // We track the conversation id locally so socket callbacks can match it
   // without going through machine state (state.context.conversationId is the
@@ -182,19 +182,60 @@ export function WidgetRoot({
     if (aiTypingTimerRef.current) clearTimeout(aiTypingTimerRef.current);
   }, []);
 
-  // Listen for the embed's host-config message to learn whether we're
-  // embedded in fullscreen (phone) mode. The close button is only needed on
-  // phones — on desktop the embed's launcher button handles closing.
+  // Decide whether to show the mobile close button. We SELF-DETECT fullscreen
+  // rather than relying solely on the embed's csb:host-config message, because
+  // that message is one-shot: on reload it can fire before this component's
+  // listener mounts and is then lost — leaving the button hidden on phones.
+  //
+  // Two contexts, two signals (both computed client-side post-mount, so they
+  // survive reloads and need no embed cooperation):
+  //   • Standalone (dev/direct load, window.top === self): the widget root goes
+  //     fullscreen below Tailwind's `sm` breakpoint (640px), so the button is
+  //     wanted whenever innerWidth < 640.
+  //   • Embedded in the production embed iframe: on desktop the iframe is a
+  //     fixed ~400px card (narrow but NOT mobile); on phones the embed expands
+  //     it to fill the device screen. So innerWidth ≈ device screen width means
+  //     fullscreen. Comparing to screen.width distinguishes the 400px card.
+  // The embed's explicit csb:host-config flag, when it arrives, overrides both.
   useEffect(() => {
-    const handler = (event: MessageEvent) => {
+    const detect = (): boolean => {
+      if (typeof window === "undefined") return false;
+      let embedded = false;
+      try {
+        embedded = window.self !== window.top;
+      } catch {
+        embedded = true; // cross-origin access throw ⇒ we're framed
+      }
+      if (!embedded) return window.innerWidth < 640;
+      const screenW = window.screen?.width ?? 0;
+      return screenW > 0 && window.innerWidth >= screenW * 0.9;
+    };
+    const update = () => setIsFullscreen(detect());
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+
+    // The embed's explicit fullscreen flag (once it reaches us) wins over the
+    // heuristic. Old embed bundles omit `fullscreen`; those messages are ignored.
+    const onMessage = (event: MessageEvent) => {
       const data = event.data as { type?: string; fullscreen?: boolean } | null;
       if (!data || data.type !== "csb:host-config") return;
-      if (typeof data.fullscreen === "boolean") {
-        setIsFullscreen(data.fullscreen);
-      }
+      if (typeof data.fullscreen === "boolean") setIsFullscreen(data.fullscreen);
     };
-    window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
+    window.addEventListener("message", onMessage);
+    // Nudge the embed to (re)send host-config now that our listener is ready,
+    // closing the race for embeds that support it.
+    try {
+      window.parent?.postMessage({ type: "csb:request-config" }, "*");
+    } catch {
+      /* not embedded (studio preview) — heuristic above already covers us */
+    }
+
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+      window.removeEventListener("message", onMessage);
+    };
   }, []);
 
   // Derive the primary color: prop > settings > default. The bootstrap effect
@@ -707,7 +748,7 @@ export function WidgetRoot({
               /* not embedded (e.g. studio preview) — no-op */
             }
           }}
-          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30 active:scale-95"
+          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-white ring-1 ring-white/25 backdrop-blur-sm transition hover:bg-black/60 active:scale-95"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
