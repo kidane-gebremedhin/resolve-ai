@@ -116,6 +116,10 @@ export function WidgetRoot({
   const [country, setCountry] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const [busy, setBusy] = useState(false);
+  // True when the embed is running in fullscreen mode (phones ≤480px). The
+  // embed sends this via csb:host-config; defaults to false so the close
+  // button stays hidden until we know for sure we're on a phone.
+  const [isFullscreen, setIsFullscreen] = useState(false);
   // We track the conversation id locally so socket callbacks can match it
   // without going through machine state (state.context.conversationId is the
   // authoritative source, but reading from a ref inside a stable callback is
@@ -176,6 +180,21 @@ export function WidgetRoot({
 
   useEffect(() => () => {
     if (aiTypingTimerRef.current) clearTimeout(aiTypingTimerRef.current);
+  }, []);
+
+  // Listen for the embed's host-config message to learn whether we're
+  // embedded in fullscreen (phone) mode. The close button is only needed on
+  // phones — on desktop the embed's launcher button handles closing.
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const data = event.data as { type?: string; fullscreen?: boolean } | null;
+      if (!data || data.type !== "csb:host-config") return;
+      if (typeof data.fullscreen === "boolean") {
+        setIsFullscreen(data.fullscreen);
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
   }, []);
 
   // Derive the primary color: prop > settings > default. The bootstrap effect
@@ -674,10 +693,10 @@ export function WidgetRoot({
           to the widget bounds rather than the viewport. The active screen fills
           the flex-1 area; the optional branding footer sits beneath it. */}
       <div className="flex h-full w-full flex-col">
-        {/* Mobile close button — top-right corner. On phones the widget is
-            fullscreen, so the embed's floating launcher is awkward to reach; this
-            posts `csb:close` to the host, which collapses back to the launcher.
-            Hidden on desktop (sm+), where the launcher toggles to a ✕. */}
+        {/* Mobile-only close button. The embed sends fullscreen:true via
+            csb:host-config when the phone viewport makes the widget full-screen.
+            On desktop the embed's launcher (✕ icon) handles closing instead. */}
+        {isFullscreen ? (
         <button
           type="button"
           aria-label="Close chat"
@@ -688,7 +707,7 @@ export function WidgetRoot({
               /* not embedded (e.g. studio preview) — no-op */
             }
           }}
-          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30 active:scale-95 sm:hidden"
+          className="absolute right-2 top-2 z-30 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white transition hover:bg-white/30 active:scale-95"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -705,6 +724,7 @@ export function WidgetRoot({
             <path d="M6 18 18 6M6 6l12 12" />
           </svg>
         </button>
+        ) : null}
         {showTabs ? (
           <WidgetTabBar
             tab={tab}
