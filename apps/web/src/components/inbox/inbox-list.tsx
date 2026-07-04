@@ -150,8 +150,8 @@ export function InboxList({ initialItems, initialFilter, websiteId = null, child
   const filtered = useMemo(() => items, [items]);
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] min-w-0">
-      <section className="flex w-[340px] shrink-0 flex-col border-r border-border bg-background">
+    <div className="flex h-[calc(100vh-3.5rem)] min-w-0 overflow-x-hidden">
+      <section className="hidden md:flex md:w-[340px] md:shrink-0 flex-col border-r border-border bg-background">
         <div className="border-b border-border px-4 py-3">
           <div className="flex items-center justify-between">
             <h2 className="font-display text-sm font-semibold">Inbox</h2>

@@ -118,6 +118,86 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 
 ---
 
+### Tier 1 — Widget polish additions (spec 29)
+
+_No new env vars. All features build on existing `OPENROUTER_API_KEY` and
+Socket.io infrastructure._
+
+---
+
+### Tier 2A — Integration framework (spec 30)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CREDENTIALS_ENCRYPTION_KEY` | ✅ | — | 32-byte base64 key for AES-256-GCM per-org credential storage. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `CALCOM_CLIENT_ID` | — | — | Cal.com OAuth 2.0 app client ID |
+| `CALCOM_CLIENT_SECRET` | — | — | Cal.com OAuth 2.0 app client secret |
+| `CALENDLY_CLIENT_ID` | — | — | Calendly OAuth 2.0 app client ID |
+| `CALENDLY_CLIENT_SECRET` | — | — | Calendly OAuth 2.0 app client secret |
+| `STRIPE_CLIENT_ID` | — | — | Stripe Connect platform client ID (requires Connect approval) |
+| `STRIPE_SECRET_KEY` | — | — | Stripe platform secret key |
+| `STRIPE_WEBHOOK_SECRET` | — | — | Stripe webhook endpoint signing secret |
+| `SHOPIFY_CLIENT_ID` | — | — | Shopify partner app client ID |
+| `SHOPIFY_CLIENT_SECRET` | — | — | Shopify partner app client secret |
+| `LINEAR_CLIENT_ID` | — | — | Linear OAuth 2.0 app client ID |
+| `LINEAR_CLIENT_SECRET` | — | — | Linear OAuth 2.0 app client secret |
+| `ATLASSIAN_CLIENT_ID` | — | — | Atlassian (Jira) OAuth 2.0 app client ID |
+| `ATLASSIAN_CLIENT_SECRET` | — | — | Atlassian (Jira) OAuth 2.0 app client secret |
+| `WEBHOOK_TIMEOUT_MS` | — | `10000` | Max ms for custom webhook connector calls |
+| `OTP_EXPIRY_SECONDS` | — | `600` | OTP validity window (seconds) for identity verification before high-stakes tool calls |
+
+---
+
+### Tier 2B — Agentic tools (spec 31)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AI_KB_GAP_SCORE_THRESHOLD` | — | `0.65` | Max Pinecone similarity score below which a question is logged as a knowledge gap |
+
+---
+
+### Tier 3 — Rich messages (spec 32)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AI_VISION_MODEL` | — | _(same as `AI_MODEL`)_ | Model for image-understanding requests. Must be vision-capable (e.g. `openai/gpt-4o`). |
+| `AI_VISION_MAX_IMAGE_BYTES` | — | `4194304` | Max image size in bytes before resizing for vision API (default: 4 MB) |
+
+---
+
+### Tier 4 — Proactive & lifecycle (spec 33)
+
+_No new env vars. Proactive triggers are stored in MongoDB and fetched by the embed at runtime._
+
+---
+
+### Tier 5 — Trust & compliance (spec 34)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PII_REDACTION_ENABLED` | — | `false` | Global default for PII redaction before LLM calls. Per-org toggle in `/app/settings` overrides. |
+| `WIDGET_RATE_LIMIT_REQUESTS` | — | `30` | Max messages per rate-limit window per contact session |
+| `WIDGET_RATE_LIMIT_WINDOW_MS` | — | `60000` | Rate-limit window duration in milliseconds |
+| `ALLOW_WIDGET_VOICE_INPUT` | — | `false` | Show the voice-input (mic) button in the widget composer. Read by the API and delivered to the widget via `/widget/init` + `/widget/settings` as `features.voiceInput`. `"true"` enables; anything else hides. |
+
+---
+
+### Tier 6 — Voice (spec 34)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `STT_PROVIDER` | — | `openai_whisper` | Speech-to-text provider: `openai_whisper` or `deepgram` |
+| `DEEPGRAM_API_KEY` | — | — | Deepgram API key (required if `STT_PROVIDER=deepgram`) |
+| `TTS_PROVIDER` | — | `openai` | Text-to-speech provider: `openai`, `elevenlabs`, or `cartesia` |
+| `ELEVENLABS_API_KEY` | — | — | ElevenLabs API key (required if `TTS_PROVIDER=elevenlabs`) |
+| `CARTESIA_API_KEY` | — | — | Cartesia API key (required if `TTS_PROVIDER=cartesia`) |
+| `TTS_VOICE_ID` | — | `nova` | Provider-specific voice ID (default `nova` for OpenAI TTS) |
+| `TWILIO_ACCOUNT_SID` | — | — | Twilio account SID (required for phone bridge) |
+| `TWILIO_AUTH_TOKEN` | — | — | Twilio auth token |
+| `TWILIO_PHONE_NUMBER` | — | — | Purchased Twilio phone number in E.164 format (e.g. `+15551234567`) |
+
+---
+
 ## `apps/web/.env.local` (Next.js Dashboard)
 
 ### Public (available in browser — `NEXT_PUBLIC_` prefix)
@@ -131,7 +211,6 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 | `NEXT_PUBLIC_APP_NAME` | — | `Chataxis` | App display name. Drives navbar wordmark, document `<title>` template, footer logo alt, marketing body copy via `apps/web/src/lib/app-config.ts`. |
 | `NEXT_PUBLIC_APP_TAGLINE` | — | `AI customer support for modern websites` | Marketing tagline appended after `APP_NAME` in the home `<title>` and OG description. |
 | `NEXT_PUBLIC_APP_LEGAL_NAME` | — | `${APP_NAME} AI, Inc.` | Footer copyright entity. |
-| `NEXT_PUBLIC_SUPPORT_EMAIL` | — | `hello@${APP_NAME.toLowerCase()}.com` | Contact section email (homepage-34 `Contact.tsx`). |
 | `NEXT_PUBLIC_SUPPORT_PHONE` | — | `(239) 555-0108` | Contact section phone. |
 | `NEXT_PUBLIC_SUPPORT_ADDRESS` | — | `4140 Parker Rd, Allentown, NM 31134` | Contact section address. |
 | `NEXT_PUBLIC_APP_URL` | ✅ | `http://localhost:3000` | Dashboard app URL |

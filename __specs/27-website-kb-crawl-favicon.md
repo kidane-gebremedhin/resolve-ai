@@ -36,6 +36,15 @@ Backlog item #11: "when a knowledge base is a website, scrape all links, update 
 - **Set as default agent avatar**: when the crawl completes and the agent has **no** avatar yet (`Agent.avatarUrl` empty **and** `WidgetSettings.avatarUrl` empty), set `Agent.avatarUrl = faviconUrl`. Decision: **default, not override** — never clobber an avatar the operator already chose. Surface it as the agent's avatar (widget already resolves `WidgetSettings.avatarUrl ?? Agent.avatarUrl`).
 - UI: show the favicon on the KB list/detail row; if it became the agent avatar, reflect in Widget Studio (which reads `avatarUrl`).
 
+### Per-page citation URLs (Changelog 2)
+Each chunk is tagged with the exact page it came from so widget citations link to
+the specific page (e.g. `/pricing`), not the site root. Firecrawl returns a page's
+URL under `metadata.sourceURL` (not a top-level `url`), so `getCrawlStatus`
+normalises each page to `{ url: metadata.sourceURL ?? metadata.url ?? metadata.ogUrl, markdown }`
+before `ingestCrawlResults` writes `url` into each chunk's Pinecone metadata; the
+search path prefers that per-chunk `url` over the source-level base URL.
+**Existing KBs must be re-crawled** to gain per-page URLs.
+
 ### Decisions summary
 - Crawl ingests **all** discovered links, capped only by `FIRECRAWL_MAX_PAGES`; **no** same-host enforcement.
 - Favicon extraction is best-effort, non-blocking, never regresses sync status.

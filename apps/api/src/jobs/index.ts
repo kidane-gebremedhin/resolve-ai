@@ -13,6 +13,7 @@
 import { logger } from "../config/logger.js";
 import { reconcileOnce } from "./embedding-reconcile.job.js";
 import { firecrawlPollOnce } from "./firecrawl-ingest.job.js";
+import { startOAuthTokenRefresh } from "./refreshOAuthTokens.js";
 
 const STARTUP_DELAY_MS = 5_000;
 const RECONCILE_INTERVAL_MS = 60_000;
@@ -48,5 +49,8 @@ export function startJobs(): void {
     };
     firecrawlTick();
     setInterval(firecrawlTick, FIRECRAWL_INTERVAL_MS).unref();
+
+    // OAuth token refresh loop.
+    startOAuthTokenRefresh();
   }, STARTUP_DELAY_MS).unref();
 }

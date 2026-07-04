@@ -23,6 +23,7 @@ import { enforceTeamMemberQuota } from "../middleware/plan-limit.middleware.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../utils/errors.js";
 import { getPineconeIndex } from "../config/pinecone.js";
 import { logger } from "../config/logger.js";
+import { logAuditFromReq } from "../services/audit.service.js";
 
 const router = Router();
 
@@ -57,10 +58,13 @@ router.patch("/current", requireAuth, requireOrg, async (req: Request, res: Resp
       const pageSize = Number.isFinite(raw) ? Math.min(200, Math.max(1, Math.trunc(raw))) : 10;
       settings.pagination = { ...(pag as Record<string, unknown>), pageSize };
     }
+    // dataRegion is a read-only stub — ignore any client-supplied value.
+    delete settings.dataRegion;
     allowed.settings = settings;
   }
   const org = await Organization.findByIdAndUpdate(req.orgId, allowed, { new: true });
   if (!org) throw new NotFoundError("Organization not found.");
+  await logAuditFromReq(req, "org.settings_updated", String(req.orgId), { changes: Object.keys(allowed) });
   res.json(org);
 });
 
@@ -202,6 +206,7 @@ router.post(
           invitedAt: new Date(),
         });
 
+    await logAuditFromReq(req, "member.invited", email, { role: req.body.role, isNewUser });
     res.status(201).json({
       membershipId: membership!._id,
       role: membership!.role,
@@ -241,6 +246,10 @@ router.patch(
       }
     }
     await membership.save();
+    await logAuditFromReq(req, "member.updated", String(req.params.membershipId), {
+      role: req.body.role,
+      status: req.body.status,
+    });
     res.json(membership);
   },
 );
@@ -268,6 +277,7 @@ router.delete(
     }
     membership.status = "revoked";
     await membership.save();
+    await logAuditFromReq(req, "member.revoked", String(req.params.membershipId), { role: membership.role });
     res.json({ ok: true });
   },
 );

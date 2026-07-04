@@ -1,16 +1,10 @@
-import Script from 'next/script';
+import { PublicWidget } from '@/components/public-widget';
 
 export default function MarketingLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       {children}
-      <Script
-        src="https://widget.chataxis.pro/widget.js"
-        strategy="afterInteractive"
-        data-agent="6a306233c1585e817bf991c4"
-        data-widget-url="https://e145pl3s7xcydow2n503ncvw.157.173.125.72.sslip.io"
-        data-api-url="https://back.chataxis.pro/api/v1"
-      />
+      <PublicWidget />
     </>
   );
 }

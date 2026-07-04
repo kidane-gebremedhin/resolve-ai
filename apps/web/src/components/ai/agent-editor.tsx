@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Plus, X, Save, Loader2 } from "lucide-react";
+import { Sparkles, Plus, X, Save, Loader2, Wrench } from "lucide-react";
 import { Button } from "@csb/ui";
 import { Input } from "@csb/ui";
 import { Textarea } from "@csb/ui";
@@ -10,6 +10,7 @@ import { Label } from "@csb/ui";
 import { Slider } from "@csb/ui";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { API_URL } from "@/lib/app-urls";
 
 export type AgentDoc = {
   _id: string;
@@ -21,6 +22,7 @@ export type AgentDoc = {
   model?: string;
   temperature?: number;
   confidenceThreshold?: number;
+  jiraProjectKey?: string;
 };
 
 /** Effective env defaults (GET /agents/defaults) used to prepopulate unset fields. */
@@ -29,6 +31,30 @@ export type AgentDefaults = {
   temperature: number;
   confidenceThreshold: number;
 };
+
+export type ConnectedTool = {
+  connectionId: string;
+  connectionName: string;
+  provider: string;
+  enabledAgentIds: string[];
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  calcom: "Cal.com",
+  calendly: "Calendly",
+  stripe: "Stripe",
+  shopify: "Shopify",
+  linear: "Linear",
+  jira: "Jira",
+  paddle: "Paddle",
+  webhook: "Custom Webhook",
+};
+
+async function getAccessToken(): Promise<string | undefined> {
+  const res = await fetch("/api/session-token", { cache: "no-store" });
+  const data = (await res.json()) as { accessToken?: string };
+  return data.accessToken;
+}
 
 const MODELS = [
   { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", note: "Fast, default" },
@@ -150,9 +176,11 @@ export function CreateAgentForm({ websiteId }: { websiteId: string }): React.Rea
 export function AgentEditor({
   agent,
   defaults,
+  connections = [],
 }: {
   agent: AgentDoc;
   defaults: AgentDefaults;
+  connections?: ConnectedTool[];
 }): React.ReactElement {
   const [description, setDescription] = useState(agent.description ?? "");
   const [systemPrompt, setSystemPrompt] = useState(agent.systemPromptOverride ?? "");
@@ -170,6 +198,64 @@ export function AgentEditor({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [jiraProjectKey, setJiraProjectKey] = useState(agent.jiraProjectKey ?? "");
+  // Real Jira projects for the pick-list (so operators can't save a key that
+  // doesn't exist). Falls back to a free-text field if the list can't load.
+  const [jiraProjects, setJiraProjects] = useState<{ key: string; name: string }[] | null>(null);
+  const hasJira = connections.some((c) => c.provider === "jira");
+  useEffect(() => {
+    if (!hasJira) return;
+    let cancelled = false;
+    clientApi
+      .get<{ projects: { key: string; name: string }[] }>("/integrations/jira/projects")
+      .then((r) => {
+        if (!cancelled) setJiraProjects(r.projects ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setJiraProjects([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hasJira]);
+
+  // Per-connection enabled state for this agent's tools
+  const [toolEnabled, setToolEnabled] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const c of connections) {
+      init[c.connectionId] = c.enabledAgentIds.includes(agent._id);
+    }
+    return init;
+  });
+  const [toolSaving, setToolSaving] = useState<Record<string, boolean>>({});
+
+  async function toggleTool(connectionId: string, enable: boolean) {
+    setToolEnabled((prev) => ({ ...prev, [connectionId]: enable }));
+    setToolSaving((prev) => ({ ...prev, [connectionId]: true }));
+    try {
+      const conn = connections.find((c) => c.connectionId === connectionId);
+      if (!conn) return;
+      const currentIds = new Set(conn.enabledAgentIds);
+      if (enable) currentIds.add(agent._id);
+      else currentIds.delete(agent._id);
+      const token = await getAccessToken();
+      await fetch(`${API_URL}/integrations/${connectionId}`, {
+        method: "PATCH",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ enabledAgentIds: [...currentIds] }),
+      });
+      // Update local copy so subsequent toggles see correct state
+      conn.enabledAgentIds = [...currentIds];
+    } catch {
+      // Revert on error
+      setToolEnabled((prev) => ({ ...prev, [connectionId]: !enable }));
+    } finally {
+      setToolSaving((prev) => ({ ...prev, [connectionId]: false }));
+    }
+  }
 
   async function save(): Promise<void> {
     setSaving(true);
@@ -183,6 +269,7 @@ export function AgentEditor({
         temperature,
         confidenceThreshold: confidence,
         suggestedQuestions: suggested,
+        jiraProjectKey: jiraProjectKey.trim(),
       });
       setSavedAt(Date.now());
     } catch (e) {
@@ -204,8 +291,11 @@ export function AgentEditor({
   }
 
   return (
-    <Tabs defaultValue="personality" className="mt-6">
+    <Tabs defaultValue="tools" className="mt-6">
       <TabsList>
+        <TabsTrigger value="tools" className="flex items-center gap-1.5">
+          <Wrench className="h-3.5 w-3.5" /> Tools
+        </TabsTrigger>
         <TabsTrigger value="personality">Personality</TabsTrigger>
         <TabsTrigger value="model">Model</TabsTrigger>
         <TabsTrigger value="suggestions">Suggested questions</TabsTrigger>
@@ -374,6 +464,101 @@ export function AgentEditor({
               placeholder="Hi there! I'm here to help — ask me anything about our product."
             />
           </div>
+        </div>
+      </TabsContent>
+
+      <TabsContent value="tools" className="mt-6">
+        <div className="rounded-xl border border-border bg-card p-5">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Enabled tools
+          </Label>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Toggle which connected integrations this agent can use. Connect services first in{" "}
+            <a href="/app/integrations" className="underline hover:text-foreground">Integrations</a>.
+          </p>
+          {connections.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              No integrations connected yet.{" "}
+              <a href="/app/integrations" className="underline hover:text-foreground">Connect one now.</a>
+            </p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {connections.map((conn) => (
+                <div
+                  key={conn.connectionId}
+                  className="flex items-center justify-between rounded-lg border border-border px-4 py-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      {PROVIDER_LABELS[conn.provider] ?? conn.provider}
+                    </p>
+                    {conn.connectionName && conn.connectionName !== conn.provider && (
+                      <p className="text-xs text-muted-foreground">{conn.connectionName}</p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={toolEnabled[conn.connectionId] ?? false}
+                    disabled={toolSaving[conn.connectionId]}
+                    onClick={() => toggleTool(conn.connectionId, !(toolEnabled[conn.connectionId] ?? false))}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none disabled:opacity-50 ${
+                      (toolEnabled[conn.connectionId] ?? false)
+                        ? "bg-foreground"
+                        : "bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg transition-transform ${
+                        (toolEnabled[conn.connectionId] ?? false) ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {hasJira && (
+            <div className="mt-4 rounded-lg border border-border px-4 py-3">
+              <Label htmlFor="jira-project" className="text-xs font-medium text-foreground">
+                Jira project
+              </Label>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Tickets this agent files go to this project. Leave as “Auto-pick” to
+                let the system choose.
+              </p>
+              {jiraProjects && jiraProjects.length > 0 ? (
+                <select
+                  id="jira-project"
+                  className="mt-2 block w-full max-w-[280px] rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  value={jiraProjectKey}
+                  onChange={(e) => setJiraProjectKey(e.target.value)}
+                >
+                  <option value="">Auto-pick a project</option>
+                  {jiraProjects.map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.name} ({p.key})
+                    </option>
+                  ))}
+                  {/* Surface a previously-saved key that no longer exists in Jira
+                      (e.g. a typo like "PTKA") so it's visible, not silently blank. */}
+                  {jiraProjectKey && !jiraProjects.some((p) => p.key === jiraProjectKey) && (
+                    <option value={jiraProjectKey}>{jiraProjectKey} — not found in Jira</option>
+                  )}
+                </select>
+              ) : (
+                // Fallback: projects couldn't be loaded — keep free-text entry.
+                <Input
+                  id="jira-project"
+                  className="mt-2 max-w-[200px] font-mono"
+                  placeholder="SUPPORT"
+                  value={jiraProjectKey}
+                  onChange={(e) => setJiraProjectKey(e.target.value.toUpperCase())}
+                />
+              )}
+              <p className="mt-1 text-[11px] text-muted-foreground">Saved with “Save changes” below.</p>
+            </div>
+          )}
         </div>
       </TabsContent>
 

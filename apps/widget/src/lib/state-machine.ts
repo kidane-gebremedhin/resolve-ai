@@ -40,6 +40,8 @@ export type WidgetContext = {
   conversationId: string | null;
   conversationStatus: ConversationStatus | null;
   messages: WidgetMessage[];
+  /** In-flight streaming messages: messageId → accumulated delta text. */
+  inFlight: Map<string, string>;
   /** Contact info captured so far. */
   contact: { email?: string; phone?: string; name?: string };
   /** True once we've shown (and dismissed/answered) the post-AI-reply contact prompt. */
@@ -60,6 +62,8 @@ export type WidgetState = {
 // ---- Events ----------------------------------------------------------------
 
 export type WidgetEvent =
+  | { type: "MESSAGE_DELTA"; messageId: string; delta: string }
+  | { type: "MESSAGE_DONE"; messageId: string; content: string; message?: WidgetMessage }
   | {
     type: "BOOTSTRAPPED";
     agent: WidgetAgent;
@@ -111,6 +115,7 @@ export function makeInitialState(args: WidgetInitArgs): WidgetState {
       conversationId: null,
       conversationStatus: null,
       messages: [],
+      inFlight: new Map(),
       contact: {},
       hasPromptedForContact: false,
       errorMessage: null,
@@ -126,12 +131,41 @@ function hasEmail(ctx: WidgetContext): boolean {
 }
 
 function appendMessage(messages: WidgetMessage[], next: WidgetMessage): WidgetMessage[] {
-  if (messages.some((m) => m._id === next._id)) return messages;
+  if (messages.some((m) => m._id === next._id)) {
+    // Replace the existing entry so that a full message (with sources/quickReplies)
+    // from AI_REPLIED can upgrade the temp message placed by MESSAGE_DONE.
+    return messages.map((m) => (m._id === next._id ? next : m));
+  }
   return [...messages, next];
 }
 
 export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
   switch (event.type) {
+    case "MESSAGE_DELTA": {
+      const next = new Map(state.context.inFlight);
+      next.set(event.messageId, (next.get(event.messageId) ?? "") + event.delta);
+      return { ...state, context: { ...state.context, inFlight: next } };
+    }
+
+    case "MESSAGE_DONE": {
+      const next = new Map(state.context.inFlight);
+      next.delete(event.messageId);
+      // Immediately promote the streamed content into messages so there is no
+      // gap (and no typing-indicator re-flash) between the streaming bubble
+      // disappearing and the static bubble appearing via AI_REPLIED.
+      // When message:new fires later, AI_REPLIED calls appendMessage which
+      // replaces this temp entry with the full message (sources, quickReplies).
+      const tempMessage: WidgetMessage = event.message ?? {
+        _id: event.messageId,
+        conversationId: state.context.conversationId ?? "",
+        role: "ai",
+        content: event.content,
+        createdAt: new Date().toISOString(),
+      };
+      const messages = appendMessage(state.context.messages, tempMessage);
+      return { ...state, context: { ...state.context, inFlight: next, messages } };
+    }
+
     case "BOOTSTRAPPED": {
       const shouldPromptOnResume =
         event.showContactPrompt === true &&
@@ -148,6 +182,7 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
           conversationId: event.conversationId ?? null,
           conversationStatus: event.conversationStatus ?? null,
           messages: event.messages ?? [],
+          inFlight: new Map(),
           contact: event.contact ?? state.context.contact,
           isInitializing: false,
           errorMessage: null,
@@ -188,6 +223,7 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
           conversationId: event.conversationId,
           conversationStatus: event.status,
           messages: [],
+          inFlight: new Map(),
         },
       };
     }
@@ -218,10 +254,19 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
         ...state.context,
         messages: appendMessage(state.context.messages, event.message),
       };
+      // A proactive trigger can deliver an AI message while the widget is still
+      // in pre_chat (no customer message sent yet). Transition to chat_active so
+      // the proactive message is visible instead of the welcome screen.
+      const nextStateStr =
+        state.state === "pre_chat" ? "chat_active" : state.state;
+      // Only prompt for contact after the visitor sent their first message —
+      // not on proactive/AI-initiated messages where no customer text exists yet.
+      const customerHasSent = ctx.messages.some((m) => m.role === "customer");
       const shouldPrompt =
+        customerHasSent &&
         !hasEmail(ctx) &&
         !state.context.hasPromptedForContact &&
-        state.state === "chat_active";
+        nextStateStr === "chat_active";
       if (shouldPrompt) {
         return {
           state: "chat_active",
@@ -229,7 +274,7 @@ export function reducer(state: WidgetState, event: WidgetEvent): WidgetState {
           context: { ...ctx, hasPromptedForContact: true },
         };
       }
-      return { ...state, context: ctx };
+      return { ...state, state: nextStateStr, context: ctx };
     }
 
     case "PROMPT_CONTACT":

@@ -63,6 +63,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       className={`${sans.variable} ${display.variable}${initialTheme === 'dark' ? ' dark' : ''}`}
       suppressHydrationWarning
     >
+      <head>
+        {/* Blocking script — runs synchronously before first paint so dark-mode
+            preference from localStorage/system never causes a white flash.       */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('theme');if(t!=='light'&&t!=='dark'){t=(window.matchMedia&&window.matchMedia('(prefers-color-scheme:dark)').matches)?'dark':'light';}var d=document.documentElement;d.classList.toggle('dark',t==='dark');d.style.colorScheme=t;}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body suppressHydrationWarning>
         <AttributionCapture />
         <ThemeProvider initialTheme={initialTheme}>{children}</ThemeProvider>

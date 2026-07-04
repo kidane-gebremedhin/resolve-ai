@@ -17,6 +17,10 @@ import apiKeys from "./api-keys.routes.js";
 import audit from "./audit.routes.js";
 import publicRoutes from "./public.routes.js";
 import referrals from "./referral.routes.js";
+import integrations from "./integrations.routes.js";
+import analytics from "./analytics.routes.js";
+import triggers from "./triggers.routes.js";
+import voice from "./voice.routes.js";
 
 const router = Router();
 
@@ -39,5 +43,9 @@ router.use("/billing", billing);
 router.use("/tts", tts);
 router.use("/api-keys", apiKeys);
 router.use("/audit", audit);
+router.use("/integrations", integrations);
+router.use("/analytics", analytics);
+router.use("/triggers", triggers);
+router.use("/voice", voice);
 
 export default router;

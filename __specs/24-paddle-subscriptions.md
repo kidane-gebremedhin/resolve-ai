@@ -2,6 +2,19 @@
 
 ## Overview
 
+> **Changelog 1 update — widget-driven subscription management.** The agentic
+> Paddle tools (`get_subscription` / `upgrade_subscription` /
+> `downgrade_subscription` / `cancel_subscription` in
+> `services/integrations/providers/paddle.ts`) now let the widget AI manage a
+> customer's plan conversationally. They take the customer **email** (optional —
+> the dispatcher injects the verified ContactSession email) and a human **plan
+> name** (`pro`/`business`/`enterprise`) rather than raw Paddle IDs; plan⇄price
+> mapping reads `PADDLE_PRICE_*` (monthly + `_YEARLY`). Because one Paddle
+> customer email can span multiple tenants, subscription resolution is
+> **org-scoped** via `custom_data.organizationId`. On any API error the AI
+> reports the failure honestly (no fabricated success). Requires the org's
+> Paddle **API key to have customer + subscription read/write permission**.
+
 Backlog item #4: "subscription system should be powered by Paddle.js; define any credentials needed in env vars." **The integration largely exists** ([`07-api-specification.md`](./07-api-specification.md), [`__skills/paddle-billing`](../__skills/paddle-billing/)). This spec closes the gaps that block real checkout and production-readiness. Plan: [`__plans/08-paddle-subscriptions.md`](../__plans/08-paddle-subscriptions.md).
 
 ## Current state

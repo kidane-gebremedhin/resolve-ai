@@ -8,9 +8,17 @@
 //   - operator  → left-aligned, primary-tinted background with a small badge
 //   - system    → centered, italic, low-contrast (joins/leaves, etc.)
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
+import rehypeSanitize from "rehype-sanitize";
 import type { WidgetMessage } from "../lib/api-client";
 import { DocumentIcon } from "./icons";
+import { Citations } from "./Citations";
+import { FeedbackControls } from "./FeedbackControls";
+import { QuickReplies } from "./QuickReplies";
+import { BlockRenderer } from "./blocks/BlockRenderer";
 
 function formatTime(iso: string): string {
   try {
@@ -24,9 +32,9 @@ function formatTime(iso: string): string {
 // Animated "AI is typing" bubble — three dots with a wave-style scale loop so
 // the indicator feels alive (a step up from `animate-bounce`). Styled to match
 // an AI message bubble (left-aligned, neutral background).
-function TypingIndicator() {
+function TypingIndicator({ "aria-label": ariaLabel = "Assistant is typing" }: { "aria-label"?: string }) {
   return (
-    <div className="group flex max-w-full flex-col" aria-live="polite" aria-label="Assistant is typing">
+    <div className="group flex max-w-full flex-col" aria-live="polite" aria-label={ariaLabel}>
       <div className="csb-typing mr-auto flex items-center gap-1 rounded-2xl bg-neutral-100 px-3.5 py-3 dark:bg-neutral-800">
         <span className="csb-typing-dot block h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
         <span className="csb-typing-dot block h-1.5 w-1.5 rounded-full bg-neutral-400 dark:bg-neutral-500" />
@@ -68,37 +76,62 @@ export function MessageList({
   messages,
   primaryColor,
   typing = false,
+  operatorTyping = false,
   sessionToken,
+  conversationId,
+  inFlight,
+  onSendMessage,
 }: {
   messages: WidgetMessage[];
   primaryColor: string;
   /** Show the animated "AI is typing" bubble at the bottom of the transcript. */
   typing?: boolean;
+  /** Show the "operator is typing" 3-dot bubble (a human agent, not AI). */
+  operatorTyping?: boolean;
   /** Used to authenticate attachment preview/download URLs (?t=). */
   sessionToken?: string;
+  /** Conversation id passed to FormBlockRenderer for inline form submissions. */
+  conversationId?: string;
+  /** Currently streaming message: messageId → accumulated text so far. */
+  inFlight?: Map<string, string>;
+  /** Send a text message as the customer (used by QuickReplies + CardBlock buttons). */
+  onSendMessage?: (text: string) => void;
 }) {
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const showTypingBubble = typing || operatorTyping;
 
-  // Scroll to bottom whenever the message count changes or the typing indicator
-  // toggles. We deliberately key on length (not the array identity) so
-  // re-renders that don't add a message don't yank the user's scroll position.
+  // Scroll to bottom by directly setting scrollTop — more reliable than
+  // scrollIntoView across browsers and iframe environments.
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = containerRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "instant" });
+  }, []);
+
+  const inFlightSize = inFlight?.size ?? 0;
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [messages.length, typing]);
+    scrollToBottom();
+  }, [messages.length, showTypingBubble, inFlightSize, scrollToBottom]);
 
-  if (messages.length === 0 && !typing) {
+  if (messages.length === 0 && !showTypingBubble) {
     return (
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <p className="text-center text-xs text-neutral-400 dark:text-neutral-500">
           No messages yet — say hello.
         </p>
-        <div ref={bottomRef} />
       </div>
     );
   }
 
+  // Only render quick-reply chips on the most recent AI message (and only if
+  // there are no in-flight streaming messages and no typing indicator).
+  const lastAiMessageId =
+    (inFlight?.size ?? 0) === 0 && !typing
+      ? [...messages].reverse().find((m) => m.role === "ai" && m.quickReplies?.length)?._id
+      : undefined;
+
   return (
-    <div className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
+    <div ref={containerRef} className="flex-1 space-y-2 overflow-y-auto px-3 py-3">
       {messages.map((m) => {
         if (m.role === "system") {
           return (
@@ -141,10 +174,26 @@ export function MessageList({
               </span>
             ) : null}
             <div
-              className={`max-w-[80%] whitespace-pre-wrap break-words rounded-2xl border border-transparent px-3 py-2 text-sm ${bubbleClass}`}
+              className={`max-w-[80%] break-words rounded-2xl border border-transparent px-3 py-2 text-sm ${bubbleClass}`}
               style={inlineStyle}
             >
-              {m.content}
+              {m.role === "ai" ? (
+                <div className="message-content">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeSanitize, rehypeHighlight]}
+                    components={{
+                      a: ({ href, children }) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+                      ),
+                    }}
+                  >
+                    {m.content}
+                  </ReactMarkdown>
+                </div>
+              ) : (
+                <span className="whitespace-pre-wrap">{m.content}</span>
+              )}
               {m.attachments && m.attachments.length > 0 ? (
                 <ul className="mt-1.5 space-y-2.5">
                   {m.attachments.map((a, i) => {
@@ -185,14 +234,47 @@ export function MessageList({
                 </ul>
               ) : null}
             </div>
+            {m.role === "ai" && m.blocks && m.blocks.length > 0 ? (
+              <BlockRenderer
+                blocks={m.blocks}
+                primaryColor={primaryColor}
+                onSendMessage={onSendMessage}
+                conversationId={conversationId}
+                sessionToken={sessionToken}
+              />
+            ) : null}
+            {m.role === "ai" && m.sources && m.sources.length > 0 ? (
+              <Citations sources={m.sources} />
+            ) : null}
+            {m.role === "ai" ? (
+              <FeedbackControls messageId={m._id} sessionToken={sessionToken} onExpand={scrollToBottom} />
+            ) : null}
+            {m.role === "ai" && m._id === lastAiMessageId && m.quickReplies?.length && onSendMessage ? (
+              <QuickReplies replies={m.quickReplies} onSend={onSendMessage} />
+            ) : null}
             <span className="mt-0.5 ml-1 text-[10px] text-neutral-400 opacity-0 transition group-hover:opacity-100 dark:text-neutral-500">
               {formatTime(m.createdAt)}
             </span>
           </div>
         );
       })}
-      {typing ? <TypingIndicator /> : null}
-      <div ref={bottomRef} />
+      {/* In-flight streaming bubbles */}
+      {inFlight && Array.from(inFlight.entries()).map(([msgId, text]) => (
+        <div key={`stream-${msgId}`} className="csb-bubble-in group flex max-w-full flex-col">
+          <div className="max-w-[80%] break-words rounded-2xl rounded-bl-md border border-transparent bg-neutral-100 px-3 py-2 text-sm text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100">
+            <div className="message-content csb-streaming-cursor">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                {text || " "}
+              </ReactMarkdown>
+            </div>
+          </div>
+        </div>
+      ))}
+      {showTypingBubble && (inFlight?.size ?? 0) === 0 ? (
+        <TypingIndicator
+          aria-label={operatorTyping ? "Operator is typing" : "Assistant is typing"}
+        />
+      ) : null}
     </div>
   );
 }

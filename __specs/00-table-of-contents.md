@@ -56,6 +56,19 @@ This specification describes the complete implementation plan for a production-r
 | 27 | [27-website-kb-crawl-favicon.md](./27-website-kb-crawl-favicon.md) | Website KB Full-Crawl & Favicon-as-Avatar | #11 |
 | 28 | [28-phone-country-code.md](./28-phone-country-code.md) | Visitor Phone Country-Code from IP | #8 |
 
+### Roadmap specs (Tiers 1–6)
+
+> These specs derive from `ROADMAP.md` (see repo root). Implement in tier order.
+
+| # | File | Section | Tier |
+|---|------|---------|------|
+| 29 | [29-tier1-widget-polish.md](./29-tier1-widget-polish.md) | Streaming responses · Markdown · Citations · Inline feedback · CSAT · Quick-reply chips | Tier 1 — Table stakes |
+| 30 | [30-integration-framework.md](./30-integration-framework.md) | Credential vault · OAuth flows · Tool registry · Guardrails · Audit log · Integrations tab | Tier 2A — Integration spine |
+| 31 | [31-agentic-tools.md](./31-agentic-tools.md) | Calendar booking · Subscription mgmt · Refunds · Order lookup · Ticket creation · Knowledge-gap logging | Tier 2B — Agentic tools |
+| 32 | [32-rich-messages.md](./32-rich-messages.md) | Message blocks system · Card/carousel · Inline forms · Image vision · Link previews | Tier 3 — Rich messages |
+| 33 | [33-proactive-lifecycle.md](./33-proactive-lifecycle.md) | Proactive triggers · Typing indicators · Read receipts · Launcher unread badge | Tier 4 — Proactive & lifecycle |
+| 34 | [34-trust-compliance-voice.md](./34-trust-compliance-voice.md) | PII redaction · Audit trail · Transcript export · Data residency · Rate limiting · Browser voice · Phone bridge | Tiers 5–6 — Trust, compliance & voice |
+
 ---
 
 ## Key Architectural Decisions (Quick Reference)

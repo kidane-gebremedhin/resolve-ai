@@ -72,6 +72,7 @@ export function AuditLog({
             No audit events yet.
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
@@ -104,6 +105,7 @@ export function AuditLog({
               ))}
             </tbody>
           </table>
+          </div>
         )}
 
         {cursor && (

@@ -18,6 +18,10 @@ const agentSchema = new Schema(
     // so all model-tuning lives in env vars (see apps/api/src/config/env.ts).
     temperature: { type: Number },
     confidenceThreshold: { type: Number, min: 0, max: 1 },
+    // Operator-configured Jira project key for tickets this agent files (e.g.
+    // "KAN", "SUPPORT"). When set, the dispatcher routes create_support_ticket to
+    // this project instead of the AI's guessed/default one.
+    jiraProjectKey: { type: String },
     isActive: { type: Boolean, required: true, default: true },
   },
   { timestamps: true },

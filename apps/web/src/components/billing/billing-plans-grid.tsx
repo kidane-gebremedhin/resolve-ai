@@ -84,7 +84,7 @@ export function BillingPlansGrid({
               data-plan-card
               className={`cursor-pointer rounded-xl border bg-card p-5 transition ${
                 isCurrent
-                  ? "border-primary border-2"
+                  ? "border-yellow-400 border-2 ring-1 ring-yellow-400/30"
                   : highlighted
                     ? "border-primary/50"
                     : "border-border"

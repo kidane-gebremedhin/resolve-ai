@@ -87,6 +87,11 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
     // into the org-scoped namespace. The current pinecone client stub doesn't
     // expose a `.namespace()` method — once the parallel rewrite lands we
     // should switch to `pinecone.namespace(orgId).upsert(...)`.
+    // Single-URL sources (a doc or a single page) tag every chunk with the
+    // source URL so citations link to it. Website crawls tag per-page URLs in
+    // firecrawl.service.ts. Pinecone metadata rejects null, so only include
+    // `url` when present.
+    const sourceUrl = (source.sourceUrl as string | undefined) ?? undefined;
     await pinecone.upsert(
       chunks.map((c, i) => ({
         id: ids[i]!,
@@ -96,6 +101,7 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
           agentId: source.agentId.toString(),
           sourceId: source._id.toString(),
           chunkIndex: c.index,
+          ...(sourceUrl ? { url: sourceUrl } : {}),
           // Store the FULL chunk text (not a 500-char preview) so retrieval
           // returns the whole chunk to the model and the on-disk vectors show
           // complete, overlapping content. Chunks are ~1200 chars; the 8000

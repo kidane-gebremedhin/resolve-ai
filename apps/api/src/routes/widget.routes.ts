@@ -11,6 +11,9 @@ import {
   Section,
   Conversation,
   Message,
+  MessageFeedback,
+  ConversationRating,
+  ProactiveTrigger,
 } from "../models/index.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireWidgetSession } from "../middleware/widget-auth.middleware.js";
@@ -19,6 +22,9 @@ import { enforceBudgetLimit } from "../middleware/budget-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { generateAiReply } from "../services/ai/agent.service.js";
+import { widgetRateLimit } from "../middleware/widgetRateLimit.js";
+import { dispatchToolCall } from "../services/integrations/dispatcher.js";
+import Ajv from "ajv";
 import {
   attachmentUpload,
   isAllowedAttachmentMime,
@@ -204,6 +210,11 @@ function widgetInitPayload(
     },
     settings: ctx.settings,
     sections: ctx.sections,
+    // Global feature flags for the widget UI. Voice input is OFF unless the
+    // operator explicitly enables it via ALLOW_WIDGET_VOICE_INPUT=true.
+    features: {
+      voiceInput: process.env.ALLOW_WIDGET_VOICE_INPUT === "true",
+    },
   };
 }
 
@@ -252,6 +263,36 @@ router.get(
       theme: settings?.theme ?? "auto",
       launcherIcon: null,
     });
+  }),
+);
+
+// ---------- GET /widget/triggers ----------
+// Public, unauthenticated, side-effect-free. Returns active proactive triggers
+// for an agent so the embed loader can evaluate conditions client-side.
+// Cache-Control: public, max-age=60 so the trigger list is reloaded at most
+// once per minute across all visitors (the embed caches the result per page load).
+const triggersQuerySchema = z.object({
+  agentId: z.string().regex(/^[0-9a-fA-F]{24}$/, "agentId must be a 24-char hex id"),
+});
+
+router.get(
+  "/triggers",
+  asyncHandler(async (req: Request, res: Response) => {
+    const parsed = triggersQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ValidationError("agentId must be a 24-char hex id.");
+    }
+    const agent = await Agent.findOne({ _id: parsed.data.agentId, isActive: true }).select("_id organizationId");
+    if (!agent) throw new NotFoundError("No active agent for this id.");
+    const triggers = await ProactiveTrigger.find({
+      agentId: agent._id,
+      organizationId: agent.organizationId,
+      isActive: true,
+    })
+      .select("_id conditions conditionLogic message delayMs cooldownMs maxFires")
+      .lean();
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.json({ triggers });
   }),
 );
 
@@ -417,6 +458,9 @@ router.get(
       },
       settings,
       sections,
+      features: {
+        voiceInput: process.env.ALLOW_WIDGET_VOICE_INPUT === "true",
+      },
     });
   }),
 );
@@ -543,13 +587,15 @@ router.get(
     const items = page.reverse(); // return chronological (oldest -> newest)
     const nextCursor = hasMore ? String(page[0]?._id ?? "") : null;
 
-    res.json({ items, nextCursor });
+    res.json({ items, nextCursor, conversationStatus: conversation.status });
   }),
 );
 
 // ---------- POST /widget/conversations/:id/messages ----------
 // Customer posts a message. We persist immediately, kick off the AI reply in the background,
 // and return the user's message. The assistant reply arrives via Socket.io.
+const ajv = new Ajv();
+
 const sendMessageSchema = z.object({
   content: z.string().min(1).max(8000),
   attachments: z
@@ -564,11 +610,15 @@ const sendMessageSchema = z.object({
       }),
     )
     .optional(),
+  // Inline form submission — bypasses the AI tool loop
+  formPayload: z.record(z.string(), z.unknown()).optional(),
+  toolKey: z.string().optional(),
 });
 
 router.post(
   "/conversations/:id/messages",
   requireWidgetSession,
+  widgetRateLimit,
   enforceMessageQuota,
   enforceBudgetLimit,
   validateBody(sendMessageSchema),
@@ -615,10 +665,88 @@ router.post(
       io.to(`conversation:${conversation._id.toString()}`).emit("message:new", payload);
     }
 
+    // Inline form submission: validate payload against tool schema, execute the
+    // tool ONCE here (with the customer's submitted values), and rewrite the
+    // message so the AI presents THIS result instead of re-calling the tool with
+    // guessed values (important for non-idempotent tools like booking/refund).
+    if (req.body.toolKey && req.body.formPayload && conversation.status === "active") {
+      const { ToolDefinition } = await import("../models/index.js");
+      const toolKey = req.body.toolKey as string;
+      const formPayload = req.body.formPayload as Record<string, unknown>;
+      const toolDef = await ToolDefinition.findOne({
+        organizationId: req.orgId,
+        key: toolKey,
+        isActive: true,
+      }).lean();
+      if (toolDef?.jsonSchema) {
+        const validate = ajv.compile(toolDef.jsonSchema as object);
+        if (!validate(formPayload)) {
+          throw new ValidationError("Form payload failed schema validation.");
+        }
+      }
+      const dispatch = await dispatchToolCall(toolKey, formPayload, {
+        organizationId: req.orgId!,
+        agentId: conversation.agentId?.toString() ?? "",
+        conversationId: conversation._id,
+        contactSessionId: req.contactSessionId!,
+      }).catch(() => null);
+      if (dispatch?.ok === false && dispatch.status === "error") {
+        throw new ValidationError("Form submission failed: " + dispatch.error);
+      }
+      // Human-readable summary for the operator inbox + an automated note carrying
+      // the result so the AI acknowledges it and does NOT run the tool again.
+      const human = Object.entries(formPayload)
+        .map(([k, v]) => `${k}: ${String(v)}`)
+        .join(", ");
+      const resultStr = dispatch?.ok
+        ? JSON.stringify(dispatch.result).slice(0, 600)
+        : dispatch?.blocked
+          ? `blocked (${dispatch.reason})`
+          : "no result";
+      const rewritten =
+        `Submitted the ${toolDef?.displayName ?? toolKey} form — ${human}.\n\n` +
+        `[Automated: the ${toolKey} tool already ran with these exact values. Result: ${resultStr}. ` +
+        `Present this result to the customer conversationally; do NOT call ${toolKey} again.]`;
+      message.content = rewritten;
+      await message.save();
+      conversation.lastMessagePreview = `Submitted ${toolDef?.displayName ?? toolKey}`;
+      await conversation.save();
+    }
+
+    // Abuse detection — check message content against configured patterns.
+    // On match: escalate the conversation, flag the session, skip AI reply.
+    const content = req.body.content as string;
+    const isAbusive = env.abusePatterns.length > 0 && env.abusePatterns.some((re) => re.test(content));
+    if (isAbusive && conversation.status === "active") {
+      await Promise.all([
+        Conversation.updateOne(
+          { _id: conversation._id },
+          { status: "escalated", escalatedAt: new Date() },
+        ),
+        ContactSession.updateOne(
+          { _id: req.contactSessionId },
+          { abuseSuspected: true },
+        ),
+      ]);
+      if (io) {
+        io.to(`org:${conversation.organizationId.toString()}`).emit("conversation:updated", {
+          conversationId: conversation._id.toString(),
+          status: "escalated",
+        });
+      }
+      res.status(201).json({ message });
+      return;
+    }
+
     // Fire-and-forget the AI reply (only while active). It emits its own
     // message:new for the AI message once persisted.
     if (conversation.status === "active" && io) {
-      generateAiReply(conversation, req.body.content as string, io).catch((err) => {
+      generateAiReply(
+        conversation,
+        content,
+        io,
+        req.body.attachments as import("../services/ai/agent.service.js").CurrentAttachment[] | undefined,
+      ).catch((err) => {
         logger.error("[widget] AI reply failed", {
           conversationId: conversation._id.toString(),
           err: (err as Error).message,
@@ -694,6 +822,259 @@ router.get(
   requireWidgetSession,
   asyncHandler(async (req: Request, res: Response) => {
     await streamStoredAttachment(res, String(req.orgId), req.params.hash);
+  }),
+);
+
+// ---------- POST /widget/messages/:messageId/feedback ----------
+// Upsert a thumbs-up/down rating for a single AI message.
+const feedbackSchema = z.object({
+  rating: z.enum(["up", "down"]),
+  reason: z.string().max(500).optional(),
+});
+
+router.post(
+  "/messages/:messageId/feedback",
+  requireWidgetSession,
+  validateBody(feedbackSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const messageId = String(req.params.messageId);
+    if (!/^[0-9a-fA-F]{24}$/.test(messageId)) throw new ValidationError("Invalid messageId.");
+
+    // Confirm the message belongs to a conversation owned by this session's org.
+    const message = await Message.findOne({ _id: messageId, organizationId: req.orgId }).lean();
+    if (!message) throw new NotFoundError("Message not found.");
+
+    const session = await ContactSession.findOne({ _id: req.contactSessionId }).lean();
+    if (!session) throw new NotFoundError("Session not found.");
+
+    await MessageFeedback.findOneAndUpdate(
+      { messageId },
+      {
+        messageId,
+        conversationId: message.conversationId,
+        organizationId: req.orgId,
+        rating: req.body.rating as "up" | "down",
+        reason: req.body.reason ?? undefined,
+        contactSessionId: req.contactSessionId,
+      },
+      { upsert: true, new: true },
+    );
+
+    res.status(201).json({ ok: true });
+  }),
+);
+
+// ---------- POST /widget/conversations/:id/csat ----------
+// Record a CSAT star rating after resolution.
+const csatSchema = z.object({
+  stars: z.number().int().min(1).max(5),
+  comment: z.string().max(1000).optional(),
+});
+
+router.post(
+  "/conversations/:id/csat",
+  requireWidgetSession,
+  validateBody(csatSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!conversation) throw new NotFoundError("Conversation not found.");
+    if (conversation.status !== "resolved") {
+      throw new ValidationError("CSAT can only be submitted for resolved conversations.");
+    }
+
+    await ConversationRating.findOneAndUpdate(
+      { conversationId: conversation._id },
+      {
+        conversationId: conversation._id,
+        organizationId: req.orgId,
+        stars: req.body.stars as number,
+        comment: req.body.comment ?? undefined,
+        resolvedBy: conversation.resolvedBy ?? "ai",
+      },
+      { upsert: true, new: true },
+    );
+
+    res.status(201).json({ ok: true });
+  }),
+);
+
+// ---------- POST /widget/conversations/:id/proactive ----------
+// Triggered by the embed when a ProactiveTrigger fires. Creates the AI's
+// opening message directly (no customer turn) and emits it via socket so the
+// widget renders it. Also enforces server-side cooldown via ContactSession
+// metadata so multi-device / multi-tab users don't get duplicate fires.
+router.post(
+  "/conversations/:id/proactive",
+  requireWidgetSession,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { triggerId, seedMessage } = req.body as { triggerId?: string; seedMessage?: string };
+    if (!triggerId || !seedMessage) {
+      res.status(400).json({ error: "triggerId and seedMessage are required." });
+      return;
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!conversation) throw new NotFoundError("Conversation not found.");
+
+    // Server-side cooldown: read ContactSession.metadata.proactiveFires[triggerId].
+    const session = await ContactSession.findById(req.contactSessionId).select("metadata");
+    const trigger = await ProactiveTrigger.findById(triggerId).select("cooldownMs").lean();
+    if (session && trigger) {
+      const fires: Record<string, number> = (session.metadata as Record<string, unknown>)?.proactiveFires as Record<string, number> ?? {};
+      const lastFire = fires[triggerId];
+      if (lastFire && Date.now() - lastFire < (trigger.cooldownMs ?? 86_400_000)) {
+        res.status(429).json({ error: "Cooldown active." });
+        return;
+      }
+      // Record the fire time.
+      await ContactSession.updateOne(
+        { _id: req.contactSessionId },
+        { $set: { [`metadata.proactiveFires.${triggerId}`]: Date.now() } },
+      );
+    }
+
+    // Save the proactive greeting as an AI message.
+    const { getIoServer } = await import("../socket/index.js");
+    const io = getIoServer();
+    const message = await Message.create({
+      conversationId: conversation._id,
+      organizationId: req.orgId,
+      role: "ai",
+      senderType: "ai",
+      content: seedMessage,
+    });
+    if (io) {
+      const msgPayload = {
+        conversationId: conversation._id.toString(),
+        messageId: message._id.toString(),
+        message: {
+          _id: message._id.toString(),
+          conversationId: conversation._id.toString(),
+          role: "ai",
+          content: seedMessage,
+          createdAt: (message.createdAt as Date).toISOString(),
+        },
+      };
+      io.to(`org:${req.orgId}`).emit("message:new", msgPayload);
+      // Also deliver to the widget's own socket room so the message appears inline.
+      io.to(`contact:${conversation.contactSessionId.toString()}`).emit("message:new", msgPayload);
+    }
+    res.status(201).json({ ok: true });
+  }),
+);
+
+// ---------- POST /widget/conversations/:id/voice-message ----------
+// Accept a WebM/Opus audio blob from the browser mic, transcribe it via
+// Whisper, save the transcription as a customer message, and fire-and-forget
+// the AI reply. Returns { messageId, transcription } immediately.
+router.post(
+  "/conversations/:id/voice-message",
+  requireWidgetSession,
+  attachmentUpload.single("audio"),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.file) {
+      res.status(400).json({ error: "No audio file — use field name 'audio' (multipart/form-data)." });
+      return;
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!conversation) throw new NotFoundError("Conversation not found.");
+    if (conversation.status !== "active") {
+      res.status(400).json({ error: "Conversation is not active." });
+      return;
+    }
+
+    // Transcribe the uploaded audio via STT service.
+    const { transcribe } = await import("../services/voice/stt.service.js");
+    let transcription: string;
+    try {
+      transcription = await transcribe(req.file.buffer, req.file.mimetype);
+    } catch (err) {
+      logger.error("[widget] STT transcription failed", { err: (err as Error).message });
+      res.status(502).json({ error: "Transcription failed — check STT_API_KEY configuration." });
+      return;
+    }
+
+    if (!transcription.trim()) {
+      res.status(400).json({ error: "No speech detected in audio." });
+      return;
+    }
+
+    // Persist transcription as a customer message.
+    const message = await Message.create({
+      conversationId: conversation._id,
+      organizationId: req.orgId,
+      role: "customer",
+      senderType: "contact",
+      senderId: conversation.contactSessionId,
+      content: transcription,
+    });
+
+    conversation.lastMessageAt = message.createdAt as Date;
+    conversation.lastMessagePreview = transcription.slice(0, 140);
+    conversation.messageCount = (conversation.messageCount ?? 0) + 1;
+    await conversation.save();
+
+    const io = (req.app.get("io") ?? null) as Parameters<typeof generateAiReply>[2] | null;
+    if (io) {
+      const payload = {
+        conversationId: conversation._id.toString(),
+        messageId: message._id.toString(),
+      };
+      io.to(`org:${conversation.organizationId.toString()}`).emit("message:new", payload);
+      io.to(`conversation:${conversation._id.toString()}`).emit("message:new", payload);
+    }
+
+    // Fire-and-forget the AI text reply (customers hear it via streaming SSE
+    // exactly as with typed messages).
+    if (io) {
+      generateAiReply(conversation, transcription, io).catch((err) => {
+        logger.error("[widget] voice-message AI reply failed", {
+          conversationId: conversation._id.toString(),
+          err: (err as Error).message,
+        });
+      });
+    }
+
+    res.status(201).json({ messageId: message._id.toString(), transcription });
+  }),
+);
+
+// ---------- POST /widget/verify-otp ----------
+// Customer submits the 6-digit OTP to complete identity verification before
+// a high-stakes integration tool call proceeds.
+router.post(
+  "/verify-otp",
+  requireWidgetSession,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { token: otpToken, otp } = req.body as { token?: string; otp?: string };
+    if (!otpToken || !otp) {
+      res.status(400).json({ error: "token and otp are required." });
+      return;
+    }
+
+    const sessionToken = (req as unknown as { sessionToken: string }).sessionToken;
+    const { verifyOtp } = await import("../services/integrations/otpService.js");
+    const ok = await verifyOtp(sessionToken, String(otpToken), String(otp));
+
+    if (!ok) {
+      res.status(400).json({ error: "Invalid or expired verification code." });
+      return;
+    }
+
+    res.json({ ok: true });
   }),
 );
 

@@ -1,7 +1,30 @@
 export type ToolCall = {
   id: string;
-  name: "search_kb" | "escalate_conversation" | "resolve_conversation";
+  name: "search_kb" | "escalate_conversation" | "resolve_conversation" | "request_form";
   arguments: Record<string, unknown>;
+};
+
+// Lets the AI render an inline form in the widget to collect the exact inputs an
+// integration/webhook tool needs (order #, reason, …) as ONE structured payload,
+// instead of asking for each field in chat. Only offered when the agent actually
+// has integration tools (appended in agent.service). On submit, the widget posts
+// the payload back and the tool runs automatically.
+export const REQUEST_FORM_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "request_form",
+    description:
+      "Show the customer an inline form to collect the inputs an integration/webhook tool needs (e.g. order number, reason). Prefer this over asking for several fields in chat. After the customer submits, the tool runs automatically. Pass the exact `toolKey` of the tool whose inputs you need.",
+    parameters: {
+      type: "object",
+      properties: {
+        toolKey: { type: "string", description: "The integration tool to collect inputs for, e.g. lookup_order." },
+        title: { type: "string", description: "Optional short heading shown above the form." },
+      },
+      required: ["toolKey"],
+      additionalProperties: false,
+    },
+  },
 };
 
 export const AGENT_TOOLS = [
@@ -100,6 +123,45 @@ export const FINAL_REPLY_SCHEMA = {
         },
       },
       required: ["reply", "confidence", "action"],
+      additionalProperties: false,
+    },
+  },
+};
+
+// Schema for the lightweight meta-pass that runs concurrently with streaming.
+// Separate from FINAL_REPLY_SCHEMA so we can include quickReplies without
+// polluting the main agent_reply schema (which would require the streaming
+// final call to output them too, breaking streaming prose).
+export const META_PASS_SCHEMA = {
+  type: "json_schema" as const,
+  json_schema: {
+    name: "meta_pass",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        confidence: {
+          type: "number",
+          description: "Confidence 0.0-1.0 that the reply correctly addresses the customer's need.",
+        },
+        action: {
+          type: "string",
+          enum: ["reply", "escalate", "resolve"],
+          description: "What should happen after this turn.",
+        },
+        quickReplies: {
+          anyOf: [
+            {
+              type: "array",
+              items: { type: "string" },
+              description: "Up to 3 short follow-up chip labels the customer would likely tap next.",
+            },
+            { type: "null" },
+          ],
+          description: "Predicted follow-up chips (up to 3), or null if not applicable.",
+        },
+      },
+      required: ["confidence", "action", "quickReplies"],
       additionalProperties: false,
     },
   },

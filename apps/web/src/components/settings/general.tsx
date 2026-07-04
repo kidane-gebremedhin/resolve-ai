@@ -1,13 +1,12 @@
 "use client";
 
-// General settings: rename the organization, and the "danger zone" that deletes
-// the whole account (all org data) after the operator types the org name to
-// confirm.
+// General settings: rename the organization, privacy/compliance toggles,
+// and the "danger zone" that deletes the whole account.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { Loader2 } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { Button, Input, Label } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
 import type { Org } from "./tab-inlines";
@@ -19,9 +18,31 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [piiRedaction, setPiiRedaction] = useState(org?.settings?.piiRedaction ?? true);
+  const [savingPii, setSavingPii] = useState(false);
+  const [savedPii, setSavedPii] = useState(false);
+
   const [confirm, setConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
   const canDelete = org?.name != null && confirm.trim() === org.name;
+
+  async function savePiiRedaction(enabled: boolean): Promise<void> {
+    setSavingPii(true);
+    setSavedPii(false);
+    setPiiRedaction(enabled);
+    try {
+      await clientApi.patch("/orgs/current", {
+        settings: { ...(org?.settings ?? {}), piiRedaction: enabled },
+      });
+      setSavedPii(true);
+      setTimeout(() => setSavedPii(false), 2000);
+      router.refresh();
+    } catch {
+      setPiiRedaction(!enabled); // revert on error
+    } finally {
+      setSavingPii(false);
+    }
+  }
 
   async function saveName(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -82,6 +103,63 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
           {saved && <span className="text-xs text-emerald-600">Saved</span>}
         </div>
       </form>
+
+      {/* Privacy & Compliance */}
+      <div className="rounded-xl border border-border bg-card p-6">
+        <h2 className="font-display text-base font-semibold">Privacy &amp; Compliance</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Control how sensitive customer data is handled before it reaches the AI model.
+        </p>
+
+        <div className="mt-5 space-y-5">
+          {/* PII Redaction toggle */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">PII redaction</div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Mask emails, phone numbers, credit cards, SSNs, and NI numbers before sending
+                customer messages to the AI model. Stored conversation history is not affected.
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {savedPii && (
+                <span className="inline-flex items-center gap-1 text-xs text-emerald-600">
+                  <Check className="h-3 w-3" /> Saved
+                </span>
+              )}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={piiRedaction}
+                disabled={savingPii}
+                onClick={() => void savePiiRedaction(!piiRedaction)}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 ${piiRedaction ? "bg-primary" : "bg-muted-foreground/30"}`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${piiRedaction ? "translate-x-4" : "translate-x-0.5"}`}
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* Data Region (read-only) */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium">Data region</div>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                The geographic region where your conversation data is stored.
+                Contact us to migrate to a different region.
+              </p>
+            </div>
+            <span
+              title="Contact us to change region"
+              className="inline-flex shrink-0 items-center rounded-full border border-border bg-muted/50 px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide text-muted-foreground"
+            >
+              {org?.settings?.dataRegion ?? "us"}
+            </span>
+          </div>
+        </div>
+      </div>
 
       <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-6">
         <h2 className="font-display text-base font-semibold text-destructive">Danger zone</h2>

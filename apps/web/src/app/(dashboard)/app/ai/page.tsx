@@ -1,9 +1,10 @@
 import { api, ApiError } from "@/lib/api";
-import { getActiveWebsiteId } from "@/lib/website-scope";
+import { getEffectiveWebsiteId } from "@/lib/website-scope";
 import {
   AgentEditor,
   type AgentDoc,
   type AgentDefaults,
+  type ConnectedTool,
 } from "@/components/ai/agent-editor";
 import { ConversationSettings } from "@/components/settings/conversation-settings";
 import { ListPreferences } from "@/components/settings/list-preferences";
@@ -28,7 +29,7 @@ function PickWebsite() {
 }
 
 async function Page() {
-  const websiteId = await getActiveWebsiteId();
+  const websiteId = await getEffectiveWebsiteId();
 
   // No website selected — show the same empty state as /app/widget (just the
   // heading + "pick a website" message, no form/subtitle), not an agent form.
@@ -44,6 +45,7 @@ async function Page() {
   let agent: AgentDoc | null = null;
   let defaults: AgentDefaults = FALLBACK_DEFAULTS;
   let loadError: string | null = null;
+  let connections: ConnectedTool[] = [];
   try {
     const [agents, d] = await Promise.all([
       api.get<AgentDoc[]>(`/agents?websiteId=${websiteId}`),
@@ -53,6 +55,28 @@ async function Page() {
     defaults = d;
   } catch (e) {
     loadError = e instanceof ApiError ? e.message : "Failed to load agent.";
+  }
+
+  // Load connected integrations so the agent editor can show a per-tool toggle.
+  if (agent) {
+    try {
+      const intData = await api.get<{
+        providers: {
+          provider: string;
+          connection: { _id: string; name: string; status: string; enabledAgentIds: string[] } | null;
+        }[];
+      }>("/integrations");
+      connections = intData.providers
+        .filter((p) => p.connection?.status === "active")
+        .map((p) => ({
+          connectionId: p.connection!._id,
+          connectionName: p.connection!.name ?? p.provider,
+          provider: p.provider,
+          enabledAgentIds: p.connection!.enabledAgentIds,
+        }));
+    } catch {
+      // best-effort
+    }
   }
 
   // Org-level conversation behavior (escalation toggle + ask-before-resolve).
@@ -79,7 +103,7 @@ async function Page() {
       )}
 
       {agent ? (
-        <AgentEditor agent={agent} defaults={defaults} />
+        <AgentEditor agent={agent} defaults={defaults} connections={connections} />
       ) : !loadError ? (
         // Every website auto-provisions its agent (ensureWebsiteAgent); if none
         // is found it's still being set up — no manual "create agent" form.

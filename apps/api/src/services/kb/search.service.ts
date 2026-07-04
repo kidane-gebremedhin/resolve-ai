@@ -10,6 +10,7 @@ export type KbHit = {
   chunkIndex: number;
   text: string;
   score: number;
+  url?: string;
 };
 
 export async function searchKb(args: {
@@ -76,15 +77,27 @@ export async function searchKb(args: {
   );
   const sources = await KnowledgeSource.find(
     { _id: { $in: sourceIds }, organizationId },
-    { title: 1 },
+    { title: 1, sourceUrl: 1 },
   ).lean();
   const titleById = new Map(sources.map((s) => [s._id.toString(), s.title]));
+  const urlById = new Map(
+    sources.map((s) => [s._id.toString(), (s.sourceUrl as string | undefined) ?? undefined]),
+  );
 
-  return hits.map((h) => ({
-    sourceId: String(h.metadata?.sourceId ?? ""),
-    sourceTitle: titleById.get(String(h.metadata?.sourceId ?? "")) ?? "Untitled",
-    chunkIndex: Number(h.metadata?.chunkIndex ?? 0),
-    text: String(h.metadata?.text ?? ""),
-    score: h.score,
-  }));
+  return hits.map((h) => {
+    const sid = String(h.metadata?.sourceId ?? "");
+    // Prefer the exact page URL stored per-chunk (website crawls tag each chunk
+    // with its originating page). Fall back to the source-level sourceUrl for
+    // older vectors or single-URL sources.
+    const chunkUrl =
+      typeof h.metadata?.url === "string" && h.metadata.url ? h.metadata.url : undefined;
+    return {
+      sourceId: sid,
+      sourceTitle: titleById.get(sid) ?? "Untitled",
+      chunkIndex: Number(h.metadata?.chunkIndex ?? 0),
+      text: String(h.metadata?.text ?? ""),
+      score: h.score,
+      url: chunkUrl ?? urlById.get(sid),
+    };
+  });
 }

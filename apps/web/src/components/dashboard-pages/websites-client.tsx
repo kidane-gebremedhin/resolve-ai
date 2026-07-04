@@ -32,7 +32,7 @@ import {
   DialogFooter,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
-import { WIDGET_URL } from "@/lib/app-urls";
+import { WIDGET_URL, EMBED_URL } from "@/lib/app-urls";
 
 export type Website = {
   _id: string;
@@ -289,9 +289,21 @@ function WebsiteFormDialog({
   const [localErr, setLocalErr] = useState<string | null>(null);
 
   async function submit() {
-    const d = domain.trim().toLowerCase();
+    // Accept what the user typed but strip a scheme/path/www they may have pasted,
+    // then require a clean hostname (labels + a 2+ char TLD, no spaces/specials).
+    const d = domain
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "")
+      .replace(/^www\./, "");
     if (!d) {
       setLocalErr("Domain is required.");
+      return;
+    }
+    const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+    if (!DOMAIN_RE.test(d)) {
+      setLocalErr("Enter a valid domain like example.com — no http://, paths, spaces, or special characters.");
       return;
     }
     const origins = originsText
@@ -334,6 +346,7 @@ function WebsiteFormDialog({
             <Input
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
+              placeholder="example.com"
             />
           </div>
           <div className="grid gap-1.5">
@@ -391,11 +404,12 @@ function EmbedDialog({
   (function(w,d){
     w.ChataxisConfig = {
       apiBase: "${apiBaseUrl}",
+      widgetUrl: "${WIDGET_URL}",
       websiteId: "${website._id}",${agent ? `\n      agentId: "${agent._id}",` : ""}
       domain: "${website.domain}"
     };
     var s = d.createElement("script");
-    s.src = "${WIDGET_URL}/widget.js";
+    s.src = "${EMBED_URL}";
     s.async = 1;
     d.head.appendChild(s);
   })(window, document);

@@ -144,7 +144,7 @@ async function Overview() {
         </div>
       )}
 
-      <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-3">
+      <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 md:grid-cols-3">
         {[
           {
             label: "Open conversations",
@@ -231,6 +231,7 @@ async function Overview() {
             real time.
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
               <tr>
@@ -259,6 +260,7 @@ async function Overview() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
