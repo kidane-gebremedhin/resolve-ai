@@ -31,7 +31,14 @@ const connectionSchema = new Schema(
     rateLimitPerSession: { type: Number, default: 10 },
     rateLimitPerConnection: { type: Number, default: 0 },
     rateLimitWindowMs: { type: Number, default: 60_000 },
+    // Active credentials the dispatcher uses (mirror of the current environment's
+    // slot below). Kept for backward compatibility.
     encryptedCredentials: { type: encryptedBlobSchema, required: true },
+    // Per-environment credentials so an operator can connect BOTH sandbox and
+    // production keys and switch the `sandbox` flag without re-entering them.
+    // Toggling copies the matching slot into encryptedCredentials.
+    sandboxCredentials: { type: encryptedBlobSchema },
+    productionCredentials: { type: encryptedBlobSchema },
     scopes: [{ type: String }],
     expiresAt: { type: Date },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },

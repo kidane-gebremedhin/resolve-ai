@@ -161,11 +161,20 @@ with `{ role: "proactive_trigger", triggerId }`. The API:
 
 #### Dashboard: trigger management
 
-New section in Widget Studio (`/app/widget` → new "Triggers" tab):
-- List of existing triggers (name, conditions summary, active toggle, last-fired).
-- "Add trigger" form: name, conditions (multi-select with params), logic (AND/OR),
-  message, delay, cooldown.
-- "Preview" button: simulates the trigger in the Widget Studio preview.
+Dedicated `/app/triggers` page:
+- List of existing triggers (name, combined-conditions summary, active toggle) with
+  **edit** (pencil → PATCH, opens the form pre-filled) and delete.
+- "Add trigger" form: name, a **repeatable condition builder** (add/remove multiple
+  conditions, each a type + its params) with a **Fire when ALL match / ANY matches**
+  (AND/OR) control shown once there is more than one condition, message, delay,
+  cooldown, max fires.
+- **No agent picker.** There is one agent per website, so the page resolves the
+  active website's agent automatically (from the `csb_website` scope cookie →
+  `GET /agents?websiteId=`) and scopes the trigger list to it; the resolved `agentId`
+  is sent on create (POST). PATCH omits `agentId` (immutable).
+- Combination example authored here: `url_match ~ /pricing` **AND** `time_on_page 30s`
+  **AND** `exit_intent` → the widget runtime already AND/OR-evaluates heterogeneous
+  conditions (see `checkAndFire`), so no runtime change was needed.
 
 #### Rate-limit / spam protection
 

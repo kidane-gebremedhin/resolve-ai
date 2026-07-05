@@ -7,6 +7,23 @@
 
 ## Implementation Notes
 
+### No tracking link after a ticket (Changelog 14)
+`JIRA_TOOL_INSTRUCTIONS` now tell the model to briefly confirm a ticket was logged
+but NOT to share a link, tracking URL, or ticket ID. Belt-and-suspenders: the
+model-facing `create_support_ticket` result is passed through `stripUrlKeys()`
+(agent.service.ts) which recursively removes `url`/`browseUrl` (covers Jira's
+top-level `url` and Linear's nested `issue.url`), so no link is even available to
+append. The full result (with URL) is still written to the audit log by the
+dispatcher, independently.
+
+### Attendee name for booking + named-attendee guardrail (Changelog 14)
+The `requireNamedAttendee` guardrail checks `args.name`, but `name`/`attendeeName`
+were in `FORM_SKIP_FIELDS` (assumed injected from `ContactSession.name`, which is
+almost always empty) — so the guardrail blocked every booking. They are no longer
+skipped: when `book_meeting` is called without a `name`, `missingCustomerFields`
+flags it and the inline auto-form collects the attendee's real name, which both
+satisfies the guardrail and is required by Cal.com regardless.
+
 ### Support-ticket description — concise summary (updated, Changelog 1)
 Superseded the earlier full-transcript injection. The dispatcher no longer dumps
 the whole conversation into the ticket: `JIRA_TOOL_INSTRUCTIONS` in

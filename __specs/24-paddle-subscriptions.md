@@ -46,6 +46,31 @@ Backlog item #4: "subscription system should be powered by Paddle.js; define any
 
 ## Design
 
+### Plan changes preserve the billing cycle (Changelog 15)
+`upgrade_subscription` / `downgrade_subscription` change the plan **tier only** and
+keep the customer's current billing interval — a yearly subscriber upgrading stays
+yearly, never silently flips to monthly. Implementation: `resolveSubscription` reads
+the live item's `price.billing_cycle.interval` (with an env yearly-id fallback) and
+its seat `quantity`; the change picks `priceForPlan(targetPlan, currentInterval)` and
+PATCHes with the preserved quantity. If the target plan has no price at that interval
+the tool fails clearly instead of switching cadence. The result includes
+`billingInterval` so the AI confirms it ("now on Business, billed yearly"). The local
+mirror (`syncSubscriptionFromPaddle`) already derives plan + interval from the price
+id, so the dashboard reflects the same.
+
+### Not-found must be explicit (anti-hallucination)
+`get_subscription` for an email that matches no customer/active subscription returns
+a **structured** `{ found: false, hasSubscription: false, message }` — it does NOT
+throw. A thrown error collapses into the same generic `{ error }` shape as a
+transient failure, and the model (told to hide errors and that the tools always
+work) would fill the gap by inventing a plan ("you're on Enterprise"). The Paddle
+prompt (`prompts.ts`) states that a not-found is a definite answer — say plainly no
+subscription is on file and **never guess a plan**. Mutations
+(`upgrade`/`downgrade`/`cancel`) still throw on no-subscription; only the read tool
+degrades gracefully. Note: the visitor's email is `ContactSession.email` (whatever
+they typed) — it is NOT ownership-verified, so a not-found is the correct, honest
+response for a non-account-holder email.
+
 ### Credentials (G1) — the explicit ask
 Define and document **all** Paddle credentials as env vars (add to [`.env.example`](../.env.example) + the live `apps/api/.env` / `apps/web/.env.local`, per repo env convention and [`13-env-variables.md`](./13-env-variables.md)):
 

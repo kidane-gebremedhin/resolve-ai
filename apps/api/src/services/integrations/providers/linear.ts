@@ -96,4 +96,23 @@ export class LinearAdapter implements ProviderAdapter {
 
     throw new Error(`Unknown tool key: ${toolKey}`);
   }
+
+  async verifyCredentials(credentials: RawCredentials): Promise<{ ok: boolean; error?: string }> {
+    const token = credentials.accessToken ?? credentials.apiKey ?? "";
+    if (!token) return { ok: false, error: "No Linear token provided." };
+    try {
+      const res = await fetch(GQL_ENDPOINT, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "{ viewer { id } }" }),
+      });
+      if (res.status === 401 || res.status === 403) return { ok: false, error: "Linear rejected this token (unauthorized)." };
+      if (!res.ok) return { ok: false, error: `Linear returned HTTP ${res.status}.` };
+      const data = (await res.json().catch(() => ({}))) as { data?: { viewer?: { id?: string } }; errors?: unknown };
+      if (data.errors || !data.data?.viewer?.id) return { ok: false, error: "Linear rejected this token." };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: `Couldn't reach Linear: ${(err as Error).message}` };
+    }
+  }
 }

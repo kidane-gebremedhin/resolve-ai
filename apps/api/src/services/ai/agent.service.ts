@@ -57,9 +57,30 @@ function humanizeKey(key: string): string {
 // slot cards) — never surfaced in a form.
 const FORM_SKIP_FIELDS = new Set([
   "email", "contactEmail", "organizationId", "timeZone", "_transcript",
-  "_enforceProjectKey", "projectKey", "eventTypeId", "startTime", "name",
-  "attendeeName", "currentPlan",
+  "_enforceProjectKey", "projectKey", "eventTypeId", "startTime", "currentPlan",
+  // NOTE: the attendee `name` for book_meeting is intentionally NOT skipped. It is
+  // required by the Cal.com schema and by the "require a real attendee name"
+  // guardrail, but the system does not reliably have it (ContactSession.name is
+  // usually empty). Skipping it meant the guardrail blocked every booking; letting
+  // the auto-form collect it when absent is what makes named-attendee booking work.
 ]);
+
+// Recursively drop any `url`/`browseUrl` keys from a tool result before the model
+// sees it — used for ticket creation so the AI can never surface an internal
+// "track it here" link to the customer. The full result is still logged for audit
+// (integration tools log inside the dispatcher, independently of this).
+function stripUrlKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripUrlKeys);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (k === "url" || k === "browseUrl") continue;
+      out[k] = stripUrlKeys(v);
+    }
+    return out;
+  }
+  return value;
+}
 function buildFormBlock(toolKey: string, schema: unknown, title?: unknown, onlyKeys?: string[]): MessageBlock | null {
   const s = schema as { properties?: Record<string, unknown>; required?: string[] } | undefined;
   if (!s || typeof s.properties !== "object" || s.properties === null) return null;
@@ -768,7 +789,11 @@ export async function generateAiReply(
               },
             );
             if (dispatch.ok) {
-              result = JSON.stringify(dispatch.result);
+              // Ticket creation returns a browsable ticket URL; never expose it to
+              // the model, or it offers the customer a "track it here" link.
+              const modelResult =
+                String(call.name) === "create_support_ticket" ? stripUrlKeys(dispatch.result) : dispatch.result;
+              result = JSON.stringify(modelResult);
               // Convert tool results to rich UI blocks when available
               const toolBlocks = resultToBlocks(call.name, dispatch.result);
               if (toolBlocks) accumulatedBlocks.push(...toolBlocks);

@@ -52,6 +52,9 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     status: conn.status,
     sandbox: conn.sandbox,
     authMode: conn.authMode,
+    // Which environments have credentials stored (for the environment switcher).
+    hasSandboxCreds: Boolean((conn as { sandboxCredentials?: unknown }).sandboxCredentials),
+    hasProductionCreds: Boolean((conn as { productionCredentials?: unknown }).productionCredentials),
     rateLimitPerSession: conn.rateLimitPerSession ?? 10,
     rateLimitPerConnection: conn.rateLimitPerConnection ?? 0,
     rateLimitWindowMs: conn.rateLimitWindowMs ?? 60_000,
@@ -185,14 +188,20 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
         inputSchema: schema,
       },
     };
+    // Webhooks are environment-aware too: the endpoint the operator just entered is
+    // stored in its environment's slot so they can add a separate sandbox/production
+    // endpoint later and switch between them (see the /webhook-endpoint route).
+    const whSandbox = Boolean(sandbox);
+    const whEncrypted = encrypt(JSON.stringify(credentials));
     const conn = await Connection.create({
       organizationId: orgId,
       provider,
       name: String(name ?? toolName ?? "Custom Webhook"),
       authMode: "webhook",
       status: "active",
-      sandbox: Boolean(sandbox),
-      encryptedCredentials: encrypt(JSON.stringify(credentials)),
+      sandbox: whSandbox,
+      encryptedCredentials: whEncrypted,
+      ...(whSandbox ? { sandboxCredentials: whEncrypted } : { productionCredentials: whEncrypted }),
       scopes: [],
       createdBy: req.auth!.userId,
     });
@@ -223,7 +232,45 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
       : { url: String(webhookUrl), authHeader: authHeader ? String(authHeader) : undefined, authValue: authValue ? String(authValue) : undefined };
 
     const authMode = apiKey ? "api_key" : "webhook";
+
+    // Verify the API key against the real provider before marking connected, so a
+    // wrong/expired key (or a sandbox key on production) surfaces here instead of
+    // silently failing on the first customer tool call.
+    if (apiKey && typeof (adapter as { verifyCredentials?: unknown }).verifyCredentials === "function") {
+      const check = await (adapter as {
+        verifyCredentials: (c: unknown, s: boolean) => Promise<{ ok: boolean; error?: string }>;
+      }).verifyCredentials(credentials, Boolean(sandbox));
+      if (!check.ok) {
+        res.status(400).json({ error: check.error ?? "Could not verify the API key with the provider." });
+        return;
+      }
+    }
+
     const encrypted = encrypt(JSON.stringify(credentials));
+    const isSandbox = Boolean(sandbox);
+
+    // Dual-environment: an operator can connect BOTH a sandbox and a production
+    // key for the same provider. Store the key in its environment slot; if a
+    // connection already exists (e.g. they're now adding the OTHER environment),
+    // update that one instead of creating a duplicate, and make the just-entered
+    // environment the active one.
+    if (apiKey) {
+      const existing = await Connection.findOne({ organizationId: orgId, provider });
+      if (existing) {
+        existing.encryptedCredentials = encrypted;
+        if (isSandbox) existing.sandboxCredentials = encrypted as never;
+        else existing.productionCredentials = encrypted as never;
+        existing.sandbox = isSandbox;
+        existing.status = "active";
+        if (name) existing.name = String(name);
+        await existing.save();
+        res.json({
+          connection: { _id: existing._id, name: existing.name, status: existing.status },
+          environment: isSandbox ? "sandbox" : "production",
+        });
+        return;
+      }
+    }
 
     const conn = await Connection.create({
       organizationId: orgId,
@@ -231,8 +278,9 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
       name: String(name ?? provider),
       authMode,
       status: "active",
-      sandbox: Boolean(sandbox),
+      sandbox: isSandbox,
       encryptedCredentials: encrypted,
+      ...(apiKey ? (isSandbox ? { sandboxCredentials: encrypted } : { productionCredentials: encrypted }) : {}),
       scopes: [],
       createdBy: req.auth!.userId,
     });
@@ -264,10 +312,12 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
   }
 
   // OAuth mode — return redirect URL.
-  // Encode orgId into the state so the callback can identify the org without
-  // requiring an Authorization header (OAuth redirects carry no JWT).
+  // Encode orgId AND the target environment into the state so the callback can
+  // identify the org (OAuth redirects carry no JWT) and store the tokens in the
+  // right per-environment slot. Format: "<orgId>.<nonce>.<s|p>".
   const nonce = randomBytes(16).toString("hex");
-  const state = `${String(orgId)}.${nonce}`;
+  const envCode = Boolean(sandbox) ? "s" : "p";
+  const state = `${String(orgId)}.${nonce}.${envCode}`;
   const authUrl = adapter.buildAuthUrl(String(orgId), state);
   if (!authUrl) {
     res.status(400).json({ error: `Provider ${provider} does not support OAuth. Use apiKey instead.` });
@@ -286,9 +336,12 @@ router.get("/:provider/callback", async (req: Request, res: Response) => {
   const code = String(req.query.code ?? "");
   const rawState = String(req.query.state ?? "");
 
-  // state format: "<orgId>.<nonce>"
-  const dotIdx = rawState.indexOf(".");
-  const orgId = dotIdx > 0 ? rawState.slice(0, dotIdx) : null;
+  // state format: "<orgId>.<nonce>.<s|p>" (env code optional for legacy states).
+  const parts = rawState.split(".");
+  const orgId = parts[0] || null;
+  // Which environment the operator chose to connect. Legacy states without the
+  // env code default to production (matching the old sandbox:false behaviour).
+  const isSandbox = parts[2] === "s";
 
   if (!orgId) {
     res.status(400).send("Invalid OAuth state — missing orgId.");
@@ -313,18 +366,24 @@ router.get("/:provider/callback", async (req: Request, res: Response) => {
   const encrypted = encrypt(JSON.stringify(rawCreds));
   const expiresAt = rawCreds.expiresAt ? new Date(rawCreds.expiresAt * 1000) : undefined;
 
+  // Store the tokens in the chosen environment's slot AND make that environment
+  // active (encryptedCredentials + sandbox flag). A second OAuth connect for the
+  // OTHER environment updates the same connection, filling its other slot — so an
+  // operator can hold both a sandbox and a production OAuth token and switch.
+  const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
   const conn = await Connection.findOneAndUpdate(
     { organizationId: orgId, provider, authMode: "oauth" },
     {
       $set: {
         encryptedCredentials: encrypted,
+        [slot]: encrypted,
+        sandbox: isSandbox,
         status: "active",
         ...(expiresAt ? { expiresAt } : {}),
       },
       $setOnInsert: {
         name: provider,
         authMode: "oauth",
-        sandbox: false,
         scopes: rawCreds.extra?.scopes ?? [],
       },
     },
@@ -436,7 +495,47 @@ router.patch("/:connectionId", requireAuth, requireOrg, async (req: Request, res
   const $set: Record<string, unknown> = {};
   if (name !== undefined) $set.name = String(name);
   if (description !== undefined) $set.description = String(description);
-  if (sandbox !== undefined) $set.sandbox = Boolean(sandbox);
+
+  // Environment switch: flipping the sandbox flag swaps in that environment's
+  // stored credentials. If the target environment was never connected, tell the
+  // UI so it can prompt the operator to add that key (needsSetup) — this avoids
+  // the classic failure of running a sandbox key against production (or vice-versa).
+  if (sandbox !== undefined) {
+    const wantSandbox = Boolean(sandbox);
+    const conn = await Connection.findOne({ _id: req.params.connectionId, organizationId: orgId }).lean();
+    if (!conn) {
+      res.status(404).json({ error: "Connection not found." });
+      return;
+    }
+    // api-key, OAuth AND webhook connections all store per-environment credentials
+    // now, so switching environments swaps the active slot for any of them.
+    if (conn.authMode === "api_key" || conn.authMode === "oauth" || conn.authMode === "webhook") {
+      const c = conn as { sandbox?: boolean; encryptedCredentials?: unknown; sandboxCredentials?: unknown; productionCredentials?: unknown };
+      // Backfill the CURRENT environment's slot from the active credentials — for
+      // connections created before per-environment storage existed, so switching
+      // back later works.
+      const curKey = c.sandbox ? "sandboxCredentials" : "productionCredentials";
+      if (!c[curKey] && c.encryptedCredentials) {
+        $set[curKey] = c.encryptedCredentials;
+        c[curKey] = c.encryptedCredentials;
+      }
+      const targetCreds = wantSandbox ? c.sandboxCredentials : c.productionCredentials;
+      if (!targetCreds) {
+        // That environment isn't connected yet. The UI uses authMode to decide how
+        // to prompt: an api-key form, or a fresh OAuth redirect for that env.
+        res.json({
+          ok: false,
+          needsSetup: true,
+          authMode: conn.authMode,
+          environment: wantSandbox ? "sandbox" : "production",
+          message: `No ${wantSandbox ? "sandbox" : "production"} credentials connected yet. Connect them to switch environments.`,
+        });
+        return;
+      }
+      $set.encryptedCredentials = targetCreds;
+    }
+    $set.sandbox = wantSandbox;
+  }
   // Per-connection rate limits (0 / blank = keep default). Clamp to sane bounds.
   const clampInt = (v: unknown, min: number, max: number) => {
     const n = Math.floor(Number(v));
@@ -488,6 +587,105 @@ router.delete("/:connectionId", requireAuth, requireOrg, async (req: Request, re
     return;
   }
   res.json({ ok: true });
+});
+
+// ---- POST /integrations/:connectionId/webhook-endpoint ---- add/replace the
+// endpoint for ONE environment of an existing custom webhook. The tool definition
+// (key/name/schema) is shared across environments; only the URL + method + auth
+// differ, so this stores just those into the target environment's slot. Adding the
+// missing environment is what lets a webhook be switched sandbox<->production.
+router.post("/:connectionId/webhook-endpoint", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const { sandbox, webhookUrl, webhookMethod, authHeader, authValue } = req.body as {
+    sandbox?: boolean; webhookUrl?: string; webhookMethod?: string; authHeader?: string; authValue?: string;
+  };
+  if (!webhookUrl) {
+    res.status(400).json({ error: "A webhook URL is required." });
+    return;
+  }
+  const conn = await Connection.findOne({
+    _id: req.params.connectionId,
+    organizationId: req.orgId,
+    provider: "webhook",
+  });
+  if (!conn) {
+    res.status(404).json({ error: "Webhook connection not found." });
+    return;
+  }
+  // Preserve the shared input schema from whichever slot already has one.
+  let inputSchema: unknown = { type: "object", properties: {}, required: [] };
+  try {
+    const active = JSON.parse(
+      decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
+    ) as { extra?: { inputSchema?: unknown } };
+    if (active.extra?.inputSchema) inputSchema = active.extra.inputSchema;
+  } catch {
+    /* fall back to the empty schema */
+  }
+  const credentials = {
+    extra: {
+      url: String(webhookUrl),
+      method: webhookMethod ? String(webhookMethod).toUpperCase() : "POST",
+      authHeader: authHeader ? String(authHeader) : undefined,
+      authValue: authValue ? String(authValue) : undefined,
+      inputSchema,
+    },
+  };
+  const isSandbox = Boolean(sandbox);
+  const encrypted = encrypt(JSON.stringify(credentials));
+  const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
+  // Store into the target slot AND make it the active environment (the operator is
+  // connecting this environment, so switch to it).
+  await Connection.updateOne(
+    { _id: conn._id },
+    { $set: { [slot]: encrypted, encryptedCredentials: encrypted, sandbox: isSandbox, status: "active" } },
+  );
+  res.json({ ok: true, environment: isSandbox ? "sandbox" : "production" });
+});
+
+// ---- POST /integrations/:connectionId/verify ---- re-check a live connection
+// Runs the provider's real-connection check against the CURRENTLY stored
+// credentials (refreshing an OAuth token first if it's near expiry). This gives
+// OAuth connections the same "is this actually working?" check that api-key
+// connections get at connect time, and lets an operator re-test any connection.
+router.post("/:connectionId/verify", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const conn = await Connection.findOne({ _id: req.params.connectionId, organizationId: req.orgId });
+  if (!conn) {
+    res.status(404).json({ error: "Connection not found." });
+    return;
+  }
+  const adapter = getAdapter(conn.provider) as {
+    verifyCredentials?: (c: unknown, s: boolean) => Promise<{ ok: boolean; error?: string }>;
+    refreshTokens?: (blob: unknown) => Promise<import("../services/integrations/providers/types.js").RawCredentials | null>;
+  } | undefined;
+  if (!adapter?.verifyCredentials) {
+    // Nothing to check (e.g. custom webhook) — treat as verified so the UI can
+    // still show a consistent "Connected" state.
+    res.json({ ok: true, unsupported: true });
+    return;
+  }
+  try {
+    let creds = JSON.parse(
+      decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
+    ) as { expiresAt?: number };
+    // Refresh an OAuth token within 5 min of expiry so verification (and the AI)
+    // don't fail on a token that's technically still stored but stale.
+    if (creds.expiresAt && creds.expiresAt - Date.now() / 1000 < 300 && adapter.refreshTokens) {
+      const refreshed = await adapter.refreshTokens(conn.encryptedCredentials);
+      if (refreshed) {
+        const encrypted = encrypt(JSON.stringify(refreshed));
+        await Connection.updateOne({ _id: conn._id }, { $set: { encryptedCredentials: encrypted } });
+        creds = refreshed as typeof creds;
+      }
+    }
+    const check = await adapter.verifyCredentials(creds, Boolean(conn.sandbox));
+    // Report the live result inline only — a manual test must NOT mutate persisted
+    // status (a transient network blip shouldn't demote a working connection and
+    // hide its config behind a "Connect" button).
+    res.json({ ok: check.ok, error: check.error, environment: conn.sandbox ? "sandbox" : "production" });
+  } catch (err) {
+    logger.warn("[integrations] verify failed", { err: (err as Error).message });
+    res.status(500).json({ ok: false, error: "Verification failed — please try again." });
+  }
 });
 
 export default router;

@@ -129,12 +129,21 @@ version encrypted it without re-decrypting everything first. When rotating:
   authMode:               { type: String, enum: ["oauth", "apikey", "webhook"], required: true },
   status:                 { type: String, enum: ["active", "disconnected", "error"], default: "active" },
   sandbox:                { type: Boolean, default: false },
-  encryptedCredentials:   {                                  // AES-256-GCM blob
+  encryptedCredentials:   {                                  // AES-256-GCM blob — ACTIVE creds the dispatcher uses (mirror of the current environment's slot)
     iv:         { type: String, required: true },
     ciphertext: { type: String, required: true },
     authTag:    { type: String, required: true },
     keyVersion: { type: Number, default: 1 },
   },
+  // Per-environment credential slots so one connection can hold BOTH sandbox and
+  // production api-keys and switch `sandbox` without re-entering (see 2A.10).
+  sandboxCredentials:     { /* same AES-256-GCM blob shape, optional */ },
+  productionCredentials:  { /* same AES-256-GCM blob shape, optional */ },
+  // Per-connection rate limits (see 2A.9)
+  rateLimitPerSession:    { type: Number, default: 10 },     // per-visitor cap
+  rateLimitPerConnection: { type: Number, default: 0 },      // all-visitors cap (0 = none)
+  rateLimitWindowMs:      { type: Number, default: 60000 },
+  description:            { type: String },                  // operator note, passed to AI as tool guidance
   scopes:                 [{ type: String }],               // OAuth scopes granted
   expiresAt:              { type: Date },                    // OAuth access token expiry
   createdBy:              { type: ObjectId, ref: "User" },
@@ -255,10 +264,28 @@ production and sandbox endpoints (e.g. Paddle `sandbox.paddle.com` vs `paddle.co
 GET    /integrations                      → list all available providers + org's connections
 GET    /integrations/:connectionId        → single connection (status, sandbox, tools)
 POST   /integrations/:provider/connect   → {sandbox?} → returns {authUrl} for OAuth or
-                                           accepts {apiKey} for API-key providers
+                                           accepts {apiKey} for API-key providers. api-key
+                                           path calls adapter.verifyCredentials() first and
+                                           400s on a bad key (2A.11); stores into the matching
+                                           env slot and reuses an existing connection when the
+                                           OTHER environment is added.
 GET    /integrations/:provider/callback  → OAuth code exchange (redirect from provider)
                                            stores encrypted credentials, seeds ToolDefinitions
-PATCH  /integrations/:connectionId       → update name, sandbox, ToolDefinition overrides
+PATCH  /integrations/:connectionId       → update name, sandbox, description, rate limits,
+                                           ToolDefinition overrides. Flipping `sandbox` swaps in
+                                           that env's stored creds, or returns {needsSetup:true}
+                                           when that environment isn't connected yet (2A.10).
+POST   /integrations/:connectionId/webhook-endpoint → add/replace ONE environment's
+                                           endpoint (URL+method+auth) for an existing
+                                           custom webhook; shared tool def/schema.
+POST   /integrations/:connectionId/verify → re-run the provider's real-connection
+                                           check against stored creds (refreshing an
+                                           OAuth token first if near expiry). Reports
+                                           {ok, error} inline only — never mutates the
+                                           persisted status (2A.11a). Powers the card's
+                                           "Test connection" button.
+PATCH  /integrations/tools/:toolDefId/guardrails → per-tool guardrail spec (2A.6)
+PATCH  /integrations/tools/:toolDefId/registry   → displayName, description, enabledAgentIds
 DELETE /integrations/:connectionId       → revoke + delete connection + ToolDefinitions
 ```
 
@@ -267,15 +294,20 @@ Auth for all routes: `authenticateOperator` middleware (JWT).
 ### OAuth callback flow
 
 ```
-1. Operator clicks "Connect Cal.com" in dashboard
-2. POST /integrations/calcom/connect → server builds authUrl with state=<org>:<nonce>
+1. Operator picks an environment (Sandbox/Production) and clicks "Connect … via OAuth"
+2. POST /integrations/calcom/connect {sandbox} → server builds authUrl with
+   state=<orgId>.<nonce>.<s|p>  (the env code carries the chosen environment)
 3. Operator is redirected to Cal.com authorize screen
 4. Cal.com redirects to GET /integrations/calcom/callback?code=...&state=...
-5. Server validates state, exchanges code for tokens, encrypts credentials
-6. Server creates/upserts Connection document
+5. Server parses orgId + env from state, exchanges code for tokens, encrypts them
+6. Server upserts the Connection, storing the tokens in that env's slot
+   (sandboxCredentials/productionCredentials) AND encryptedCredentials, sandbox=env
 7. Server calls adapter.getTools() → upserts ToolDefinition documents
 8. Redirect operator to /app/integrations (dashboard)
 ```
+
+Connecting the *other* environment later repeats the flow and fills the other slot,
+so one OAuth connection can hold both a sandbox and a production token.
 
 ### Background token refresh
 
@@ -639,6 +671,77 @@ execute(toolKey, args, credentials, sandbox) {
 
 Sandbox credentials are separate (see credentials checklist in ROADMAP.md).
 Widget Studio preview mode automatically uses sandbox connections.
+
+### Dual-environment credentials (per-connection)
+
+A single `Connection` holds BOTH environments' credentials in `sandboxCredentials` /
+`productionCredentials`; `encryptedCredentials` mirrors whichever env is active so
+the dispatcher/adapters stay unchanged. This applies to **both api-key AND OAuth**
+connections. Flow:
+
+- **Connect** stores the credential in the slot for the environment being connected.
+  Adding the *other* environment to a provider reuses the existing connection instead
+  of creating a duplicate.
+  - *api-key*: the connect body's `sandbox` flag picks the slot.
+  - *OAuth*: the chosen environment is encoded into the OAuth `state` as
+    `<orgId>.<nonce>.<s|p>`; the callback reads the `s|p` code and stores the tokens
+    in that slot (legacy states with no code default to production).
+- **Switch environment** (PATCH `sandbox`) copies the target env's slot into
+  `encryptedCredentials` for api-key and OAuth alike. Connections created before
+  per-environment storage are backfilled into their current slot on first switch.
+  If the target env has no stored creds, the API returns `{ ok:false, needsSetup:true,
+  authMode, environment }`; the dashboard uses `authMode` to prompt correctly — an
+  api-key form, or a fresh OAuth redirect for that environment.
+- **Dashboard UI**: a `Sandbox | Production` segmented control (always visible, even
+  before connecting) lets the operator pick which environment to work with and
+  connect *first*. Each segment shows ✓ (has credentials) / ○ (not connected) and the
+  selected one is clearly highlighted (accent ring). Selecting a **connected** env
+  swaps the active credentials — persisted to the DB (`Connection.sandbox`), the
+  single source of truth the dispatcher routes every tool call to (it decrypts that
+  env's `encryptedCredentials` slot and passes `connection.sandbox` to
+  `adapter.execute`). Selecting an **unconnected** env shows a "Connect {env}" prompt
+  (view only; not persisted). New cards default to Sandbox. There is no localStorage
+  view-persistence — the DB active environment is authoritative.
+- **Disconnect / management** actions (Rename, Guardrails, Rate limits, Tool registry,
+  Test connection, Disconnect) render only for an environment that is actually
+  connected; a not-connected environment view shows just the connect prompt.
+- **Custom webhooks are environment-specific too.** A webhook stores a separate
+  sandbox and production endpoint in its slots (only URL/method/auth differ; the tool
+  key + input schema are shared). A NEW webhook is created for the selected env (full
+  form); adding the OTHER env to an existing webhook uses a compact endpoint form via
+  `POST /integrations/:connectionId/webhook-endpoint`. The toggle swaps the active
+  endpoint; a missing env returns `needsSetup` with `authMode: "webhook"`.
+- The **status badge is per-environment**: green "Connected" only when the environment
+  in view has credentials; otherwise amber "{Sandbox|Production} not connected".
+
+### 2A.11a — Credential verification before connect
+
+Provider adapters may implement `verifyCredentials(credentials, sandbox):
+Promise<{ok:boolean; error?:string}>`. The api-key connect route calls it and returns
+400 with the message instead of marking the connection active, so a bad/wrong-env key
+never appears "connected".
+
+**Implemented on every adapter** with a cheap authenticated read:
+- Cal.com — `GET /v2/event-types`
+- Paddle — `GET /event-types` on the sandbox-vs-live host (surfaces a sandbox key
+  used against production)
+- Shopify — `GET /admin/api/2024-01/shop.json` (needs the shop domain from `extra.shop`)
+- Jira — `GET /oauth/token/accessible-resources` (also confirms the token sees a site)
+- Stripe — `GET /v1/account`
+- Calendly — `GET /users/me`
+- Linear — GraphQL `{ viewer { id } }`
+
+Custom Webhook has no credentials to check, so it has no `verifyCredentials` and the
+verify endpoint returns `{ ok: true, unsupported: true }`.
+
+**Two call sites:**
+1. **Connect (api-key path)** — gate: a failed check 400s the connect, so the
+   connection is never created/marked active with a bad key.
+2. **`POST /:connectionId/verify` (manual "Test connection")** — re-checks the stored
+   credentials for ANY connection, including OAuth ones that never hit the connect
+   gate. Refreshes a near-expiry OAuth token first. Reports the result inline and
+   deliberately does NOT persist status (a transient network blip must not demote a
+   working connection).
 
 ### User actions required
 For each provider, obtain separate sandbox/test credentials and add them to the

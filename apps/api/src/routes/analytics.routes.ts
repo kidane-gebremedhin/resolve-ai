@@ -250,6 +250,48 @@ router.get(
   }),
 );
 
+// GET /analytics/csat-ratings
+// Individual CSAT star ratings (with comments) for the User Feedback detail view.
+// Optional: ?websiteId=<id>&days=30&limit=100
+router.get(
+  "/csat-ratings",
+  requireAuth,
+  requireOrg,
+  wrap(async (req, res) => {
+    const { since, until } = parseDateRange(req.query, 30);
+    const limitRaw = parseInt(String(req.query.limit ?? "100"), 10);
+    const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 100, 1), 300);
+
+    const filter: Record<string, unknown> = {
+      organizationId: req.orgId,
+      createdAt: { $gte: since, $lte: until },
+    };
+    if (typeof req.query.websiteId === "string" && mongoose.Types.ObjectId.isValid(req.query.websiteId)) {
+      const convoIds = (
+        await Conversation.find(
+          { organizationId: req.orgId, websiteId: new mongoose.Types.ObjectId(req.query.websiteId) },
+          { _id: 1 },
+        ).lean()
+      ).map((c) => c._id);
+      filter.conversationId = { $in: convoIds };
+    }
+
+    const ratings = await ConversationRating.find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const items = ratings.map((r) => ({
+      _id: String(r._id),
+      conversationId: String(r.conversationId),
+      stars: r.stars as number,
+      comment: (r.comment as string | undefined) ?? null,
+      createdAt: r.createdAt,
+    }));
+    res.json({ items });
+  }),
+);
+
 // GET /analytics/conversations-daily
 // Server-side time-series aggregation — no 200-conversation cap.
 // Optional: ?days=30&websiteId=<id>&agentId=<id>

@@ -70,4 +70,21 @@ export class ShopifyAdapter implements ProviderAdapter {
 
     throw new Error(`Unknown tool key: ${toolKey}`);
   }
+
+  async verifyCredentials(credentials: RawCredentials): Promise<{ ok: boolean; error?: string }> {
+    const shop = (credentials.extra?.shop as string) ?? process.env.SHOPIFY_SHOP ?? "";
+    const token = credentials.accessToken ?? credentials.apiKey ?? "";
+    if (!shop) return { ok: false, error: "Missing Shopify store domain — reconnect via OAuth to capture it." };
+    if (!token) return { ok: false, error: "No Shopify access token provided." };
+    try {
+      const res = await fetch(`https://${shop}/admin/api/2024-01/shop.json`, {
+        headers: { "X-Shopify-Access-Token": token },
+      });
+      if (res.ok) return { ok: true };
+      if (res.status === 401 || res.status === 403) return { ok: false, error: "Shopify rejected these credentials (unauthorized)." };
+      return { ok: false, error: `Shopify returned HTTP ${res.status}.` };
+    } catch (err) {
+      return { ok: false, error: `Couldn't reach Shopify: ${(err as Error).message}` };
+    }
+  }
 }

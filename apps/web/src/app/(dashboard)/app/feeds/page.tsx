@@ -11,15 +11,14 @@ type FeedbackResponse = {
   days: number;
 };
 
-type LowRatedItem = {
+type CsatRatingItem = {
   _id: string;
-  messageId: string;
   conversationId: string;
-  reason: string | null;
+  stars: number;
+  comment: string | null;
   createdAt: string;
-  messageContent: string | null;
 };
-type LowRatedResponse = { items: LowRatedItem[] };
+type CsatRatingsResponse = { items: CsatRatingItem[] };
 
 function pct(used: number, total: number): string {
   if (total <= 0) return "0%";
@@ -65,17 +64,17 @@ async function FeedsPage({
   const label = periodLabel(days, fromParam, toParam);
 
   let feedback: FeedbackResponse | null = null;
-  let lowRated: LowRatedItem[] = [];
+  let ratings: CsatRatingItem[] = [];
   let websites: Website[] = [];
 
   try {
-    const [fbResp, lrResp, wsResp] = await Promise.all([
+    const [fbResp, crResp, wsResp] = await Promise.all([
       api.get<FeedbackResponse>(`/analytics/feedback?${qStr}`).catch(() => null),
-      api.get<LowRatedResponse>(`/analytics/low-rated-answers?${qStr}&limit=50`).catch(() => ({ items: [] as LowRatedItem[] })),
+      api.get<CsatRatingsResponse>(`/analytics/csat-ratings?${qStr}&limit=100`).catch(() => ({ items: [] as CsatRatingItem[] })),
       api.get<Website[]>("/websites").catch(() => [] as Website[]),
     ]);
     feedback = fbResp;
-    lowRated = lrResp.items;
+    ratings = crResp.items;
     websites = wsResp ?? [];
   } catch {
     /* best-effort */
@@ -180,48 +179,48 @@ async function FeedsPage({
         </div>
       </div>
 
-      {/* ---- Low Rated Answers ---- */}
+      {/* ---- Individual CSAT ratings (full detail) ---- */}
       <div className="mt-6 rounded-xl border border-border bg-card p-5">
         <div className="flex items-center justify-between">
-          <div className="font-display text-sm font-semibold">Low Rated Answers</div>
-          {lowRated.length > 0 && (
-            <span className="text-[11px] text-muted-foreground">{lowRated.length} item{lowRated.length !== 1 ? "s" : ""}</span>
-          )}
+          <div className="font-display text-sm font-semibold">Every rating — {label}</div>
+          <Link href={`/app/feeds/low-rated${qStr ? `?${qStr}` : ""}`} className="text-xs text-primary hover:underline">
+            View low-rated answers →
+          </Link>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
-          AI messages that received a thumbs-down. Review these to improve your knowledge base.
+          Each star rating a visitor left after a conversation, with their comment.
         </p>
-        {lowRated.length === 0 ? (
-          <p className="mt-4 text-sm text-muted-foreground">No low-rated answers in this period.</p>
+        {ratings.length === 0 ? (
+          <p className="mt-4 text-sm text-muted-foreground">No individual ratings in this period.</p>
         ) : (
-          <div className="mt-4 space-y-3">
-            {lowRated.map((item) => (
-              <div key={item._id} className="rounded-lg border border-border bg-muted/30 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-sm text-foreground leading-snug line-clamp-3">
-                    {item.messageContent ?? <span className="italic text-muted-foreground">Message content unavailable</span>}
-                  </p>
+          <ul className="mt-4 space-y-3">
+            {ratings.map((r) => (
+              <li key={r._id} className="rounded-lg border border-border bg-muted/30 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-amber-500" aria-label={`${r.stars} of 5 stars`}>
+                    {"★".repeat(r.stars)}
+                    <span className="text-muted-foreground/40">{"★".repeat(5 - r.stars)}</span>
+                  </span>
                   <Link
-                    href={`/app/inbox/${item.conversationId}`}
-                    className="ml-2 shrink-0 text-[11px] text-muted-foreground underline hover:text-foreground"
+                    href={`/app/inbox/${r.conversationId}`}
+                    className="text-[11px] text-muted-foreground underline hover:text-foreground"
                   >
-                    View
+                    Open conversation →
                   </Link>
                 </div>
-                {item.reason && (
-                  <div className="mt-2 flex items-start gap-1.5">
-                    <span className="mt-px text-red-500 text-xs">👎</span>
-                    <p className="text-xs text-muted-foreground italic">&ldquo;{item.reason}&rdquo;</p>
-                  </div>
+                {r.comment ? (
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{r.comment}</p>
+                ) : (
+                  <p className="mt-2 text-sm italic text-muted-foreground">No comment left.</p>
                 )}
                 <p className="mt-1.5 text-[10px] text-muted-foreground">
-                  {new Date(item.createdAt).toLocaleDateString(undefined, {
+                  {new Date(r.createdAt).toLocaleString(undefined, {
                     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
                   })}
                 </p>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </div>
     </div>

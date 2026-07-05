@@ -21,6 +21,22 @@ export class CalcomAdapter implements ProviderAdapter {
     return null; // API keys don't expire
   }
 
+  // Confirm the API key works by listing event types (a cheap authed GET).
+  async verifyCredentials(credentials: RawCredentials): Promise<{ ok: boolean; error?: string }> {
+    const apiKey = credentials.apiKey ?? "";
+    if (!apiKey) return { ok: false, error: "No API key provided." };
+    try {
+      const res = await fetch("https://api.cal.com/v2/event-types", {
+        headers: { Authorization: `Bearer ${apiKey}`, "cal-api-version": "2024-06-14" },
+      });
+      if (res.ok) return { ok: true };
+      if (res.status === 401 || res.status === 403) return { ok: false, error: "Cal.com rejected this API key (unauthorized)." };
+      return { ok: false, error: `Cal.com returned HTTP ${res.status}.` };
+    } catch (err) {
+      return { ok: false, error: `Couldn't reach Cal.com: ${(err as Error).message}` };
+    }
+  }
+
   getTools(): ToolTemplate[] {
     return [
       {

@@ -32,6 +32,7 @@ import {
   Zap,
   ClipboardList,
   MessageSquareHeart,
+  ThumbsDown,
 } from 'lucide-react';
 import { Logo } from '@/components/site/Logo';
 import { Input } from '@csb/ui';
@@ -53,6 +54,7 @@ type NavItem = {
     | '/app/inbox'
     | '/app/analytics'
     | '/app/feeds'
+    | '/app/feeds/low-rated'
     | '/app/activity'
     | '/app/knowledge'
     | '/app/settings'
@@ -87,7 +89,8 @@ const nav: NavItem[] = [
   { href: '/app/integrations', label: 'Integrations', icon: Plug, group: 'Configure' },
   { href: '/app/triggers', label: 'Triggers', icon: Zap, group: 'Configure' },
   { href: '/app/analytics', label: 'Analytics', icon: BarChart3, group: 'Account' },
-  { href: '/app/feeds', label: 'User Feedback', icon: MessageSquareHeart, group: 'Account' },
+  { href: '/app/feeds', label: 'User Feedback', icon: MessageSquareHeart, exact: true, group: 'Account' },
+  { href: '/app/feeds/low-rated', label: 'Low-Rated Answers', icon: ThumbsDown, group: 'Account' },
   { href: '/app/activity', label: 'Agent activity', icon: ClipboardList, group: 'Account' },
   { href: '/app/usage', label: 'Usage', icon: Gauge, group: 'Account' },
   { href: '/app/billing', label: 'Billing', icon: CreditCard, group: 'Account' },

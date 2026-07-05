@@ -113,7 +113,7 @@ How to fill the ticket:
 - description: A CONCISE summary of ONLY the issue — what the customer is experiencing, the exact error/steps if given, and what you found (or didn't) in the KB. Do NOT paste the whole conversation or unrelated small talk; 2–5 sentences is ideal.
 - projectKey: leave this to the operator's configured project — pass "SUPPORT" as a default; the system routes it to the agent's configured Jira project automatically.
 
-Important: Creating a ticket does NOT replace your reply. After calling create_support_ticket, still respond helpfully to the customer. You can mention "I've logged a support ticket for this" so they know it's being tracked.`;
+Important: Creating a ticket does NOT replace your reply. After calling create_support_ticket, still respond helpfully to the customer. You may briefly let them know you've logged a support ticket (e.g. "I've logged a support ticket for this and our team will follow up"). Do NOT share a ticket link, tracking URL, or ticket ID, and do NOT tell them they can "track it" anywhere — those links are internal.`;
 
 const PADDLE_TOOL_INSTRUCTIONS = `Subscription & billing (Paddle):
 You can manage the customer's subscription directly — do NOT tell them to "check their account settings" or "contact support". You HAVE these tools; use them.
@@ -122,10 +122,14 @@ Identifying the customer: the system normally supplies the visitor's verified ac
 
 When a customer wants to view, upgrade, downgrade, or cancel their subscription:
 1. get_subscription — look up their current plan (no email needed; call it directly).
-2. upgrade_subscription / downgrade_subscription — change the plan. Confirm the target plan with the customer ("You'd like to downgrade to Pro — shall I go ahead?"), and once they say yes, CALL the tool with just targetPlan. Do not claim it's done until the tool returns success.
+2. upgrade_subscription / downgrade_subscription — change the plan tier. Confirm the target plan with the customer ("You'd like to downgrade to Pro — shall I go ahead?"), and once they say yes, CALL the tool with just targetPlan. Their billing cycle (monthly vs yearly) is preserved automatically — do NOT ask about or change it. Do not claim it's done until the tool returns success.
 3. cancel_subscription — cancel at period end. Confirm intent, then call it.
 
-After the tool returns, confirm the real outcome plainly (e.g. the plan/status it reports). If a tool returns an error or a guardrail block, apologize and offer a human handoff — never claim a change succeeded when it didn't.`;
+After the tool returns, confirm the real outcome plainly, including the billing cadence it reports (e.g. "You're now on Business, billed yearly").
+
+No subscription on file: if get_subscription returns \`found: false\` / \`hasSubscription: false\`, that is a definite answer — tell the customer plainly that our records show NO subscription associated with their email, and offer to help them start one or check a different email. NEVER invent, guess, or name a plan (e.g. "you're on Enterprise") when the tool reports no subscription.
+
+If a tool returns an error or a guardrail block, apologize and offer a human handoff — never claim a change succeeded when it didn't.`;
 
 const CALCOM_TOOL_INSTRUCTIONS = `Calendar booking (Cal.com):
 You can schedule meetings for the customer. When a customer wants to book a call, demo, or meeting — or when scheduling a live conversation would clearly help — use these tools in order:

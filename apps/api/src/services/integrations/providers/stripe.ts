@@ -101,4 +101,19 @@ export class StripeAdapter implements ProviderAdapter {
 
     throw new Error(`Unknown tool key: ${toolKey}`);
   }
+
+  async verifyCredentials(credentials: RawCredentials, sandbox: boolean): Promise<{ ok: boolean; error?: string }> {
+    const base = sandbox ? API_TEST : API_BASE;
+    const key = credentials.accessToken ?? credentials.apiKey ?? "";
+    if (!key) return { ok: false, error: "No Stripe key provided." };
+    try {
+      const auth = `Basic ${Buffer.from(`${key}:`).toString("base64")}`;
+      const res = await fetch(`${base}/account`, { headers: { Authorization: auth } });
+      if (res.ok) return { ok: true };
+      if (res.status === 401) return { ok: false, error: "Stripe rejected this key (unauthorized)." };
+      return { ok: false, error: `Stripe returned HTTP ${res.status}.` };
+    } catch (err) {
+      return { ok: false, error: `Couldn't reach Stripe: ${(err as Error).message}` };
+    }
+  }
 }

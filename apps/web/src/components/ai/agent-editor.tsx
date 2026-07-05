@@ -502,15 +502,17 @@ export function AgentEditor({
                     aria-checked={toolEnabled[conn.connectionId] ?? false}
                     disabled={toolSaving[conn.connectionId]}
                     onClick={() => toggleTool(conn.connectionId, !(toolEnabled[conn.connectionId] ?? false))}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none disabled:opacity-50 ${
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors focus-visible:outline-none disabled:opacity-50 ${
                       (toolEnabled[conn.connectionId] ?? false)
-                        ? "bg-foreground"
-                        : "bg-muted"
+                        ? "border-transparent bg-foreground"
+                        : "border-neutral-300 bg-neutral-200 dark:border-neutral-600 dark:bg-neutral-700"
                     }`}
                   >
                     <span
-                      className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg transition-transform ${
-                        (toolEnabled[conn.connectionId] ?? false) ? "translate-x-4" : "translate-x-0"
+                      className={`pointer-events-none block h-4 w-4 rounded-full shadow-lg transition-transform ${
+                        (toolEnabled[conn.connectionId] ?? false)
+                          ? "translate-x-4 bg-background"
+                          : "translate-x-0 bg-neutral-500 dark:bg-neutral-300"
                       }`}
                     />
                   </button>

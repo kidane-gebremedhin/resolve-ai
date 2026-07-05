@@ -111,4 +111,19 @@ export class CalendlyAdapter implements ProviderAdapter {
 
     throw new Error(`Unknown tool key: ${toolKey}`);
   }
+
+  async verifyCredentials(credentials: RawCredentials): Promise<{ ok: boolean; error?: string }> {
+    const token = credentials.accessToken ?? credentials.apiKey ?? "";
+    if (!token) return { ok: false, error: "No Calendly token provided." };
+    try {
+      const res = await fetch(`${API_BASE}/users/me`, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (res.ok) return { ok: true };
+      if (res.status === 401 || res.status === 403) return { ok: false, error: "Calendly rejected this token (unauthorized)." };
+      return { ok: false, error: `Calendly returned HTTP ${res.status}.` };
+    } catch (err) {
+      return { ok: false, error: `Couldn't reach Calendly: ${(err as Error).message}` };
+    }
+  }
 }

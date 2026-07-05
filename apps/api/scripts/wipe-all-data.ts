@@ -2,7 +2,8 @@
  * wipe-all-data.ts
  *
  * Drops ALL application data from MongoDB, deletes ALL vectors from Pinecone
- * (every namespace), and removes ALL uploaded attachments (local disk or MinIO).
+ * (every namespace), removes ALL uploaded attachments (local disk or MinIO), and
+ * cancels ALL subscriptions in the platform's Paddle account (PADDLE_API_KEY).
  * Run with:  pnpm --filter @csb/api db:wipe
  *
  * ⚠️  DESTRUCTIVE — there is no undo!
@@ -82,6 +83,60 @@ async function wipePinecone(): Promise<void> {
     console.log("✅ Pinecone index wiped\n");
 }
 
+// Cancels ALL subscriptions in the platform's own Paddle account (the one behind
+// PADDLE_API_KEY — i.e. the SaaS's billing, the subs created while testing checkout/
+// upgrade flows). Paddle has no "delete subscription", so every non-canceled sub is
+// canceled immediately. Uses the env key + PADDLE_ENVIRONMENT, independent of Mongo.
+async function wipePaddle(): Promise<void> {
+    const apiKey = process.env.PADDLE_API_KEY;
+    if (!apiKey) {
+        console.log("⏭️  Skipping Paddle (PADDLE_API_KEY not set)");
+        return;
+    }
+    const sandbox = (process.env.PADDLE_ENVIRONMENT ?? "sandbox").toLowerCase() !== "production";
+    const baseUrl = sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
+    const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+    console.log(`🔌 Connecting to Paddle (${sandbox ? "sandbox" : "production"}) …`);
+
+    let after: string | undefined;
+    let canceled = 0;
+    let failed = 0;
+    // Page through every non-canceled subscription and cancel it immediately.
+    for (let page = 0; page < 1000; page++) {
+        const url = new URL(`${baseUrl}/subscriptions`);
+        url.searchParams.set("per_page", "100");
+        for (const s of ["active", "trialing", "paused", "past_due"]) url.searchParams.append("status", s);
+        if (after) url.searchParams.set("after", after);
+
+        const res = await fetch(url, { headers });
+        if (!res.ok) throw new Error(`list subscriptions HTTP ${res.status}`);
+        const body = (await res.json()) as {
+            data?: { id: string }[];
+            meta?: { pagination?: { has_more?: boolean } };
+        };
+        const subs = body.data ?? [];
+        if (subs.length === 0) break;
+
+        for (const sub of subs) {
+            const c = await fetch(`${baseUrl}/subscriptions/${sub.id}/cancel`, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ effective_from: "immediately" }),
+            });
+            if (c.ok) {
+                canceled++;
+            } else {
+                failed++;
+                console.log(`   ⚠️  ${sub.id}: cancel HTTP ${c.status}`);
+            }
+        }
+
+        if (!body.meta?.pagination?.has_more) break;
+        after = subs[subs.length - 1]!.id;
+    }
+    console.log(`✅ Paddle subscriptions canceled (${canceled} canceled${failed ? `, ${failed} failed` : ""})\n`);
+}
+
 // Removes all uploaded attachments. Mirrors the storage adapter selection in
 // apps/api/src/config/storage.ts: MinIO when MINIO_ENDPOINT + MINIO_ACCESS_KEY
 // are set, otherwise the local-disk adapter.
@@ -137,6 +192,7 @@ async function main() {
         step("MongoDB", wipeMongo),
         step("Pinecone", wipePinecone),
         step("Storage", wipeStorage),
+        step("Paddle", wipePaddle),
     ]);
     if (results.every(Boolean)) {
         console.log("🎉 All data has been wiped. Start fresh!\n");

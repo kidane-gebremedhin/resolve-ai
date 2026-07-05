@@ -252,4 +252,21 @@ export class JiraAdapter implements ProviderAdapter {
 
     throw new Error(`Unknown tool key: ${toolKey}`);
   }
+
+  async verifyCredentials(credentials: RawCredentials): Promise<{ ok: boolean; error?: string }> {
+    const token = credentials.accessToken ?? "";
+    if (!token) return { ok: false, error: "No Jira access token — reconnect the integration." };
+    try {
+      const res = await fetch("https://api.atlassian.com/oauth/token/accessible-resources", {
+        headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
+      });
+      if (res.status === 401 || res.status === 403) return { ok: false, error: "Jira rejected this token (unauthorized) — reconnect." };
+      if (!res.ok) return { ok: false, error: `Jira returned HTTP ${res.status}.` };
+      const clouds = (await res.json().catch(() => [])) as unknown[];
+      if (!Array.isArray(clouds) || clouds.length === 0) return { ok: false, error: "Jira token has no accessible sites." };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: `Couldn't reach Jira: ${(err as Error).message}` };
+    }
+  }
 }

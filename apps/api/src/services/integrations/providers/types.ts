@@ -39,4 +39,13 @@ export interface ProviderAdapter {
     credentials: RawCredentials,
     sandbox: boolean,
   ): Promise<unknown>;
+
+  /**
+   * Optional: make a lightweight real API call to confirm the credentials work,
+   * before a connection is marked active. Returns { ok: false, error } on failure.
+   */
+  verifyCredentials?(
+    credentials: RawCredentials,
+    sandbox: boolean,
+  ): Promise<{ ok: boolean; error?: string }>;
 }
