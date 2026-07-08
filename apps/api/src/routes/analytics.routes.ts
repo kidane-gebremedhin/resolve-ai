@@ -2,13 +2,28 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import mongoose from "mongoose";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import {
+  Agent,
   Conversation,
   ConversationRating,
   KnowledgeGap,
+  KnowledgeSource,
   Message,
   MessageFeedback,
   ToolCallLog,
 } from "../models/index.js";
+
+// Resolve the agent ids that belong to a website (for scoping org-level metrics
+// like knowledge gaps / KB sources, which are keyed by agent, to one website).
+async function agentIdsForWebsite(
+  orgId: unknown,
+  websiteId: string,
+): Promise<mongoose.Types.ObjectId[]> {
+  const agents = await Agent.find(
+    { organizationId: orgId, websiteId: new mongoose.Types.ObjectId(websiteId) },
+    { _id: 1 },
+  ).lean();
+  return agents.map((a) => a._id as mongoose.Types.ObjectId);
+}
 
 const router = Router();
 
@@ -42,7 +57,7 @@ function parseDateRange(query: Request["query"], defaultDays = 30): { since: Dat
 
 // GET /analytics/knowledge-gaps
 // Returns top unanswered questions ranked by occurrence count.
-// Optional: ?agentId=<id>&limit=<1-50>
+// Optional: ?agentId=<id>&websiteId=<id>&from&to|days&limit=<1-50>
 router.get(
   "/knowledge-gaps",
   requireAuth,
@@ -50,16 +65,25 @@ router.get(
   wrap(async (req, res) => {
     const limitRaw = parseInt(String(req.query.limit ?? "10"), 10);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 10, 1), 50);
+    const { since, until } = parseDateRange(req.query, 30);
 
     const filter: Record<string, unknown> = {
       organizationId: req.orgId,
       status: "open",
+      // Gaps active within the selected window (last recurrence in range).
+      updatedAt: { $gte: since, $lte: until },
     };
     if (
       typeof req.query.agentId === "string" &&
       mongoose.Types.ObjectId.isValid(req.query.agentId)
     ) {
       filter.agentId = new mongoose.Types.ObjectId(req.query.agentId);
+    } else if (
+      typeof req.query.websiteId === "string" &&
+      mongoose.Types.ObjectId.isValid(req.query.websiteId)
+    ) {
+      // Website scope: gaps are keyed by agent, so match this website's agents.
+      filter.agentId = { $in: await agentIdsForWebsite(req.orgId, req.query.websiteId) };
     }
 
     const gaps = await KnowledgeGap.find(filter)
@@ -421,6 +445,57 @@ router.get(
       nextCursor: hasMore ? String(items[items.length - 1]?._id) : null,
       days,
     });
+  }),
+);
+
+// GET /analytics/volume
+// Message + knowledge-source volume scoped to the selected date range and website,
+// so the "Messages this period" / "Monthly volume" cards obey the analytics filters
+// (billing `/usage` is billing-period + org-wide and can't). Messages are counted in
+// the window; when a website is selected they're limited to that site's conversations
+// and KB sources to that site's agents.
+// Optional: ?from&to|days&websiteId=<id>
+router.get(
+  "/volume",
+  requireAuth,
+  requireOrg,
+  wrap(async (req, res) => {
+    const { since, until } = parseDateRange(req.query, 30);
+    const websiteId =
+      typeof req.query.websiteId === "string" && mongoose.Types.ObjectId.isValid(req.query.websiteId)
+        ? req.query.websiteId
+        : null;
+
+    const msgMatch: Record<string, unknown> = {
+      organizationId: req.orgId,
+      createdAt: { $gte: since, $lte: until },
+    };
+    const kbMatch: Record<string, unknown> = {
+      organizationId: req.orgId,
+      embeddingStatus: "synced",
+    };
+
+    if (websiteId) {
+      // Messages carry no websiteId — scope via the website's conversations.
+      const convoIds = (
+        await Conversation.find(
+          { organizationId: req.orgId, websiteId: new mongoose.Types.ObjectId(websiteId) },
+          { _id: 1 },
+        )
+          .lean()
+          .limit(100000)
+      ).map((c) => c._id);
+      msgMatch.conversationId = { $in: convoIds };
+      // KB sources are keyed by agent — scope to this website's agents.
+      kbMatch.agentId = { $in: await agentIdsForWebsite(req.orgId, websiteId) };
+    }
+
+    const [messages, knowledgeSources] = await Promise.all([
+      Message.countDocuments(msgMatch),
+      KnowledgeSource.countDocuments(kbMatch),
+    ]);
+
+    res.json({ messages, knowledgeSources, websiteScoped: Boolean(websiteId) });
   }),
 );
 

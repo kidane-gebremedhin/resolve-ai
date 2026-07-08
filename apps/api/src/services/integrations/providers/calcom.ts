@@ -223,13 +223,17 @@ export class CalcomAdapter implements ProviderAdapter {
       // visitor — Cal.com adds the host automatically, so we only send the visitor
       // as the attendee.
       const timeZone = String(args.timeZone ?? "").trim() || "UTC";
+      // When the "require a real attendee name" guardrail is OFF, a booking can
+      // reach here without a name (the guardrail would otherwise block it). Cal.com
+      // rejects a blank attendee name, so fall back to a generic "Customer".
+      const attendeeName = String(args.name ?? "").trim() || "Customer";
       const res = await fetch(`${base}/bookings`, {
         method: "POST",
         headers: { ...baseHeaders, "cal-api-version": "2024-08-13" },
         body: JSON.stringify({
           eventTypeId,
           start: args.startTime,
-          attendee: { name: args.name, email: args.email, timeZone, language: "en" },
+          attendee: { name: attendeeName, email: args.email, timeZone, language: "en" },
           ...(Object.keys(bookingFieldsResponses).length > 0 ? { bookingFieldsResponses } : {}),
         }),
       });

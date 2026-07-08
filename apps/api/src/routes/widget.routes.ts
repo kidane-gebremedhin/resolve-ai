@@ -594,7 +594,17 @@ router.get(
 // ---------- POST /widget/conversations/:id/messages ----------
 // Customer posts a message. We persist immediately, kick off the AI reply in the background,
 // and return the user's message. The assistant reply arrives via Socket.io.
-const ajv = new Ajv();
+// coerceTypes so inline-form submissions (all values arrive as strings from the
+// widget's text inputs) validate against numeric/boolean tool schema fields — and
+// are coerced in place to the right JS types before dispatch (e.g. a webhook's
+// `quantity: number` or `expedited: boolean`). Without this, a form for a webhook
+// with non-string fields fails validation and surfaces "Submission failed".
+//
+// strict:false so a tool schema using a standard `format` (e.g. book_meeting's
+// `startTime` is `format: "date-time"`) doesn't make ajv THROW at compile time
+// ("unknown format ... ignored") — we don't register ajv-formats, and an
+// unhandled throw here 500s the submit and shows the customer "Submission failed".
+const ajv = new Ajv({ coerceTypes: true, strict: false });
 
 const sendMessageSchema = z.object({
   content: z.string().min(1).max(8000),
@@ -679,7 +689,16 @@ router.post(
         isActive: true,
       }).lean();
       if (toolDef?.jsonSchema) {
-        const validate = ajv.compile(toolDef.jsonSchema as object);
+        // Validate field TYPES only — not `required`. The inline form intentionally
+        // collects just the fields the customer must supply; other required inputs
+        // (email, eventTypeId/startTime carried as hidden values, org id) are either
+        // merged client-side or authoritatively injected by the dispatcher. Enforcing
+        // the full `required` list here rejected valid submissions with a generic
+        // "Submission failed. Please try again." The dispatcher, guardrails and the
+        // provider adapter still enforce real completeness downstream.
+        const schema = { ...(toolDef.jsonSchema as Record<string, unknown>) };
+        delete (schema as { required?: unknown }).required;
+        const validate = ajv.compile(schema);
         if (!validate(formPayload)) {
           throw new ValidationError("Form payload failed schema validation.");
         }

@@ -278,6 +278,13 @@ PATCH  /integrations/:connectionId       → update name, sandbox, description, 
 POST   /integrations/:connectionId/webhook-endpoint → add/replace ONE environment's
                                            endpoint (URL+method+auth) for an existing
                                            custom webhook; shared tool def/schema.
+PATCH  /integrations/:connectionId/webhook-config → full edit of an existing custom
+                                           webhook (active env): URL, method, auth
+                                           header/value, input JSON schema, tool
+                                           name/description. Auth value is a secret —
+                                           omit/blank keeps the stored one. Keeps the
+                                           ToolDefinition's jsonSchema/name/desc in sync
+                                           (2A.4a). Powers the card's "Edit webhook".
 POST   /integrations/:connectionId/verify → re-run the provider's real-connection
                                            check against stored creds (refreshing an
                                            OAuth token first if near expiry). Reports
@@ -286,7 +293,11 @@ POST   /integrations/:connectionId/verify → re-run the provider's real-connect
                                            "Test connection" button.
 PATCH  /integrations/tools/:toolDefId/guardrails → per-tool guardrail spec (2A.6)
 PATCH  /integrations/tools/:toolDefId/registry   → displayName, description, enabledAgentIds
-DELETE /integrations/:connectionId       → revoke + delete connection + ToolDefinitions
+DELETE /integrations/:connectionId       → soft-revoke connection (status:"revoked")
+                                           AND deactivate its ToolDefinitions
+                                           (isActive:false) so a re-added "exact"
+                                           connection never resolves to the dead one
+                                           (2A.4b).
 ```
 
 Auth for all routes: `authenticateOperator` middleware (JWT).
@@ -314,8 +325,20 @@ so one OAuth connection can hold both a sandbox and a production token.
 A recurring job (`apps/api/src/jobs/refreshOAuthTokens.ts`) runs every 15 minutes:
 - Queries `Connection` documents where `expiresAt < now + 10min` and `authMode === "oauth"`.
 - Calls `adapter.refreshTokens(refreshToken)`.
-- Updates `encryptedCredentials` in-place.
+- Updates `encryptedCredentials` in-place — **and the active environment's slot**
+  (`sandboxCredentials`/`productionCredentials`), Changelog 5. Providers like Atlassian
+  ROTATE the refresh token on every refresh and invalidate the previous one; if the slot
+  keeps the stale token, a later environment switch restores it and the next refresh
+  fails with `invalid_grant`, silently killing the connection ("couldn't file a ticket").
+  The dispatcher's on-demand refresh (`dispatcher.ts`) does the same.
 - Sets `status: "error"` on refresh failure (operator sees a red badge in dashboard).
+
+> **Both environment slots stay fresh (Changelog 5, Option A).** The sweep selects OAuth
+> connections whose active token is expiring OR that hold both env slots, and refreshes
+> **each** populated slot independently (active mirror + active slot, and the inactive
+> slot) — each gated by a per-slot expiry check so tokens aren't rotated needlessly. This
+> keeps the inactive environment's token valid so switching sandbox↔production never
+> loads a dead, already-rotated token, without needing separate connection documents.
 
 ### User actions required — registering OAuth apps
 
@@ -359,6 +382,40 @@ On execution:
    (default: 10s, configurable).
 4. Validate response against `outputSchema` (warn but do not fail if mismatch).
 5. Return response body to the tool dispatcher.
+
+### 2A.4a — Editing an existing webhook
+
+Every detail of a custom webhook is editable after creation via the card's **Edit
+webhook** button (`PATCH /integrations/:connectionId/webhook-config`): endpoint URL,
+method, auth header, auth value, the input JSON schema, and the tool's display
+name/description. The edit targets the **active** environment's endpoint slot and
+keeps the linked `ToolDefinition` (`jsonSchema`, `displayName`, `description`) in
+sync so the AI immediately sees the change. The auth **value** is a secret the API
+never returns — the GET card exposes only `hasAuthValue`; leaving the field blank on
+save keeps the stored secret, sending a new value replaces it. Input JSON is only
+accepted if it's a genuine object schema (`type:"object"` + `properties`), mirroring
+the connect-route guard; anything else keeps the existing schema.
+
+### 2A.4b — Disconnect / reconnect ("exact" re-add)
+
+Webhooks are multi-instance (one Connection per instance), so disconnecting and
+re-adding the "same" webhook creates a NEW Connection with a NEW ToolDefinition
+sharing the same tool key. To keep the AI routing to the live connection:
+- **On revoke** (`DELETE`), the connection's ToolDefinitions are set `isActive:false`
+  so they're neither offered to the AI nor resolvable by the dispatcher.
+- **On re-add**, the new webhook's ToolDefinition inherits `enabledAgentIds` from the
+  most-recent revoked (now-inactive) tool def of the same key, so it works for the
+  same agents immediately instead of silently starting disabled.
+- **Dispatcher** resolves the tool key by preferring the ToolDefinition whose
+  Connection is `active`, so even stale duplicates never surface the
+  "connection has been revoked" error.
+
+> **Reconnecting reactivates tools (Changelog 5).** Because revoke sets tool defs
+> `isActive:false`, the single-connection providers (OAuth, api-key) must **reactivate**
+> them on reconnect. Their tool-def upserts put `isActive: true` in `$set` (not
+> `$setOnInsert`, which never runs for an existing tool def) — otherwise a reconnect
+> revives the connection but leaves its tools inactive, and the AI is never offered them
+> ("I'm unable to file a support ticket", with no tool call logged).
 
 **SSRF protections (mandatory)**
 
@@ -784,7 +841,22 @@ Add to the "Configure" nav group in `apps/web/src/components/layouts/app-shell.t
 Structured form (not raw JSON) with fields per guardrail type:
 - Refund: "Max refund amount ($)" + "Refund window (days)"
 - Subscription: "Allowed directions" dropdown
-- Meeting: "Business hours" time range + day checkboxes
+- Meeting: "Business hours" time range + day checkboxes + "Require a real attendee
+  name" (defaults **checked** — see 31-agentic-tools 2A.4a/Changelog 1)
+
+### Connector-card actions + modal-close convention
+
+The connected-card action row exposes: Rename, **Edit webhook** (webhooks only —
+opens the full edit modal, 2A.4a), Guardrails, Rate limits, Tool registry, Test
+connection, Disconnect. Modal-close convention:
+- **Single-save modals** (Rename, Rate limits, Edit webhook) close on a successful
+  save — Rename/Edit webhook reload to reflect changes; Rate limits shows a brief
+  "Saved" then dismisses.
+- **Multi-save modals** (Guardrails, Tool registry) have a Save **per row** and stay
+  open, so several rows can be saved in one sitting. Each row reports its saved values
+  up via `onSaved`, and the card keeps `guardrailOverrides` / `registryOverrides` so
+  reopening the modal shows the values just saved — not the stale server-rendered props
+  (previously only a full page refresh reflected a save; Changelog 2).
 
 ---
 

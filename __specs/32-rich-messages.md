@@ -13,8 +13,23 @@
 ### Card / carousel (3.1)
 `resultToBlocks(toolKey, result)` in `dispatcher.ts` converts `list_calendar_slots` → `CarouselBlock` (up to 5 slot cards with "Book this slot" buttons) and `get_subscription` → `CardBlock`. Called after each successful integration tool dispatch in `agent.service.ts`.
 
+> **Slot-booking bubble (Changelog 4).** A "Book this slot" button sends a precise,
+> machine-oriented instruction (`"Please book the slot at <ISO> for event type <id>"`) so
+> the AI books the exact slot. The widget MUST NOT show that raw string — `MessageList`'s
+> `humanizeCustomerContent` renders that customer bubble as a friendly confirmation
+> (e.g. "📅 Booking Wed, Jul 8, 09:30 AM"), matched by the stable generated shape so it
+> also applies to the persisted message on reload. The value sent to the AI is unchanged.
+
 ### Inline forms (3.2)
 `FormBlockRenderer` submits `{ content, formPayload, toolKey }` to `POST /widget/conversations/:id/messages`. Route handler validates `formPayload` against `ToolDefinition.jsonSchema` (ajv), dispatches via `dispatchToolCall`, then the AI generates an acknowledgement reply.
+
+> **Field datatypes (Changelog 4).** `buildFormBlock` derives each `FormField`'s type +
+> constraints from the tool's input JSON schema so the form enforces datatypes
+> client-side: `number`/`integer` → number input (`step`, `min`, `max`; integers reject
+> decimals); `boolean` → Yes/No select; `enum` → select; string `pattern` → validated.
+> `FormBlockRenderer` validates type/integer/min/max/pattern before submit and drops
+> empty optional values. This complements the server-side ajv coercion — the customer
+> can't enter a value the schema would reject (e.g. "5" or "abc" in a numeric field).
 
 ### Image vision (3.3)
 `generateAiReply` accepts `currentAttachments?: CurrentAttachment[]`. For `image/*` attachments: `getAttachmentBuffer` reads from storage, `sharp` resizes if over `AI_VISION_MAX_IMAGE_BYTES` (default 4 MB), encoded as base64 data URL and passed as `{ type: "image_url", image_url: { url, detail: "auto" } }` in the user content array. Falls back gracefully if sharp unavailable.

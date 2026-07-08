@@ -155,6 +155,9 @@ export function WidgetRoot({
   // always read the current visibility without re-binding on every render.
   const isWidgetVisibleRef = useRef(false);
   const unreadCountRef = useRef(0);
+  // Message ids already counted toward the current unread total — so a duplicated
+  // `message:new` for the same reply doesn't double-count the badge.
+  const countedUnreadIdsRef = useRef<Set<string>>(new Set());
 
   // ---- AI typing indicator --------------------------------------------
   // Local UI state: shown between a customer send and the AI's reply landing.
@@ -510,7 +513,14 @@ export function WidgetRoot({
           playNotification();
           // Use the ref (not state) — the socket handler closes over the
           // initial render and would always see isWidgetVisible = false.
-          if (!isWidgetVisibleRef.current) {
+          // Dedupe by message id: a single AI reply can emit `message:new` more
+          // than once (streaming placeholder + finalize, or an id-only event
+          // followed by a re-list), which would otherwise inflate the badge.
+          const mid = String(message._id ?? "");
+          if (!isWidgetVisibleRef.current && (!mid || !countedUnreadIdsRef.current.has(mid))) {
+            if (mid) countedUnreadIdsRef.current.add(mid);
+            // Arrived while the widget is closed/collapsed → it's unread. Count it
+            // and tell the embed to show the launcher badge.
             unreadCountRef.current += 1;
             try {
               window.parent?.postMessage(
@@ -520,6 +530,12 @@ export function WidgetRoot({
             } catch {
               /* not embedded */
             }
+          } else if (isWidgetVisibleRef.current) {
+            // Seen while the widget is open — mark it seen NOW so a page reload
+            // doesn't recount it as unread. Previously `lastSeenAt` was only bumped
+            // on open/close, so messages read in an open session were counted again
+            // on the next load (the "counting all available messages" bug).
+            updateSession({ lastSeenAt: new Date().toISOString() });
           }
         }
       },
@@ -825,6 +841,7 @@ export function WidgetRoot({
         setIsWidgetVisible(true);
         isWidgetVisibleRef.current = true;
         unreadCountRef.current = 0;
+        countedUnreadIdsRef.current.clear();
         updateSession({ lastSeenAt: new Date().toISOString() });
         // Tell the embed to clear its badge immediately.
         try {
@@ -838,6 +855,7 @@ export function WidgetRoot({
         // Reset so subsequent messages start counting from 0, not from
         // whatever the ref accumulated while the widget was open.
         unreadCountRef.current = 0;
+        countedUnreadIdsRef.current.clear();
         // Mark everything seen up to now. lastSeenAt is otherwise only bumped on
         // open, so messages that arrived WHILE the widget was open (and were
         // therefore already seen) would be re-counted as unread on the next page

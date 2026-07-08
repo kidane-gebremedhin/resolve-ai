@@ -29,6 +29,26 @@ function formatTime(iso: string): string {
   }
 }
 
+// The slot-card "Book this slot" button sends a precise, machine-oriented
+// instruction ("Please book the slot at <ISO> for event type <id>") so the AI
+// books the exact slot. Never show that raw string in the transcript — render a
+// friendly confirmation of the chosen time instead. Works for both the optimistic
+// message and the persisted one on reload (matched by the stable generated shape).
+function humanizeCustomerContent(content: string): string {
+  const m = /^please book the slot at (\S+?)\.?(?:\s+for event type\s+\S+)?\.?$/i.exec(content.trim());
+  if (!m) return content;
+  const d = new Date(m[1]!);
+  if (isNaN(d.getTime())) return "📅 Booking this slot";
+  const when = d.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `📅 Booking ${when}`;
+}
+
 // Animated "AI is typing" bubble — three dots with a wave-style scale loop so
 // the indicator feels alive (a step up from `animate-bounce`). Styled to match
 // an AI message bubble (left-aligned, neutral background).
@@ -192,7 +212,9 @@ export function MessageList({
                   </ReactMarkdown>
                 </div>
               ) : (
-                <span className="whitespace-pre-wrap">{m.content}</span>
+                <span className="whitespace-pre-wrap">
+                  {isCustomer ? humanizeCustomerContent(m.content) : m.content}
+                </span>
               )}
               {m.attachments && m.attachments.length > 0 ? (
                 <ul className="mt-1.5 space-y-2.5">

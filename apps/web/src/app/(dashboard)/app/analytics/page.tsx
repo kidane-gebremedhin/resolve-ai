@@ -53,6 +53,7 @@ type KnowledgeGap = {
   updatedAt: string;
 };
 type KnowledgeGapsResponse = { items: KnowledgeGap[] };
+type VolumeResponse = { messages: number; knowledgeSources: number; websiteScoped: boolean };
 
 function pct(used: number, total: number): string {
   if (total <= 0) return "0%";
@@ -115,6 +116,7 @@ async function Analytics({
   let convDaily: ConvDailyPoint[] = [];
   let feedback: FeedbackResponse | null = null;
   let knowledgeGaps: KnowledgeGap[] = [];
+  let volume: VolumeResponse | null = null;
   let websites: Website[] = [];
   let loadError: string | null = null;
 
@@ -122,13 +124,15 @@ async function Analytics({
     const convQs = new URLSearchParams({ limit: "200" });
     if (websiteId) convQs.set("websiteId", websiteId);
 
-    const [list, u, dailyResp, convDailyResp, feedbackResp, gapsResp, wsResp] = await Promise.all([
+    const [list, u, dailyResp, convDailyResp, feedbackResp, gapsResp, volumeResp, wsResp] = await Promise.all([
       api.get<ConversationList>(`/conversations?${convQs.toString()}`),
       api.get<UsageResponse>("/billing/usage"),
       api.get<DailyUsageResponse>(`/billing/usage/daily?days=${days}`),
       api.get<ConvDailyResponse>(`/analytics/conversations-daily?${qStr}`).catch(() => ({ points: [] as ConvDailyPoint[], days })),
       api.get<FeedbackResponse>(`/analytics/feedback?${qStr}`).catch(() => null),
-      api.get<KnowledgeGapsResponse>("/analytics/knowledge-gaps?limit=10").catch(() => ({ items: [] as KnowledgeGap[] })),
+      // Knowledge gaps + volume now obey the date-range + website filters.
+      api.get<KnowledgeGapsResponse>(`/analytics/knowledge-gaps?limit=10&${qStr}`).catch(() => ({ items: [] as KnowledgeGap[] })),
+      api.get<VolumeResponse>(`/analytics/volume?${qStr}`).catch(() => null),
       api.get<Website[]>("/websites").catch(() => [] as Website[]),
     ]);
     convos = list.items;
@@ -137,6 +141,7 @@ async function Analytics({
     convDaily = convDailyResp.points;
     feedback = feedbackResp;
     knowledgeGaps = gapsResp.items;
+    volume = volumeResp;
     websites = wsResp ?? [];
   } catch (e) {
     loadError = e instanceof ApiError ? e.message : "Failed to load analytics.";
@@ -168,8 +173,13 @@ async function Analytics({
 
   const topics = topSubjects(convos, 5);
 
-  const monthMessages = usage?.usage.messages.used ?? 0;
-  const monthLimit = usage?.usage.messages.limit ?? 0;
+  // Message + KB-source volume, scoped to the selected date range + website (falls
+  // back to org-wide billing usage if the volume endpoint is unavailable).
+  const scopedMessages = volume?.messages ?? usage?.usage.messages.used ?? 0;
+  const scopedKnowledgeSources = volume?.knowledgeSources ?? usage?.usage.knowledgeSources.used ?? 0;
+  // When one website is selected, the "Websites" count is 1; otherwise the org total.
+  const scopedWebsites = websiteId ? 1 : (usage?.usage.websites.used ?? 0);
+  const rangeLabel = isCustomRange ? `${fromParam} – ${toParam}` : `last ${days} days`;
 
   return (
     <div className="container-page py-8">
@@ -201,8 +211,8 @@ async function Analytics({
           { k: "Avg messages / convo", v: avgMessages, d: `${totalMessages.toLocaleString()} messages` },
           {
             k: "Messages this period",
-            v: monthMessages.toLocaleString(),
-            d: Number.isFinite(monthLimit) ? `of ${monthLimit.toLocaleString()}` : "Unlimited plan",
+            v: scopedMessages.toLocaleString(),
+            d: `${rangeLabel}${websiteId ? " · this website" : ""}`,
           },
         ].map((s) => (
           <div key={s.k} className="bg-card p-5">
@@ -249,24 +259,24 @@ async function Analytics({
         </div>
 
         <div className="rounded-xl border border-border bg-card p-5">
-          <div className="font-display text-sm font-semibold">Monthly volume</div>
+          <div className="font-display text-sm font-semibold">Volume</div>
           <p className="mt-1 text-[11px] text-muted-foreground">
-            Aggregated from billing usage for the current period.
+            {rangeLabel}{websiteId ? " · selected website" : ""}. Team members is an org-wide total.
           </p>
           <dl className="mt-4 space-y-3 text-sm">
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Messages</dt>
-              <dd className="font-medium">{monthMessages.toLocaleString()}</dd>
+              <dd className="font-medium">{scopedMessages.toLocaleString()}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Knowledge sources</dt>
               <dd className="font-medium">
-                {usage?.usage.knowledgeSources.used.toLocaleString() ?? 0}
+                {scopedKnowledgeSources.toLocaleString()}
               </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Websites</dt>
-              <dd className="font-medium">{usage?.usage.websites.used.toLocaleString() ?? 0}</dd>
+              <dd className="font-medium">{scopedWebsites.toLocaleString()}</dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-muted-foreground">Team members</dt>

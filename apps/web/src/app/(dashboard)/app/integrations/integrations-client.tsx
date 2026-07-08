@@ -28,6 +28,15 @@ type ProviderInfo = {
     rateLimitWindowMs?: number;
     enabledAgentIds: string[];
     toolDefs?: ToolDef[];
+    // Custom-webhook endpoint config for the active environment (auth value is a
+    // secret and is never sent — only hasAuthValue). Powers the edit form.
+    webhookConfig?: {
+      url?: string;
+      method?: string;
+      authHeader?: string;
+      hasAuthValue?: boolean;
+      inputSchema?: unknown;
+    };
   } | null;
 };
 
@@ -91,7 +100,7 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const inputCls =
   "mt-0.5 w-full rounded border border-neutral-300 px-1.5 py-0.5 text-xs dark:border-neutral-700 dark:bg-neutral-800";
 
-function GuardrailRow({ tool }: { tool: ToolDef }) {
+function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrails) => void }) {
   const g = tool.guardrails ?? {};
   // Which controls to show depends on what the tool does.
   const isRefund = /refund/i.test(tool.key);
@@ -106,7 +115,9 @@ function GuardrailRow({ tool }: { tool: ToolDef }) {
   const [bhEnd, setBhEnd] = useState(g.businessHoursEnd ?? "");
   const [bhTz, setBhTz] = useState(g.businessHoursTz ?? "");
   const [days, setDays] = useState<number[]>(g.businessDays ?? [1, 2, 3, 4, 5]);
-  const [namedAttendee, setNamedAttendee] = useState(g.requireNamedAttendee ?? false);
+  // Require a real attendee name defaults ON — bookings should capture the
+  // customer's real name unless the operator explicitly turns it off.
+  const [namedAttendee, setNamedAttendee] = useState(g.requireNamedAttendee ?? true);
   const [upgradeOnly, setUpgradeOnly] = useState(g.upgradeOnly ?? false);
   const [billingOwner, setBillingOwner] = useState(g.requireBillingOwner ?? false);
   const [saving, setSaving] = useState(false);
@@ -123,25 +134,30 @@ function GuardrailRow({ tool }: { tool: ToolDef }) {
     setSaveError(false);
     try {
       const token = await getAccessToken();
+      const payload: Guardrails = {
+        maxAmount: maxAmount === "" ? undefined : Number(maxAmount),
+        maxDaysSincePurchase: maxDays === "" ? undefined : Number(maxDays),
+        requireIdentityVerification: requireOtp,
+        allowedContactEmails: emails.split(",").map((e) => e.trim()).filter(Boolean),
+        businessHoursStart: bhStart,
+        businessHoursEnd: bhEnd,
+        businessDays: days,
+        businessHoursTz: bhTz,
+        requireNamedAttendee: namedAttendee,
+        upgradeOnly,
+        requireBillingOwner: billingOwner,
+      };
       const res = await fetch(`${API_URL}/integrations/tools/${tool._id}/guardrails`, {
         method: "PATCH",
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
-        body: JSON.stringify({
-          maxAmount: maxAmount === "" ? null : Number(maxAmount),
-          maxDaysSincePurchase: maxDays === "" ? null : Number(maxDays),
-          requireIdentityVerification: requireOtp,
-          allowedContactEmails: emails.split(",").map((e) => e.trim()).filter(Boolean),
-          businessHoursStart: bhStart,
-          businessHoursEnd: bhEnd,
-          businessDays: days,
-          businessHoursTz: bhTz,
-          requireNamedAttendee: namedAttendee,
-          upgradeOnly,
-          requireBillingOwner: billingOwner,
-        }),
+        body: JSON.stringify({ ...payload, maxAmount: maxAmount === "" ? null : Number(maxAmount), maxDaysSincePurchase: maxDays === "" ? null : Number(maxDays) }),
       });
-      if (res.ok) setSaved(true);
-      else setSaveError(true);
+      if (res.ok) {
+        setSaved(true);
+        // Report the saved values up so reopening the modal shows them (the row
+        // remounts from server props otherwise → stale values until a refresh).
+        onSaved?.(payload);
+      } else setSaveError(true);
     } catch {
       setSaveError(true);
     } finally {
@@ -275,7 +291,15 @@ function Modal({
 
 // Per-tool registry: rename, custom description (fed to the AI so it calls the
 // right tool for the right purpose), and which agents can access it.
-function ToolRegistryRow({ tool, agents }: { tool: ToolDef; agents: AgentOption[] }) {
+function ToolRegistryRow({
+  tool,
+  agents,
+  onSaved,
+}: {
+  tool: ToolDef;
+  agents: AgentOption[];
+  onSaved?: (v: { displayName: string; description: string; enabledAgentIds: string[] }) => void;
+}) {
   const [name, setName] = useState(tool.displayName ?? tool.key);
   const [desc, setDesc] = useState(tool.description ?? "");
   const [agentIds, setAgentIds] = useState<string[]>(tool.enabledAgentIds ?? []);
@@ -295,7 +319,10 @@ function ToolRegistryRow({ tool, agents }: { tool: ToolDef; agents: AgentOption[
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
         body: JSON.stringify({ displayName: name, description: desc, enabledAgentIds: agentIds }),
       });
-      if (res.ok) setSaved(true);
+      if (res.ok) {
+        setSaved(true);
+        onSaved?.({ displayName: name, description: desc, enabledAgentIds: agentIds });
+      }
     } catch {
       /* ignore */
     } finally {
@@ -362,10 +389,12 @@ function ToolRegistryModal({
   tools,
   agents,
   onClose,
+  onSaved,
 }: {
   tools: ToolDef[];
   agents: AgentOption[];
   onClose: () => void;
+  onSaved?: (id: string, v: { displayName: string; description: string; enabledAgentIds: string[] }) => void;
 }) {
   return (
     <Modal
@@ -378,7 +407,7 @@ function ToolRegistryModal({
       ) : (
         <div className="space-y-2">
           {tools.map((t) => (
-            <ToolRegistryRow key={t._id} tool={t} agents={agents} />
+            <ToolRegistryRow key={t._id} tool={t} agents={agents} onSaved={(v) => onSaved?.(t._id, v)} />
           ))}
         </div>
       )}
@@ -447,6 +476,156 @@ function EnvSegments({
   );
 }
 
+// Full editor for an existing custom webhook. Every connection detail is editable
+// here: endpoint URL, method, auth header, auth value, the input JSON schema, and
+// the tool's name/description. The auth value is a secret the server never returns,
+// so it starts blank — leaving it blank keeps the stored one. Single Save button →
+// closes on success (per the modal-close convention).
+function WebhookEditModal({ info, onClose }: { info: ProviderInfo; onClose: () => void }) {
+  const conn = info.connection!;
+  const cfg = conn.webhookConfig ?? {};
+  const tool = (conn.toolDefs ?? [])[0];
+  const [url, setUrl] = useState(cfg.url ?? "");
+  const [method, setMethod] = useState((cfg.method ?? "POST").toUpperCase());
+  const [authHeader, setAuthHeader] = useState(cfg.authHeader ?? "");
+  const [authValue, setAuthValue] = useState("");
+  const [toolName, setToolName] = useState(tool?.displayName ?? "");
+  const [toolDescription, setToolDescription] = useState(tool?.description ?? "");
+  const [schemaText, setSchemaText] = useState(
+    cfg.inputSchema ? JSON.stringify(cfg.inputSchema, null, 2) : "",
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const envLabel = conn.sandbox ? "sandbox" : "production";
+
+  async function save() {
+    setError(null);
+    let parsedSchema: unknown = undefined;
+    if (schemaText.trim()) {
+      try {
+        parsedSchema = JSON.parse(schemaText);
+      } catch {
+        setError("Input schema must be valid JSON.");
+        return;
+      }
+    }
+    if (!url.trim()) {
+      setError("A webhook URL is required.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_URL}/integrations/${conn._id}/webhook-config`, {
+        method: "PATCH",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          webhookUrl: url.trim(),
+          webhookMethod: method,
+          authHeader,
+          // Only send a value when the operator typed a new one, so a blank field
+          // keeps the stored secret.
+          ...(authValue ? { authValue } : {}),
+          inputSchema: parsedSchema,
+          toolName,
+          toolDescription,
+        }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(d.error ?? "Couldn't save — please try again.");
+        setSaving(false);
+        return;
+      }
+      // Reload to reflect the updated endpoint/schema/tool everywhere (also closes
+      // this single-save modal).
+      window.location.reload();
+    } catch {
+      setError("Couldn't save — please try again.");
+      setSaving(false);
+    }
+  }
+
+  const fieldCls =
+    "mt-0.5 w-full rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800";
+  return (
+    <Modal
+      title="Edit webhook"
+      subtitle={`Editing the ${envLabel} endpoint. All connection details are editable — the AI sees the tool name, description and input schema below.`}
+      onClose={onClose}
+    >
+      <div className="space-y-2">
+        {tool?.key && (
+          <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+            Tool key <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 dark:bg-neutral-800">{tool.key}</span>
+          </p>
+        )}
+        <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+          Display name
+          <input className={fieldCls} value={toolName} onChange={(e) => setToolName(e.target.value)} placeholder="Look up order" />
+        </label>
+        <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+          Description <span className="font-normal text-neutral-400">— when should the AI use this?</span>
+          <textarea className={`${fieldCls} min-h-[46px]`} value={toolDescription} onChange={(e) => setToolDescription(e.target.value)} />
+        </label>
+        <div className="flex gap-2">
+          <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+            Method
+            <select className={fieldCls} value={method} onChange={(e) => setMethod(e.target.value)}>
+              <option>POST</option>
+              <option>GET</option>
+              <option>PUT</option>
+              <option>PATCH</option>
+            </select>
+          </label>
+          <label className="block min-w-0 flex-1 text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+            Endpoint URL
+            <input className={fieldCls} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.yourservice.com/endpoint" required />
+          </label>
+        </div>
+        <div className="flex gap-2">
+          <label className="block min-w-0 flex-1 text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+            Auth header
+            <input className={fieldCls} value={authHeader} onChange={(e) => setAuthHeader(e.target.value)} placeholder="Authorization" />
+          </label>
+          <label className="block min-w-0 flex-1 text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+            Auth value
+            <input
+              className={fieldCls}
+              value={authValue}
+              onChange={(e) => setAuthValue(e.target.value)}
+              placeholder={cfg.hasAuthValue ? "•••••• (leave blank to keep)" : "Bearer xxx"}
+            />
+          </label>
+        </div>
+        <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+          Input JSON schema
+          <textarea
+            className={`${fieldCls} min-h-[90px] font-mono text-[11px]`}
+            value={schemaText}
+            onChange={(e) => setSchemaText(e.target.value)}
+            placeholder={'{"type":"object","properties":{"orderId":{"type":"string"}},"required":["orderId"]}'}
+          />
+        </label>
+        {error && <p className="text-[11px] text-red-500">{error}</p>}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            onClick={save}
+            disabled={saving}
+            className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+          >
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button onClick={onClose} className="text-xs text-neutral-500 hover:underline">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: AgentOption[] }) {
   const [connecting, setConnecting] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -484,6 +663,14 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
 
   const [showGuardrails, setShowGuardrails] = useState(false);
   const [showRegistry, setShowRegistry] = useState(false);
+  const [showWebhookEdit, setShowWebhookEdit] = useState(false);
+  // Client-side echoes of what was just saved in the multi-save modals, so that
+  // reopening a modal shows the new values instead of the stale server props (the
+  // rows remount on reopen). Keyed by toolDef id.
+  const [guardrailOverrides, setGuardrailOverrides] = useState<Record<string, Guardrails>>({});
+  const [registryOverrides, setRegistryOverrides] = useState<
+    Record<string, { displayName: string; description: string; enabledAgentIds: string[] }>
+  >({});
   // Which environment is selected/in-view. The active environment lives in the DB
   // (Connection.sandbox) — that's the single source of truth the dispatcher routes
   // every tool call to — so the card opens on it. A fresh card defaults to Sandbox.
@@ -541,7 +728,13 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
           rateLimitWindowMs: String(Math.max(1, Number(rlWindowSec) || 60) * 1000),
         }),
       });
-      if (res.ok) setSavedRl(true);
+      if (res.ok) {
+        setSavedRl(true);
+        // Single-save modal — confirm briefly, then close so the operator isn't
+        // left to dismiss it manually. (Multi-save modals like Guardrails / Tool
+        // registry stay open so several rows can be saved in one sitting.)
+        setTimeout(() => setShowRateLimits(false), 600);
+      }
     } catch {
       /* ignore */
     } finally {
@@ -1033,6 +1226,11 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
             <button onClick={() => setEditing(true)} className="text-xs text-neutral-500 hover:underline">
               Rename
             </button>
+            {isWebhook && (
+              <button onClick={() => setShowWebhookEdit(true)} className="text-xs text-neutral-500 hover:underline">
+                Edit webhook
+              </button>
+            )}
             <button onClick={() => setShowGuardrails(true)} className="text-xs text-neutral-500 hover:underline">
               Guardrails
             </button>
@@ -1057,11 +1255,15 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
           )}
           {showRegistry && (
             <ToolRegistryModal
-              tools={info.connection!.toolDefs ?? []}
+              tools={(info.connection!.toolDefs ?? []).map((t) =>
+                registryOverrides[t._id] ? { ...t, ...registryOverrides[t._id] } : t,
+              )}
               agents={agents}
               onClose={() => setShowRegistry(false)}
+              onSaved={(id, v) => setRegistryOverrides((p) => ({ ...p, [id]: v }))}
             />
           )}
+          {showWebhookEdit && <WebhookEditModal info={info} onClose={() => setShowWebhookEdit(false)} />}
           {editing && (
             <Modal title="Rename connection" onClose={() => setEditing(false)}>
               <label className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">Connection name</label>
@@ -1106,7 +1308,11 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
               ) : (
                 <div className="space-y-2">
                   {(info.connection!.toolDefs ?? []).map((t) => (
-                    <GuardrailRow key={t._id} tool={t} />
+                    <GuardrailRow
+                      key={t._id}
+                      tool={guardrailOverrides[t._id] ? { ...t, guardrails: guardrailOverrides[t._id] } : t}
+                      onSaved={(g) => setGuardrailOverrides((p) => ({ ...p, [t._id]: g }))}
+                    />
                   ))}
                 </div>
               )}

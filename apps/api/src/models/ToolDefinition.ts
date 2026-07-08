@@ -14,7 +14,10 @@ const guardrailsSchema = new Schema(
     businessDays: [{ type: Number }],
     businessHoursTz: { type: String },
     // book_meeting: require a real attendee name (not blank / a placeholder).
-    requireNamedAttendee: { type: Boolean, default: false },
+    // Defaults ON — bookings should capture the customer's real name unless the
+    // operator explicitly turns it off (in which case the adapter books under the
+    // generic "Customer" attendee).
+    requireNamedAttendee: { type: Boolean, default: true },
     // Subscription changes (upgrade/downgrade): only allow moving to a plan at or
     // above the current one (i.e. block downgrades through the AI).
     upgradeOnly: { type: Boolean, default: false },

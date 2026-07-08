@@ -18,6 +18,7 @@ import { logger } from "../../config/logger.js";
 import { recordConversationUsage } from "../openrouter-usage.service.js";
 import { ToolDefinition, KnowledgeGap } from "../../models/index.js";
 import { dispatchToolCall, resultToBlocks } from "../integrations/dispatcher.js";
+import { looksLikeRealName } from "../integrations/guardrails.js";
 import { fetchOgPreview, extractUrls } from "../og/preview.service.js";
 import { getAttachmentBuffer } from "../attachments.service.js";
 import type { MessageBlock } from "../../types/messageBlocks.js";
@@ -81,29 +82,87 @@ function stripUrlKeys(value: unknown): unknown {
   }
   return value;
 }
-function buildFormBlock(toolKey: string, schema: unknown, title?: unknown, onlyKeys?: string[]): MessageBlock | null {
+function buildFormBlock(
+  toolKey: string,
+  schema: unknown,
+  title?: unknown,
+  onlyKeys?: string[],
+  carryArgs?: Record<string, unknown>,
+  // Custom webhooks define their own input schema — every field is one the operator
+  // wants collected, so we do NOT strip the system-injected field names (email,
+  // timeZone, …) that only apply to built-in tools.
+  skipSystemFields = true,
+): MessageBlock | null {
   const s = schema as { properties?: Record<string, unknown>; required?: string[] } | undefined;
   if (!s || typeof s.properties !== "object" || s.properties === null) return null;
   const required = new Set(s.required ?? []);
   const onlySet = onlyKeys ? new Set(onlyKeys) : null;
   const fields = Object.entries(s.properties)
-    .filter(([key]) => !FORM_SKIP_FIELDS.has(key) && (!onlySet || onlySet.has(key)))
+    .filter(([key]) => (!skipSystemFields || !FORM_SKIP_FIELDS.has(key)) && (!onlySet || onlySet.has(key)))
     .map(([key, raw]) => {
-      const p = (raw ?? {}) as { description?: string; enum?: unknown[]; format?: string; type?: string };
-      const isSelect = Array.isArray(p.enum) && p.enum.length > 0;
-      const fieldType: "text" | "email" | "tel" | "select" | "textarea" =
-        isSelect ? "select" : p.format === "email" || p.type === "email" ? "email" : "text";
+      const p = (raw ?? {}) as {
+        description?: string; enum?: unknown[]; format?: string; type?: string;
+        minimum?: number; maximum?: number; pattern?: string;
+      };
+      const isEnum = Array.isArray(p.enum) && p.enum.length > 0;
+      // Booleans must be a fixed Yes/No choice, not a free-text box — otherwise the
+      // customer types something like "5" that can't coerce to a boolean and the
+      // submit fails schema validation ("Submission failed"). Enums render as a
+      // select of their allowed values.
+      const isBool = p.type === "boolean";
+      const isSelect = isEnum || isBool;
+      // Numeric fields become a number input (with integer step / min / max) so the
+      // customer can only enter a value the schema will accept — the form enforces
+      // the tool's declared datatypes client-side, not just at submit.
+      const isInteger = p.type === "integer";
+      const isNumber = p.type === "number" || isInteger;
+      const fieldType: "text" | "email" | "tel" | "select" | "textarea" | "number" =
+        isSelect ? "select" : isNumber ? "number" : p.format === "email" || p.type === "email" ? "email" : "text";
+      const options = isEnum
+        ? p.enum!.map((v) => ({ label: String(v), value: String(v) }))
+        : isBool
+          ? [{ label: "Yes", value: "true" }, { label: "No", value: "false" }]
+          : undefined;
       return {
         key,
         label: humanizeKey(key),
         type: fieldType,
         placeholder: p.description,
         required: required.has(key),
-        ...(isSelect ? { options: p.enum!.map((v) => ({ label: String(v), value: String(v) })) } : {}),
+        ...(options ? { options } : {}),
+        ...(isNumber
+          ? {
+              ...(typeof p.minimum === "number" ? { min: p.minimum } : {}),
+              ...(typeof p.maximum === "number" ? { max: p.maximum } : {}),
+              ...(isInteger ? { step: 1, integer: true } : {}),
+            }
+          : {}),
+        ...(!isNumber && !isSelect && typeof p.pattern === "string" ? { pattern: p.pattern } : {}),
       };
     });
   if (fields.length === 0) return null;
-  return { type: "form", title: title ? String(title) : "Please provide a few details", fields, submitLabel: "Submit", toolKey };
+  // Carry forward args the model already resolved (e.g. eventTypeId/startTime for a
+  // booking) that aren't shown as fields, so the widget re-submits them and the
+  // tool's full schema validates on the inline-form POST.
+  const visibleKeys = new Set(fields.map((f) => f.key));
+  const hiddenValues: Record<string, string> = {};
+  if (carryArgs) {
+    for (const [k, v] of Object.entries(carryArgs)) {
+      if (visibleKeys.has(k)) continue;
+      if (v === undefined || v === null) continue;
+      const str = String(v).trim();
+      if (!str || /^\[[A-Z_]+\]$/.test(str)) continue; // skip empty / masked "[PLACEHOLDER]"
+      hiddenValues[k] = str;
+    }
+  }
+  return {
+    type: "form",
+    title: title ? String(title) : "Please provide a few details",
+    fields,
+    submitLabel: "Submit",
+    toolKey,
+    ...(Object.keys(hiddenValues).length > 0 ? { hiddenValues } : {}),
+  };
 }
 
 // Required fields the customer still needs to provide for a tool — i.e. required,
@@ -538,15 +597,29 @@ export async function generateAiReply(
     const piiRedact = orgSettings?.piiRedaction !== false;
     const agentTools = buildAgentTools({ allowEscalation: controls.allowHumanEscalation });
 
-    // Append active integration tools for this agent
+    // Append active integration tools for this agent. Populate the connection's
+    // provider so we know which tools are custom webhooks — their inline form must
+    // collect the operator's FULL input schema, not just the missing required fields.
     const integrationToolDefs = await ToolDefinition.find({
       organizationId: conversation.organizationId,
       enabledAgentIds: conversation.agentId,
       isActive: true,
-    }).lean();
+    })
+      .populate("connectionId", "provider")
+      .lean();
     const integrationSchemaByKey = new Map<string, unknown>();
+    // Per-tool guardrails, so the auto-form can require a real attendee name when
+    // book_meeting's requireNamedAttendee guardrail is on (the model otherwise
+    // slips a hallucinated/placeholder name past the emptiness check).
+    const integrationGuardrailsByKey = new Map<string, { requireNamedAttendee?: boolean } | undefined>();
+    // Tool keys backed by a custom-webhook connection (operator-defined schema).
+    const webhookToolKeys = new Set<string>();
     for (const td of integrationToolDefs) {
       integrationSchemaByKey.set(td.key, td.jsonSchema);
+      integrationGuardrailsByKey.set(td.key, td.guardrails as { requireNamedAttendee?: boolean } | undefined);
+      if ((td.connectionId as { provider?: string } | null)?.provider === "webhook") {
+        webhookToolKeys.add(td.key as string);
+      }
       (agentTools as unknown[]).push({
         type: "function" as const,
         function: {
@@ -701,6 +774,10 @@ export async function generateAiReply(
               targetKey,
               integrationSchemaByKey.get(targetKey),
               call.arguments.title,
+              undefined,
+              undefined,
+              // Custom webhooks: collect every field of the operator's schema.
+              !webhookToolKeys.has(targetKey),
             );
             if (formBlock) {
               accumulatedBlocks.push(formBlock);
@@ -768,13 +845,57 @@ export async function generateAiReply(
             // dispatching with missing/guessed values. Reliable — doesn't depend on
             // the model choosing request_form.
             const schema = integrationSchemaByKey.get(call.name);
-            const missing = missingCustomerFields(schema, call.arguments);
-            const autoForm = missing.length > 0 ? buildFormBlock(call.name, schema, undefined, missing) : null;
-            if (autoForm) {
+            let formKeys = missingCustomerFields(schema, call.arguments);
+
+            // book_meeting is special: it can only proceed once a concrete slot has
+            // been chosen (eventTypeId + startTime, from a slot card). Two failure
+            // modes we guard here:
+            //  1. The model jumps to booking before a slot exists — a name-only form
+            //     would then submit with no slot and fail schema validation
+            //     ("Submission failed"). Steer it to list slots first instead.
+            //  2. The model slips a hallucinated/placeholder name ("Customer",
+            //     "there") past the emptiness check, so the booking proceeds under a
+            //     fake name and looks "booked". When the named-attendee guardrail is
+            //     on, treat a non-real name as missing so the form collects it.
+            let steerToSlots = false;
+            if (String(call.name) === "book_meeting") {
+              const hasEventType = String(call.arguments.eventTypeId ?? "").trim() !== "";
+              const hasStart = String(call.arguments.startTime ?? call.arguments.start ?? "").trim() !== "";
+              if (!hasEventType || !hasStart) {
+                steerToSlots = true;
+              } else {
+                const requiresName = integrationGuardrailsByKey.get(call.name)?.requireNamedAttendee !== false;
+                const providedName = String(call.arguments.name ?? "").trim();
+                if (requiresName && !looksLikeRealName(providedName) && !formKeys.includes("name")) {
+                  formKeys = [...formKeys, "name"];
+                }
+              }
+            }
+
+            // Custom webhooks: once the form is triggered, render the operator's
+            // ENTIRE input schema (all required + optional fields), not just the
+            // missing-required subset — the operator defined those fields precisely
+            // so the AI/customer must supply them all. Built-in tools keep the
+            // targeted "just the missing fields" form.
+            const isWebhookTool = webhookToolKeys.has(String(call.name));
+            const autoForm =
+              !steerToSlots && formKeys.length > 0
+                ? isWebhookTool
+                  ? buildFormBlock(call.name, schema, undefined, undefined, undefined, false)
+                  : buildFormBlock(call.name, schema, undefined, formKeys, call.arguments)
+                : null;
+
+            if (steerToSlots) {
+              result = JSON.stringify({
+                needsSlot: true,
+                note: "No meeting slot is selected yet. Call list_event_types then list_calendar_slots so the customer can pick a slot — do NOT book or claim a booking until they have picked one.",
+              });
+              toolStatus = "error";
+            } else if (autoForm) {
               accumulatedBlocks.push(autoForm);
               result = JSON.stringify({
                 formShown: true,
-                note: `The customer needs to provide: ${missing.join(", ")}. An inline form is now shown — STOP and wait for them to submit it. Do NOT call ${call.name} again or ask for these fields in chat.`,
+                note: `An inline form is now shown to collect the required inputs. STOP and wait for the customer to submit it. Do NOT call ${call.name} again, claim a result, or ask for these fields in chat.`,
               });
             } else {
             // Integration tool — dispatch through guardrails + audit log

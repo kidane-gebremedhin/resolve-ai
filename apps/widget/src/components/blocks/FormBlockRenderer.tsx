@@ -6,10 +6,16 @@ import { API_URL } from "../../lib/api-client";
 export type FormField = {
   key: string;
   label: string;
-  type: "text" | "email" | "tel" | "select" | "textarea";
+  type: "text" | "email" | "tel" | "select" | "textarea" | "number";
   placeholder?: string;
   required?: boolean;
   options?: { label: string; value: string }[];
+  // Datatype constraints from the tool's input JSON schema, enforced client-side.
+  min?: number;
+  max?: number;
+  step?: number;
+  pattern?: string;
+  integer?: boolean;
 };
 
 export type FormBlockData = {
@@ -18,6 +24,9 @@ export type FormBlockData = {
   fields: FormField[];
   submitLabel: string;
   toolKey: string;
+  // Values the AI already resolved (e.g. a booking's eventTypeId/startTime) that
+  // aren't editable fields — merged into the payload so the tool schema validates.
+  hiddenValues?: Record<string, string>;
 };
 
 export function FormBlockRenderer({
@@ -45,11 +54,35 @@ export function FormBlockRenderer({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Client-side required validation
+    // Client-side validation: required + datatype constraints from the tool's
+    // input JSON schema, so a value the schema would reject never reaches the server.
     const newErrors: Record<string, string> = {};
     for (const field of block.fields) {
-      if (field.required && !values[field.key]?.trim()) {
+      const raw = values[field.key]?.trim() ?? "";
+      if (field.required && !raw) {
         newErrors[field.key] = `${field.label} is required`;
+        continue;
+      }
+      if (!raw) continue; // optional + empty → skip type checks (dropped on submit)
+      if (field.type === "number") {
+        const n = Number(raw);
+        if (!Number.isFinite(n)) {
+          newErrors[field.key] = `${field.label} must be a number`;
+        } else if (field.integer && !Number.isInteger(n)) {
+          newErrors[field.key] = `${field.label} must be a whole number`;
+        } else if (typeof field.min === "number" && n < field.min) {
+          newErrors[field.key] = `${field.label} must be at least ${field.min}`;
+        } else if (typeof field.max === "number" && n > field.max) {
+          newErrors[field.key] = `${field.label} must be at most ${field.max}`;
+        }
+      } else if (field.pattern) {
+        try {
+          if (!new RegExp(field.pattern).test(raw)) {
+            newErrors[field.key] = `${field.label} is not in the expected format`;
+          }
+        } catch {
+          /* invalid pattern in schema — don't block */
+        }
       }
     }
     if (Object.keys(newErrors).length > 0) {
@@ -66,6 +99,15 @@ export function FormBlockRenderer({
       // values. onSendMessage is only a fallback when we can't post directly.
       let posted = false;
       if (conversationId && sessionToken) {
+        // Merge the AI-resolved hidden values (e.g. eventTypeId/startTime) with what
+        // the customer typed. Drop empty values so an untouched OPTIONAL field (e.g. a
+        // blank Yes/No select) isn't sent as "" — an empty string can't coerce to the
+        // schema's number/boolean type and would fail validation. Required blanks are
+        // already caught by the client-side check above.
+        const merged: Record<string, string> = { ...(block.hiddenValues ?? {}), ...values };
+        const formPayload = Object.fromEntries(
+          Object.entries(merged).filter(([, v]) => String(v ?? "").trim() !== ""),
+        );
         const res = await fetch(`${API_URL}/widget/conversations/${conversationId}/messages`, {
           method: "POST",
           headers: {
@@ -74,7 +116,7 @@ export function FormBlockRenderer({
           },
           body: JSON.stringify({
             content: `Submitted ${block.title ?? block.toolKey}`,
-            formPayload: values,
+            formPayload,
             toolKey: block.toolKey,
           }),
         });
@@ -146,6 +188,15 @@ export function FormBlockRenderer({
                 value={values[field.key] ?? ""}
                 placeholder={field.placeholder}
                 onChange={(e) => handleChange(field.key, e.target.value)}
+                {...(field.type === "number"
+                  ? {
+                      inputMode: field.integer ? "numeric" : "decimal",
+                      step: field.step ?? (field.integer ? 1 : "any"),
+                      ...(typeof field.min === "number" ? { min: field.min } : {}),
+                      ...(typeof field.max === "number" ? { max: field.max } : {}),
+                    }
+                  : {})}
+                {...(field.pattern ? { pattern: field.pattern } : {})}
                 className="w-full rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs text-neutral-900 focus:outline-none focus:ring-1 dark:border-neutral-600 dark:bg-neutral-800 dark:text-neutral-100"
               />
             )}

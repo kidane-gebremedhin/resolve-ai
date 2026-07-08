@@ -61,6 +61,25 @@ Each feature is independently shippable; they share no hard ordering except that
 - **Mobile close button**: on phones the widget shows its own ✕ in the top-right
   (`WidgetRoot`, posts `csb:close`); the embed hides the floating launcher while
   open on phones to avoid a redundant control.
+- **Unread launcher badge (Changelog 4)**: `WidgetRoot` counts non-customer messages
+  that arrive while the widget is **closed/collapsed** (`isWidgetVisibleRef` false),
+  posts `csb:unread` to the embed which renders the red launcher badge (shown only
+  while `!isOpen`). Counting rules that keep it accurate:
+  - Messages **seen while the widget is open** bump `lastSeenAt`, so a page reload
+    doesn't recount them (the initial badge = non-customer messages newer than
+    `lastSeenAt`). Previously `lastSeenAt` was bumped only on open/close, so an open
+    session's read messages were re-counted on reload ("counting all messages").
+  - Unread **dedupes by message id** (`countedUnreadIdsRef`, cleared when the count
+    resets on open/close) so a reply that emits `message:new` twice (streaming
+    placeholder + finalize) counts once, not twice.
+  - Opening the widget resets the count to 0 and clears the badge.
+  - **The collapsed panel must stay ALIVE (Changelog 5).** The embed hides the iframe
+    with `visibility:hidden` + `pointer-events:none` (`hidePanel`/`showPanel`), NOT
+    `display:none`. A `display:none` iframe is throttled so Socket.io's heartbeat is
+    missed and the socket drops — then messages that arrive while collapsed are never
+    received and the badge only appears after a reload. `visibility:hidden` keeps the
+    iframe rendered and the socket connected so unread counts live. The embed also
+    posts `csb:widget-closed` BEFORE hiding so the widget reliably flips to collapsed.
 
 ### Open questions (flag in plan, default if unanswered)
 - O1: Match the accent color exactly, or introduce a darker "send-pressed" shade? → Default: derive pressed shade via CSS `filter: brightness(0.92)`, no new setting.

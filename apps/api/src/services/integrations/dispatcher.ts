@@ -126,12 +126,21 @@ export async function dispatchToolCall(
 ): Promise<DispatchResult> {
   const startMs = Date.now();
 
-  // Load the tool definition for this tool key + org
-  const toolDef = await ToolDefinition.findOne({
+  // Load the tool definition(s) for this tool key + org. A custom webhook can be
+  // disconnected (revoked) and re-added, leaving more than one tool def sharing the
+  // same key — one pointing at the revoked connection, one at the live one. Prefer
+  // the tool def whose connection is still active so a reconnect never routes to the
+  // dead connection (which would surface a "connection has been revoked" error).
+  const toolDefs = await ToolDefinition.find({
     organizationId: ctx.organizationId,
     key: toolKey,
     isActive: true,
   }).populate("connectionId");
+
+  const toolDef =
+    toolDefs.find((td) => (td.connectionId as unknown as { status?: string } | null)?.status === "active") ??
+    toolDefs.find((td) => Boolean(td.connectionId)) ??
+    toolDefs[0];
 
   if (!toolDef || !toolDef.connectionId) {
     return { ok: false, blocked: false, error: `Tool '${toolKey}' not found or inactive.`, status: "error" };
@@ -224,7 +233,14 @@ export async function dispatchToolCall(
       const refreshed = await adapter.refreshTokens(connection.encryptedCredentials);
       if (refreshed) {
         const newEncrypted = encrypt(JSON.stringify(refreshed));
-        await Connection.updateOne({ _id: connection._id }, { $set: { encryptedCredentials: newEncrypted } });
+        // Persist into the active environment's slot too (not just the mirror), so a
+        // later env switch can't restore a stale, already-rotated refresh token and
+        // break the connection. See refreshOAuthTokens.ts for the same reasoning.
+        const activeSlot = connection.sandbox ? "sandboxCredentials" : "productionCredentials";
+        await Connection.updateOne(
+          { _id: connection._id },
+          { $set: { encryptedCredentials: newEncrypted, [activeSlot]: newEncrypted } },
+        );
         rawCredentials = refreshed;
         logger.info("[dispatcher] OAuth token refreshed", { provider: connection.provider });
       }

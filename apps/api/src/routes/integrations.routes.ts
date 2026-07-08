@@ -45,6 +45,31 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     });
   }
 
+  // For custom webhooks, surface the active environment's endpoint config so the
+  // dashboard can pre-fill the edit form. The auth VALUE is a secret and is never
+  // returned — only whether one is set (hasAuthValue) so the UI can show a
+  // "leave blank to keep current" hint.
+  const webhookConfigOf = (conn: (typeof connections)[number]): {
+    url?: string; method?: string; authHeader?: string; hasAuthValue: boolean; inputSchema?: unknown;
+  } | undefined => {
+    if (conn.provider !== "webhook" || !conn.encryptedCredentials) return undefined;
+    try {
+      const creds = JSON.parse(
+        decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
+      ) as { extra?: { url?: string; method?: string; authHeader?: string; authValue?: string; inputSchema?: unknown } };
+      const extra = creds.extra ?? {};
+      return {
+        url: extra.url,
+        method: extra.method ?? "POST",
+        authHeader: extra.authHeader,
+        hasAuthValue: Boolean(extra.authValue),
+        inputSchema: extra.inputSchema,
+      };
+    } catch {
+      return undefined;
+    }
+  };
+
   const connCard = (conn: (typeof connections)[number]) => ({
     _id: conn._id,
     name: conn.name,
@@ -60,6 +85,7 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     rateLimitWindowMs: conn.rateLimitWindowMs ?? 60_000,
     enabledAgentIds: [...(enabledByConn.get(String(conn._id)) ?? [])],
     toolDefs: toolsByConn.get(String(conn._id)) ?? [],
+    webhookConfig: webhookConfigOf(conn),
   });
 
   const providers = adapters.flatMap((a) => {
@@ -205,6 +231,17 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
       scopes: [],
       createdBy: req.auth!.userId,
     });
+    // If this exact webhook (same tool key) was previously connected and then
+    // revoked, carry its per-agent enablement onto the new connection so the
+    // re-added "exact" connection works immediately instead of silently starting
+    // disabled. Only inherit from a now-inactive (revoked) tool def.
+    const priorToolDef = await ToolDefinition.findOne(
+      { organizationId: orgId, key: String(toolKey), isActive: false },
+      { enabledAgentIds: 1 },
+    )
+      .sort({ updatedAt: -1 })
+      .lean();
+    const inheritedAgentIds = (priorToolDef?.enabledAgentIds ?? []) as unknown[];
     await ToolDefinition.updateOne(
       { connectionId: conn._id, key: String(toolKey) },
       {
@@ -216,7 +253,7 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
           description: String(toolDescription ?? `Custom webhook tool: ${toolKey}`),
           jsonSchema: schema,
           isActive: true,
-          enabledAgentIds: [],
+          enabledAgentIds: inheritedAgentIds,
         },
       },
       { upsert: true },
@@ -294,11 +331,15 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
         ToolDefinition.updateOne(
           { connectionId: conn._id, key: t.key },
           {
+            // isActive lives in $set (not $setOnInsert) so RE-connecting an existing
+            // connection reactivates its tools. Disconnecting sets them isActive:false;
+            // without this, a reconnect would revive the connection but leave the tools
+            // inactive → the AI is never offered them ("I'm unable to file a ticket").
+            $set: { isActive: true },
             $setOnInsert: {
               connectionId: conn._id,
               organizationId: orgId,
               ...t,
-              isActive: true,
               enabledAgentIds: [],
             },
           },
@@ -398,11 +439,14 @@ router.get("/:provider/callback", async (req: Request, res: Response) => {
       ToolDefinition.updateOne(
         { connectionId: conn!._id, key: t.key },
         {
+          // isActive in $set so re-connecting (OAuth re-auth) reactivates existing
+          // tools — a disconnect set them isActive:false and $setOnInsert alone would
+          // never flip them back, leaving the AI without the tool after a reconnect.
+          $set: { isActive: true },
           $setOnInsert: {
             connectionId: conn!._id,
             organizationId: orgId,
             ...t,
-            isActive: true,
             enabledAgentIds: [],
           },
         },
@@ -586,6 +630,14 @@ router.delete("/:connectionId", requireAuth, requireOrg, async (req: Request, re
     res.status(404).json({ error: "Connection not found." });
     return;
   }
+  // Deactivate this connection's tool definitions so they are no longer offered to
+  // the AI or picked up by the dispatcher. Without this, a re-added "exact" webhook
+  // (same tool key, new connection) can still resolve to the revoked connection and
+  // fail with "the integration connection has been revoked".
+  await ToolDefinition.updateMany(
+    { connectionId: req.params.connectionId, organizationId: orgId },
+    { $set: { isActive: false } },
+  );
   res.json({ ok: true });
 });
 
@@ -640,6 +692,87 @@ router.post("/:connectionId/webhook-endpoint", requireAuth, requireOrg, async (r
     { $set: { [slot]: encrypted, encryptedCredentials: encrypted, sandbox: isSandbox, status: "active" } },
   );
   res.json({ ok: true, environment: isSandbox ? "sandbox" : "production" });
+});
+
+// ---- PATCH /integrations/:connectionId/webhook-config ---- edit an existing
+// custom webhook. Every connection detail is editable here: URL, method, auth
+// header/value, the input JSON schema, and the tool's display name/description.
+// Applies to the CURRENTLY-active environment. The auth value is a secret — omit
+// it (or send blank) to keep the stored one; send a new value to replace it.
+router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const {
+    webhookUrl, webhookMethod, authHeader, authValue, inputSchema, toolName, toolDescription,
+  } = req.body as {
+    webhookUrl?: string; webhookMethod?: string; authHeader?: string; authValue?: string;
+    inputSchema?: Record<string, unknown>; toolName?: string; toolDescription?: string;
+  };
+  const conn = await Connection.findOne({
+    _id: req.params.connectionId,
+    organizationId: req.orgId,
+    provider: "webhook",
+  });
+  if (!conn) {
+    res.status(404).json({ error: "Webhook connection not found." });
+    return;
+  }
+  if (!webhookUrl || !String(webhookUrl).trim()) {
+    res.status(400).json({ error: "A webhook URL is required." });
+    return;
+  }
+
+  // Read the existing active credentials so we can preserve the stored auth value
+  // (a secret the client never sees) and the input schema when not being changed.
+  let existing: { url?: string; method?: string; authHeader?: string; authValue?: string; inputSchema?: unknown } = {};
+  try {
+    const parsed = JSON.parse(
+      decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
+    ) as { extra?: typeof existing };
+    existing = parsed.extra ?? {};
+  } catch {
+    /* start from empty if the current blob can't be read */
+  }
+
+  // Only accept a genuine JSON Schema; otherwise keep the existing one (mirrors the
+  // guard in the connect route so a pasted sample response can't break the tool).
+  const looksLikeSchema =
+    inputSchema && typeof inputSchema === "object" &&
+    (inputSchema as { type?: unknown }).type === "object" &&
+    typeof (inputSchema as { properties?: unknown }).properties === "object";
+  const schema = looksLikeSchema
+    ? inputSchema
+    : existing.inputSchema ?? { type: "object", properties: {}, required: [] };
+
+  const credentials = {
+    extra: {
+      url: String(webhookUrl),
+      method: webhookMethod ? String(webhookMethod).toUpperCase() : existing.method ?? "POST",
+      // A provided header replaces; an explicitly-blank header clears it.
+      authHeader: authHeader !== undefined ? String(authHeader) || undefined : existing.authHeader,
+      // A non-empty value replaces the secret; blank/omitted keeps the stored one.
+      authValue: authValue ? String(authValue) : existing.authValue,
+      inputSchema: schema,
+    },
+  };
+  const isSandbox = Boolean(conn.sandbox);
+  const encrypted = encrypt(JSON.stringify(credentials));
+  const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
+  await Connection.updateOne(
+    { _id: conn._id },
+    { $set: { [slot]: encrypted, encryptedCredentials: encrypted } },
+  );
+
+  // Keep the tool definition in sync: the input schema drives the tool the AI sees,
+  // and name/description are how the AI decides when to call it. The webhook's tool
+  // def is the (single) one attached to this connection.
+  const toolSet: Record<string, unknown> = { jsonSchema: schema };
+  if (typeof toolName === "string" && toolName.trim()) toolSet.displayName = toolName.trim().slice(0, 100);
+  if (typeof toolDescription === "string" && toolDescription.trim()) toolSet.description = toolDescription.trim().slice(0, 500);
+  await ToolDefinition.updateMany(
+    { connectionId: conn._id, organizationId: req.orgId },
+    { $set: toolSet },
+  );
+
+  res.json({ ok: true });
 });
 
 // ---- POST /integrations/:connectionId/verify ---- re-check a live connection

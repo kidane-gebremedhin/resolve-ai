@@ -16,7 +16,7 @@ const WEEKDAY_INDEX: Record<string, number> = {
 // Plan ordering for subscription guardrails (upgradeOnly).
 const PLAN_RANK: Record<string, number> = { starter: 0, pro: 1, business: 2, enterprise: 3 };
 
-function looksLikeRealName(name: string): boolean {
+export function looksLikeRealName(name: string): boolean {
   const n = name.trim();
   if (n.length < 2) return false;
   // Reject obvious placeholders the model falls back to.

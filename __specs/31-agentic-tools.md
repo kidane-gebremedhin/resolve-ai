@@ -24,6 +24,60 @@ skipped: when `book_meeting` is called without a `name`, `missingCustomerFields`
 flags it and the inline auto-form collects the attendee's real name, which both
 satisfies the guardrail and is required by Cal.com regardless.
 
+**Default ON + generic fallback (Changelog 1).** `requireNamedAttendee` now defaults
+to **true** (the `ToolDefinition.guardrails` schema default and the Guardrails-editor
+checkbox), so new Cal.com connections capture the customer's real name out of the
+box. When an operator explicitly turns it **off**, a nameless booking is allowed and
+the Cal.com adapter books under the generic attendee name **"Customer"** (Cal.com
+rejects a blank attendee name).
+
+**Inline-form hidden values (Changelog 1) — fixes "Submission failed".** The
+`book_meeting` auto-form only collects the missing `name`, but the widget re-validates
+the submitted payload against the tool's **full** schema (which also requires
+`eventTypeId` + `startTime`, chosen earlier from a slot card). Submitting `name` alone
+failed that validation → "Submission failed. Please try again." The form block now
+carries the model's already-resolved args as `hiddenValues` (e.g. `eventTypeId`,
+`startTime`); `FormBlockRenderer` merges them into the POST payload so the full schema
+validates and the tool dispatches once with the correct values. Masked/placeholder
+values (`[EMAIL]`) are stripped from `hiddenValues` so the dispatcher's own injection
+still wins.
+
+**ajv strict/format + type coercion (Changelog 2) — the actual "Submission failed"
+root cause.** The inline-form submit route (`widget.routes.ts`) and the webhook adapter
+compile tool schemas with ajv. `book_meeting`'s `startTime` is `format: "date-time"`
+and we don't register `ajv-formats`, so a **strict** ajv *throws* at compile time
+("unknown format … ignored") → HTTP 500 on every booking submit. Both ajv instances are
+now `{ coerceTypes: true, strict: false }`: `strict:false` stops the unknown-format
+throw, and `coerceTypes` lets string form values (all widget inputs are strings)
+satisfy numeric/boolean schema fields (a webhook's `quantity: number`,
+`expedited: boolean`) — otherwise those also surfaced "Submission failed". The submit
+route additionally validates **without `required`** (the form only collects the fields
+the customer must supply; the rest are hidden values or dispatcher-injected).
+
+**Steer-to-slots + real-name enforcement (Changelog 2).** In `agent.service`,
+`book_meeting` is guarded: (1) if called before a slot exists (no `eventTypeId` /
+`startTime`), the tool returns a "call `list_calendar_slots` first" note instead of a
+name-only form that could never book — and the model must not claim a booking; (2) when
+the named-attendee guardrail is on and the model passes a placeholder/hallucinated name
+(`"Customer"`, `"there"`), that name is treated as **missing** so the inline form
+collects a real one. Together these stop the "it said it booked but never asked for a
+name" failure.
+
+**Webhook inline-form directive (Changelog 2).** The integration-tools prompt layer now
+forcefully instructs the model to CALL the matching tool on the first matching turn
+(which triggers the inline form) rather than asking for identifiers like an order number
+in chat — the previous soft wording let the model ask in chat and never show the form.
+
+**Custom-webhook forms render the FULL operator schema (Changelog 3).** For a custom
+webhook the operator's input JSON schema defines exactly the fields to collect, so its
+inline form renders **every** property (required + optional), not just the missing
+required subset a built-in tool shows. `agent.service` marks which tool keys are backed
+by a `webhook` connection (via a populated connection `provider`) and calls
+`buildFormBlock` with `skipSystemFields=false` for them — so system-injected field names
+(`email`, `timeZone`, …) that only apply to built-in tools are not stripped from the
+operator's schema, and optional fields (e.g. a boolean `expedited`, rendered as a Yes/No
+select) are always captured. Built-in tools keep the targeted missing-fields form.
+
 ### Support-ticket description — concise summary (updated, Changelog 1)
 Superseded the earlier full-transcript injection. The dispatcher no longer dumps
 the whole conversation into the ticket: `JIRA_TOOL_INSTRUCTIONS` in

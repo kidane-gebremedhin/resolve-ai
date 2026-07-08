@@ -4,7 +4,14 @@ import type { EncryptedBlob } from "../../security/crypto.service.js";
 import { assertSafeUrl } from "../ssrf.js";
 import { env } from "../../../config/env.js";
 
-const ajv = new Ajv({ allErrors: true, coerceTypes: false });
+// coerceTypes so numeric/boolean args arriving as strings validate and are coerced
+// to the right JS type before the HTTP call. Inline-form submissions send every
+// field as a string (the widget's text inputs), so a webhook whose schema declares
+// `quantity: number` or `expedited: boolean` would otherwise fail validation with
+// "must be number" and surface "Submission failed" to the customer.
+// strict:false so a schema using a standard `format` keyword doesn't throw at
+// compile time (we don't register ajv-formats).
+const ajv = new Ajv({ allErrors: true, coerceTypes: true, strict: false });
 
 export class WebhookAdapter implements ProviderAdapter {
   readonly provider = "webhook";

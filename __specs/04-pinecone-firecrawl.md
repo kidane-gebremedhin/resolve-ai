@@ -53,6 +53,17 @@ interface PineconeMetadata {
 > Otherwise a re-ingest that yields fewer chunks orphans the old high-index
 > vectors. (`ingestSource` does this; the `/knowledge/:id/reingest` route relies on it.)
 
+> **Per-page chunk attribution must survive re-ingest (Changelog 2).** Each website
+> chunk stores its **originating page URL** in Pinecone `metadata.url` so citations
+> deep-link to the exact page, not the site's base URL. The live-crawl path sets this
+> per page; the **reconcile / reingest** path (`ingestSource`) must too. It works off
+> the stored `extractedText` (per-page blocks `"# <pageUrl>\n\n<markdown>"` joined by
+> `---`): `splitCrawledPages()` reconstructs the pages (splitting on the page-URL
+> headers, not the `---` separators, so an in-page markdown rule can't cause a false
+> split) and each chunk is tagged with its page URL. A reingest that re-chunks the
+> concatenated text as one blob and tags every chunk with the base `sourceUrl` (the
+> old bug) collapses all citations to the homepage.
+
 ### Vector ID Convention
 
 ```

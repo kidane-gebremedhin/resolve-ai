@@ -297,6 +297,23 @@ function playProactiveBeep(): void {
   let hasOpenedOnce = false;
   let pendingProactivePayload: { triggerId: string; message: string } | null = null;
 
+  // Hide the panel WITHOUT `display:none`. A display:none iframe has its event loop
+  // (and its Socket.io connection) suspended/throttled by the browser, so live
+  // messages that arrive while the widget is collapsed are never received — the
+  // unread badge then only appears after a page reload (which re-fetches). Keeping
+  // the iframe rendered but `visibility:hidden` + non-interactive keeps the socket
+  // alive so unread counting works live while collapsed.
+  function hidePanel(el: HTMLIFrameElement): void {
+    el.style.display = "block";
+    el.style.visibility = "hidden";
+    el.style.pointerEvents = "none";
+  }
+  function showPanel(el: HTMLIFrameElement): void {
+    el.style.display = "block";
+    el.style.visibility = "visible";
+    el.style.pointerEvents = "auto";
+  }
+
   function ensureIframe(): HTMLIFrameElement {
     if (iframe) return iframe;
     iframe = document.createElement("iframe");
@@ -306,8 +323,9 @@ function playProactiveBeep(): void {
     iframe.setAttribute("allow", "clipboard-write; microphone; autoplay");
     iframe.setAttribute("aria-label", "Customer support chat");
     iframe.dataset.position = position;
-    // Start hidden so the widget can boot + post unread count without showing the panel.
-    iframe.style.display = "none";
+    // Start hidden (but alive) so the widget can boot, keep its socket open, and
+    // post live unread counts without showing the panel.
+    hidePanel(iframe);
     document.body.appendChild(iframe);
     return iframe;
   }
@@ -324,7 +342,7 @@ function playProactiveBeep(): void {
 
   function openWidget(): void {
     const el = ensureIframe();
-    el.style.display = "block";
+    showPanel(el);
     hasOpenedOnce = true;
     setLauncherOpenState(true);
     hideBadge();
@@ -338,9 +356,11 @@ function playProactiveBeep(): void {
 
   function closeWidget(): void {
     if (iframe) {
-      iframe.style.display = "none";
-      // Notify the widget it's now hidden so it can start accumulating unread.
+      // Notify the widget it's now hidden FIRST (while it's still fully alive) so it
+      // reliably flips to "collapsed" and starts accumulating unread, THEN visually
+      // hide the (still-running) panel.
       iframe.contentWindow?.postMessage({ type: "csb:widget-closed" }, widgetOrigin);
+      hidePanel(iframe);
     }
     setLauncherOpenState(false);
     // Restore the launcher (CSS controls its real display) so it's tappable to

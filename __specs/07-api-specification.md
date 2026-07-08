@@ -591,6 +591,23 @@ Dashboard analytics overview.
 | Query | `?websiteId=xxx&period=7d|30d|90d` |
 | Response `200` | `{ totalConversations, resolvedCount, escalatedCount, avgResponseTime, aiMessages, operatorMessages, topKBQueries: [...] }` |
 
+### `GET /api/v1/analytics/volume` (Changelog 3)
+Message + knowledge-source volume **scoped to the selected filters**, so the analytics
+"Messages this period" / "Volume" cards obey the date range + website (billing `/usage`
+is billing-period + org-wide and can't). Messages are counted in the window; when a
+`websiteId` is given they're limited to that site's conversations and KB sources to that
+site's agents.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT |
+| Query | `?from=YYYY-MM-DD&to=YYYY-MM-DD` or `?days=N`, optional `&websiteId=xxx` |
+| Response `200` | `{ messages, knowledgeSources, websiteScoped }` |
+
+> `GET /api/v1/analytics/knowledge-gaps` also honours these filters now (Changelog 3):
+> `?from&to|days` (window on `updatedAt`) and `?websiteId` (resolved to the website's
+> agent ids, since gaps are keyed by agent).
+
 ### `GET /api/v1/analytics/conversations`
 Conversation analytics over time.
 
