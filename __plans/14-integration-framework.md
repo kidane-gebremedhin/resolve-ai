@@ -100,4 +100,8 @@ Build the spine that lets operators connect third-party services (OAuth or API k
 - Concrete tool implementations (Cal.com slots, Stripe refunds, etc.) — Plan 15.
 - Rich card rendering of tool results — Plan 16.
 - Shopify product connector (same adapter pattern as others; add post-Stripe approval).
-- Webhook signature verification from inbound webhooks (separate from outbound calls).
+- ~~Webhook signature verification from inbound webhooks (separate from outbound calls).~~
+  **Implemented (Changelog 5):** per-connection inbound Paddle/Stripe subscription
+  webhook receiver — HMAC-verified against a per-connection signing secret, distilled
+  into an `ExternalSubscription` snapshot. See `services/integrations/webhookReceiver.ts`,
+  the `POST /integrations/{paddle,stripe}/webhook/:connectionId` routes, and spec 30.

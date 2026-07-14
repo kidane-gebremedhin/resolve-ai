@@ -1,4 +1,4 @@
-import type { ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
+import type { OAuthAppCreds, ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
 import type { EncryptedBlob } from "../../security/crypto.service.js";
 import { env } from "../../../config/env.js";
 
@@ -8,10 +8,14 @@ const GQL_ENDPOINT = "https://api.linear.app/graphql";
 export class LinearAdapter implements ProviderAdapter {
   readonly provider = "linear";
 
-  buildAuthUrl(orgId: string, state: string): string {
+  private redirectUri(app?: OAuthAppCreds | null): string {
+    return app?.redirectUri ?? `${env.apiBaseUrl}/api/v1/integrations/linear/callback`;
+  }
+
+  buildAuthUrl(_orgId: string, state: string, app?: OAuthAppCreds | null): string {
     const params = new URLSearchParams({
-      client_id: process.env.LINEAR_CLIENT_ID ?? "",
-      redirect_uri: `${env.apiBaseUrl}/api/v1/integrations/linear/callback`,
+      client_id: app?.clientId ?? "",
+      redirect_uri: this.redirectUri(app),
       response_type: "code",
       scope: "issues:create,read",
       state,
@@ -19,23 +23,30 @@ export class LinearAdapter implements ProviderAdapter {
     return `${OAUTH_BASE}/authorize?${params.toString()}`;
   }
 
-  async exchangeCode(code: string, _orgId: string): Promise<RawCredentials> {
+  async exchangeCode(code: string, _orgId: string, app?: OAuthAppCreds | null): Promise<RawCredentials> {
     const res = await fetch(`${OAUTH_BASE}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_id: process.env.LINEAR_CLIENT_ID ?? "",
-        client_secret: process.env.LINEAR_CLIENT_SECRET ?? "",
+        client_id: app?.clientId ?? "",
+        client_secret: app?.clientSecret ?? "",
         code,
         grant_type: "authorization_code",
-        redirect_uri: `${env.apiBaseUrl}/api/v1/integrations/linear/callback`,
+        redirect_uri: this.redirectUri(app),
       }),
     });
     const data = (await res.json()) as Record<string, unknown>;
+    // A failed exchange (bad/missing secret, expired code) returns no access_token —
+    // surface it rather than storing a tokenless "connected" integration.
+    if (!res.ok || !data.access_token) {
+      throw new Error(
+        `Linear token exchange failed: ${data.error_description ?? data.error ?? res.status}`,
+      );
+    }
     return { accessToken: data.access_token as string };
   }
 
-  async refreshTokens(_blob: EncryptedBlob): Promise<RawCredentials | null> {
+  async refreshTokens(_blob: EncryptedBlob, _app?: OAuthAppCreds | null): Promise<RawCredentials | null> {
     return null;
   }
 

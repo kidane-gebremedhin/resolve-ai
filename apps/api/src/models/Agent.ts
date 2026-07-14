@@ -22,6 +22,22 @@ const agentSchema = new Schema(
     // "KAN", "SUPPORT"). When set, the dispatcher routes create_support_ticket to
     // this project instead of the AI's guessed/default one.
     jiraProjectKey: { type: String },
+    // When several connections expose the SAME tool key (similar-capability tools,
+    // e.g. Jira + Linear both `create_support_ticket`), this fixes which one the agent
+    // calls first and the order to fall back through on error/low confidence. One entry
+    // per tool key; `connectionIds` is ordered primary → fallbacks.
+    toolPriority: {
+      type: [
+        new Schema(
+          {
+            key: { type: String, required: true },
+            connectionIds: { type: [Schema.Types.ObjectId], default: [] },
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
     isActive: { type: Boolean, required: true, default: true },
   },
   { timestamps: true },

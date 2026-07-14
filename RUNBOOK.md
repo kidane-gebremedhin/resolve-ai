@@ -463,6 +463,28 @@ Restart the API. The checkout overlay will now fire real sandbox events end-to-e
 2. Update `.env` (sandbox IDs) and `.env.prod` (production IDs) — both server-side (`PADDLE_PRODUCT_*` / `PADDLE_PRICE_*`) and client-side (`NEXT_PUBLIC_PADDLE_PRODUCT_*` / `NEXT_PUBLIC_PADDLE_PRICE_*`).
 3. Update `apps/api/src/config/plans.ts` with the new plan key and limits.
 
+### 13.5 Operator integration webhooks (their OWN customers' subscriptions)
+
+This is **separate** from platform billing above. When an operator connects **their
+own** Paddle/Stripe (Integrations → Paddle/Stripe) so the widget AI can manage *their
+customers'* subscriptions, they can register a per-connection callback so out-of-band
+plan changes stay in sync:
+
+- Callback URL (shown in Integrations → Paddle → **Configure plans** → "Subscription
+  webhook"): `<API_BASE_URL>/api/v1/integrations/paddle/webhook/<connectionId>` (or
+  `.../stripe/webhook/<connectionId>`).
+- The operator pastes the provider's **signing secret** there; it's stored on the
+  connection and verifies every incoming event's HMAC signature. **No env var** — the
+  secret is per-connection, not the platform-wide `PADDLE_WEBHOOK_SECRET`.
+- Verified `subscription.*` / `customer.subscription.*` events update an
+  `ExternalSubscription` snapshot (see `services/integrations/webhookReceiver.ts`), so
+  the assistant reflects changes the customer/operator made outside the chat and can
+  still answer "what plan am I on?" during a provider API outage.
+- **Plan price ids are per-environment.** Configure them for the environment the
+  connection is actually serving (sandbox vs production). If upgrade/downgrade reports
+  "no plans are configured for this environment", the plans were set on the other env's
+  slot — re-enter them while the connection is on the target environment.
+
 ## 14. Where to go next
 
 - Architecture & rationale: [`__specs/00-table-of-contents.md`](__specs/00-table-of-contents.md)

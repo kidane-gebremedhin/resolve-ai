@@ -37,6 +37,15 @@ const agentSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   confidenceThreshold: z.number().min(0).max(1).optional(),
   jiraProjectKey: z.string().max(50).optional(),
+  // Primary→fallback ordering for tool keys exposed by multiple connections.
+  toolPriority: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        connectionIds: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/)).default([]),
+      }),
+    )
+    .optional(),
   isActive: z.boolean().default(true),
 });
 

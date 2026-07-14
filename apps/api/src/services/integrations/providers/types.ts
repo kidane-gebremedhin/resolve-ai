@@ -17,17 +17,34 @@ export type ToolTemplate = {
   jsonSchema: Record<string, unknown>;
 };
 
+/**
+ * The per-organization OAuth *application* credentials (client_id / client_secret)
+ * an operator registered for a provider. Passed into the OAuth adapter methods so
+ * each operator uses their own app instead of a single set hardcoded in the server
+ * environment. `null`/`undefined` means the operator hasn't configured an app yet.
+ */
+export type OAuthAppCreds = {
+  clientId: string;
+  /** Optional — apps configured with only a Client ID (or PKCE / platform-supplied
+   *  secret) leave this unset; adapters that need it send it when present. */
+  clientSecret?: string;
+  /** Optional redirect-URI override registered with the provider. */
+  redirectUri?: string;
+  /** Non-secret provider extras (e.g. Shopify shop domain). */
+  extra?: Record<string, unknown>;
+};
+
 export interface ProviderAdapter {
   readonly provider: string;
 
   /** Returns an OAuth authorization URL, or null for non-OAuth auth modes. */
-  buildAuthUrl(orgId: string, state: string): string | null;
+  buildAuthUrl(orgId: string, state: string, app?: OAuthAppCreds | null): string | null;
 
   /** Exchanges an OAuth code for raw credentials. */
-  exchangeCode(code: string, orgId: string): Promise<RawCredentials>;
+  exchangeCode(code: string, orgId: string, app?: OAuthAppCreds | null): Promise<RawCredentials>;
 
   /** Refreshes an OAuth access token. Returns null if not supported or failed. */
-  refreshTokens(blob: EncryptedBlob): Promise<RawCredentials | null>;
+  refreshTokens(blob: EncryptedBlob, app?: OAuthAppCreds | null): Promise<RawCredentials | null>;
 
   /** Returns the tool definitions this provider exposes. */
   getTools(): ToolTemplate[];

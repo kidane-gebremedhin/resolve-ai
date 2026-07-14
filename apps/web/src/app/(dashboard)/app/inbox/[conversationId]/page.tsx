@@ -41,6 +41,7 @@ export default async function ConversationDetailPage({
   let conversation: Conversation | null = null;
   let messages: Message[] = [];
   let conversations: Conversation[] = [];
+  let listNextCursor: string | null = null;
   let contactSession: ContactSession | null = null;
   let errorMessage: string | null = null;
 
@@ -53,6 +54,7 @@ export default async function ConversationDetailPage({
     conversation = convo;
     messages = msgs.items ?? [];
     conversations = list.items ?? [];
+    listNextCursor = list.nextCursor ?? null;
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) notFound();
     errorMessage =
@@ -84,7 +86,7 @@ export default async function ConversationDetailPage({
   }
 
   return (
-    <InboxList initialItems={conversations} initialFilter={filter}>
+    <InboxList initialItems={conversations} initialFilter={filter} initialNextCursor={listNextCursor}>
       <InboxThread
         initialConversation={conversation}
         initialMessages={messages}

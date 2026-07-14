@@ -64,3 +64,6 @@ BLOCKERS.md
 QA_TEST_RESULTS_*.md
 
 test-data.md
+
+# apps.sh runtime dir (PIDs + logs)
+.run/

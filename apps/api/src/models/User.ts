@@ -22,6 +22,10 @@ const userSchema = new Schema(
     totpSecret: { type: String },
     totpEnabled: { type: Boolean, default: false },
     recoveryCodes: { type: [String], default: undefined },
+    // Password reset. We store only a SHA-256 hash of the emailed token (never the
+    // token itself) plus its expiry, so a DB leak can't be used to reset accounts.
+    passwordResetTokenHash: { type: String },
+    passwordResetExpires: { type: Date },
   },
   { timestamps: true },
 );

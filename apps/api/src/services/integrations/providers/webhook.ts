@@ -54,13 +54,21 @@ export class WebhookAdapter implements ProviderAdapter {
     // SSRF guard
     await assertSafeUrl(url);
 
-    // Validate args against inputSchema if provided
+    // Validate args against inputSchema if provided. Surface WHICH fields are wrong
+    // in plain language (not the raw ajv error objects) so the model can ask the
+    // customer for the right value instead of echoing internals or looping.
     if (inputSchema) {
       const validate = ajv.compile(inputSchema);
       if (!validate(args)) {
-        throw new Error(
-          `Webhook: args failed schema validation: ${JSON.stringify(validate.errors)}`,
-        );
+        const problems = (validate.errors ?? [])
+          .map((e) => {
+            const field = (e.instancePath || "").replace(/^\//, "") ||
+              (e.params as { missingProperty?: string })?.missingProperty || "input";
+            return `${field} ${e.message ?? "is invalid"}`;
+          })
+          .slice(0, 5)
+          .join("; ");
+        throw new Error(`The details provided don't match what this tool needs: ${problems}.`);
       }
     }
 
@@ -97,16 +105,46 @@ export class WebhookAdapter implements ProviderAdapter {
       });
 
       if (!res.ok) {
-        throw new Error(`Webhook: upstream returned ${res.status}`);
+        // 4xx = the request was wrong (bad/expired auth, missing field); 5xx/timeout =
+        // the operator's endpoint is down. Give the model a clear, customer-safe reason
+        // without leaking the endpoint's raw error body.
+        const reason =
+          res.status === 401 || res.status === 403
+            ? "the integration rejected the request (check the connection's auth)"
+            : res.status === 404
+              ? "the integration endpoint was not found"
+              : res.status >= 500
+                ? "the integration service is temporarily unavailable"
+                : `the integration returned an error (HTTP ${res.status})`;
+        throw new Error(`Could not complete that action — ${reason}.`);
       }
 
       // Enforce max response size (100 kB)
       const text = await res.text();
       if (text.length > 102_400) {
-        throw new Error("Webhook: response exceeds 100 kB limit");
+        throw new Error("The integration returned too much data to process.");
       }
 
-      result = JSON.parse(text);
+      // Tolerate endpoints that reply with a non-JSON body (plain text / empty 200).
+      // Wrap it so the model still gets a usable, truthful result instead of an
+      // opaque parse crash it might paper over with a hallucinated answer.
+      const trimmed = text.trim();
+      if (!trimmed) {
+        result = { ok: true };
+      } else {
+        try {
+          result = JSON.parse(trimmed);
+        } catch {
+          result = { ok: true, message: trimmed.slice(0, 2_000) };
+        }
+      }
+    } catch (err) {
+      // Turn an aborted fetch (timeout) into a clear message rather than a raw
+      // "The operation was aborted" DOM error.
+      if ((err as Error).name === "AbortError") {
+        throw new Error("The integration took too long to respond and timed out.");
+      }
+      throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -115,9 +153,7 @@ export class WebhookAdapter implements ProviderAdapter {
     if (outputSchema && result !== undefined) {
       const validate = ajv.compile(outputSchema);
       if (!validate(result)) {
-        throw new Error(
-          `Webhook: response failed output schema validation: ${JSON.stringify(validate.errors)}`,
-        );
+        throw new Error("The integration returned an unexpected response format.");
       }
     }
 

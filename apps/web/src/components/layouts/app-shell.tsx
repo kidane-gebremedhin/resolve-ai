@@ -87,7 +87,7 @@ const nav: NavItem[] = [
   { href: '/app/knowledge', label: 'Knowledge', icon: BookOpen, group: 'Configure' },
   { href: '/app/developers', label: 'Developers', icon: Code2, group: 'Configure' },
   { href: '/app/integrations', label: 'Integrations', icon: Plug, group: 'Configure' },
-  { href: '/app/triggers', label: 'Triggers', icon: Zap, group: 'Configure' },
+  { href: '/app/triggers', label: 'Proactive Triggers', icon: Zap, group: 'Configure' },
   { href: '/app/analytics', label: 'Analytics', icon: BarChart3, group: 'Account' },
   { href: '/app/feeds', label: 'User Feedback', icon: MessageSquareHeart, exact: true, group: 'Account' },
   { href: '/app/feeds/low-rated', label: 'Low-Rated Answers', icon: ThumbsDown, group: 'Account' },

@@ -3,43 +3,28 @@ import type { EncryptedBlob } from "../../security/crypto.service.js";
 
 type BillingInterval = "month" | "year";
 
-// Full plan → price-id catalog from env, split by billing interval so a plan change
-// can keep the customer on their CURRENT cadence (a yearly subscriber upgrading must
-// stay yearly, not silently flip to monthly).
-function planPrices(interval: BillingInterval): Record<string, string | undefined> {
-  if (interval === "year") {
-    return {
-      pro: process.env.PADDLE_PRICE_PRO_YEARLY,
-      business: process.env.PADDLE_PRICE_BUSINESS_YEARLY,
-      enterprise: process.env.PADDLE_PRICE_ENTERPRISE_YEARLY,
-    };
-  }
-  return {
-    pro: process.env.PADDLE_PRICE_PRO,
-    business: process.env.PADDLE_PRICE_BUSINESS,
-    enterprise: process.env.PADDLE_PRICE_ENTERPRISE,
-  };
+// The OPERATOR's own plan → price-id mapping, stored per-connection (never the
+// platform's PADDLE_PRICE_* env vars — those bill operators for THIS SaaS, whereas the
+// integration tools act on the operator's OWN customers' subscriptions). Shape:
+//   { pro: { monthly: "pri_x", yearly: "pri_y" }, business: {...}, ... }
+export type PaddlePlanPrices = Record<string, { monthly?: string; yearly?: string }>;
+
+function readPlanPrices(credentials: RawCredentials): PaddlePlanPrices {
+  const pp = (credentials.extra as { planPrices?: unknown } | undefined)?.planPrices;
+  return pp && typeof pp === "object" ? (pp as PaddlePlanPrices) : {};
 }
 // The price id for a plan at a given interval. No silent cross-interval fallback:
 // if yearly isn't configured for that plan the caller must handle it, so we never
 // change a customer's billing cadence behind their back.
-function priceForPlan(plan: string, interval: BillingInterval): string | undefined {
-  return planPrices(interval)[plan];
+function priceForPlan(planPrices: PaddlePlanPrices, plan: string, interval: BillingInterval): string | undefined {
+  return planPrices[plan]?.[interval === "year" ? "yearly" : "monthly"];
 }
 // Reverse map (price id → plan name). Covers BOTH monthly and yearly price ids so
-// get_subscription can name a customer's current plan regardless of billing cycle,
-// and the "already on this plan" idempotency check works for annual subscribers.
-function planForPriceId(priceId: string | undefined): string | undefined {
+// get_subscription can name a customer's current plan regardless of billing cycle.
+function planForPriceId(planPrices: PaddlePlanPrices, priceId: string | undefined): string | undefined {
   if (!priceId) return undefined;
-  const byPlan: Record<string, (string | undefined)[]> = {
-    pro: [process.env.PADDLE_PRICE_PRO, process.env.PADDLE_PRICE_PRO_YEARLY],
-    business: [process.env.PADDLE_PRICE_BUSINESS, process.env.PADDLE_PRICE_BUSINESS_YEARLY],
-    enterprise: [process.env.PADDLE_PRICE_ENTERPRISE, process.env.PADDLE_PRICE_ENTERPRISE_YEARLY],
-  };
-  return Object.entries(byPlan).find(([, ids]) => ids.includes(priceId))?.[0];
+  return Object.entries(planPrices).find(([, ids]) => ids.monthly === priceId || ids.yearly === priceId)?.[0];
 }
-// Plan rank for direction-agnostic "already on this plan" and same-plan checks.
-const PLAN_RANK: Record<string, number> = { pro: 1, business: 2, enterprise: 3 };
 
 type PaddleSub = {
   id: string;
@@ -161,6 +146,9 @@ export class PaddleAdapter implements ProviderAdapter {
     const apiKey = credentials.apiKey ?? "";
     const baseUrl = sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
     const headers = { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" };
+    // The operator's own plan → price-id mapping for THIS connection.
+    const planPrices = readPlanPrices(credentials);
+    const yearlyIds = Object.values(planPrices).map((p) => p.yearly).filter(Boolean);
 
     const getJson = async (url: string, init?: RequestInit): Promise<Record<string, unknown>> => {
       const res = await fetch(url, { ...init, headers });
@@ -217,22 +205,17 @@ export class PaddleAdapter implements ProviderAdapter {
         | undefined) ?? [];
       const item0 = items[0];
       const currentPriceId = item0?.price?.id;
-      // Prefer the interval Paddle reports on the price; fall back to matching our env
-      // yearly ids (covers prices missing billing_cycle in the payload).
-      const YEARLY_IDS = [
-        process.env.PADDLE_PRICE_PRO_YEARLY,
-        process.env.PADDLE_PRICE_BUSINESS_YEARLY,
-        process.env.PADDLE_PRICE_ENTERPRISE_YEARLY,
-      ];
+      // Prefer the interval Paddle reports on the price; fall back to matching the
+      // operator's configured yearly ids (covers prices missing billing_cycle).
       const currentInterval: BillingInterval =
-        item0?.price?.billing_cycle?.interval === "year" || YEARLY_IDS.includes(currentPriceId)
+        item0?.price?.billing_cycle?.interval === "year" || yearlyIds.includes(currentPriceId)
           ? "year"
           : "month";
       return {
         id: String(sub.id),
         status: sub.status as string | undefined,
         currentPriceId,
-        plan: planForPriceId(currentPriceId),
+        plan: planForPriceId(planPrices, currentPriceId),
         currentInterval,
         currentQuantity: item0?.quantity ?? 1,
         nextBilledAt: sub.next_billed_at as string | undefined,
@@ -261,20 +244,30 @@ export class PaddleAdapter implements ProviderAdapter {
     }
 
     if (toolKey === "upgrade_subscription" || toolKey === "downgrade_subscription") {
+      const configuredPlans = Object.keys(planPrices);
+      if (configuredPlans.length === 0) {
+        // Name the environment: the usual cause is plans configured in one environment
+        // (e.g. sandbox) while the connection is now serving the other (production),
+        // whose credential slot has no price-id map. The operator must add the plan
+        // price ids for THIS environment.
+        throw new Error(
+          `No plans are configured for this Paddle connection's ${sandbox ? "sandbox" : "production"} environment yet. Add the plan price ids for this environment in the dashboard (Integrations → Paddle → Configure plans), or a human can help with the plan change.`,
+        );
+      }
       const targetPlan = String(args.targetPlan ?? "").toLowerCase();
-      if (!PLAN_RANK[targetPlan]) {
-        throw new Error(`Unknown plan "${String(args.targetPlan)}". Choose Pro, Business, or Enterprise.`);
+      if (!planPrices[targetPlan]) {
+        throw new Error(`Unknown plan "${String(args.targetPlan)}". Available plans: ${configuredPlans.join(", ")}.`);
       }
       const sub = await resolveSubscription(String(args.email));
       if (!sub) throw new Error(`No active subscription found for ${String(args.email)}.`);
-      const currentPlan = planForPriceId(sub.currentPriceId);
+      const currentPlan = planForPriceId(planPrices, sub.currentPriceId);
       if (currentPlan === targetPlan) {
         return { ok: true, plan: targetPlan, status: sub.status, noChange: true, message: `Already on the ${targetPlan} plan.` };
       }
       // Change the tier but KEEP the customer's current billing interval — never mix
       // monthly and yearly. If the target plan has no price at that interval, fail
       // clearly rather than silently flipping their cadence.
-      const newPriceId = priceForPlan(targetPlan, sub.currentInterval);
+      const newPriceId = priceForPlan(planPrices, targetPlan, sub.currentInterval);
       if (!newPriceId) {
         throw new Error(
           `The ${targetPlan} plan isn't available for ${sub.currentInterval === "year" ? "annual" : "monthly"} billing. A human can help switch the plan.`,

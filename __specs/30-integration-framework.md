@@ -15,6 +15,32 @@ once (authenticate, configure), then toggle them on per-agent. The AI loop calls
 these tools server-side with the operator's credentials; the LLM never sees raw
 secrets.
 
+Every integration acts on the **operator's own account** (the account of the website
+embedding the widget), never the platform's — see the memory notes
+`integrations-target-operator-website` / `paddle-two-contexts`.
+
+## Integration catalog — use cases & UX
+
+Each connector is configured in the **Integrations** tab (operator brings their own
+OAuth app / API key, encrypted at rest) and toggled on per-agent in **AI agent
+settings**. What each one is for, and how the widget customer experiences it:
+
+| Integration | Auth | Tools | Use case | Widget-customer UX |
+|---|---|---|---|---|
+| **Cal.com** | API key | `list_event_types`, `list_calendar_slots`, `book_meeting` | Let a visitor book a meeting on the operator's Cal.com calendar (demos, support calls). | "I'd like a demo" → AI lists meeting types, then available slots as tappable **cards** in the visitor's timezone → visitor picks one → inline **name** form → booked, with a "Join meeting" confirmation card. |
+| **Calendly** | OAuth | `list_calendar_slots`, `book_meeting` | Same as Cal.com for operators on Calendly. | Same slot-card → pick → book flow. |
+| **Stripe** | OAuth (Connect) | `look_up_order`, `issue_refund` | Look up a payment/order and issue a refund on the operator's Stripe, within guardrails (max amount, window, identity check). | "I want a refund for order X" → AI looks it up → issues the refund if within the operator's guardrails, else explains it needs a human. |
+| **Shopify** | OAuth | `look_up_order` | Order/shipping status lookup on the operator's Shopify store. | "Where's my order?" → AI returns status/tracking. |
+| **Jira** | OAuth (Atlassian 3LO) | `create_support_ticket` | File a support ticket in the operator's Jira when the AI can't resolve an issue (routes to a configured project; attaches a PII-masked transcript). | "This is still broken" → AI files a ticket and tells the customer a human will follow up (never leaks the internal ticket URL). |
+| **Linear** | OAuth | `create_support_ticket` | Same as Jira for operators on Linear. | Ticket filed; human follow-up promised. |
+| **Paddle** | API key | `get_subscription`, `upgrade_subscription`, `downgrade_subscription`, `cancel_subscription` | Let a visitor self-manage **their own** subscription in the **operator's** Paddle (the operator maps their plans→price ids in "Configure plans"). NOT platform billing. | "Upgrade me to Pro" → AI verifies the account by the visitor's email, changes the plan (preserving billing interval), confirms the new plan. |
+| **Custom Webhook** | API key/header | operator-defined (e.g. `lookup_order`) | Point the AI at ANY operator HTTP endpoint with a JSON-schema-defined input, for anything the built-in connectors don't cover. | AI collects the schema's inputs via an inline form and calls the endpoint, presenting the result conversationally. |
+
+Cross-cutting UX: tools start **disabled per agent** (operator opts each in), every call
+is **guardrail-checked + rate-limited + audit-logged**, an inline **form** collects any
+inputs the customer must supply, and OAuth/API-key apps are **per-environment**
+(sandbox vs production, connected independently).
+
 Build order within 2A (each step is a prerequisite for the next):
 
 1. **2A.1** Credential vault (encryption helper)
@@ -258,23 +284,74 @@ export interface ProviderAdapter {
 **Sandbox routing**: adapters check `connection.sandbox` to switch between
 production and sandbox endpoints (e.g. Paddle `sandbox.paddle.com` vs `paddle.com`).
 
+**Graceful-fail on a not-connected environment (Changelog 1)**: the dispatcher
+reads the **active** environment's credential slot (`sandboxCredentials` /
+`productionCredentials`), not just the `encryptedCredentials` mirror. When the
+active environment has no credentials but the other one does, the tool call returns
+`{ ok:false, status:"guardrail_blocked", reason:"…this integration's <env>
+environment isn't connected…" }` instead of silently using the other environment's
+creds. This lets an operator switch to a not-connected environment and watch the
+agent degrade cleanly. **(Changelog 2)** The Sandbox/Production segmented control
+surfaces this state directly: when the selected environment has no stored
+credentials it shows an amber "Not connected — tool calls will fail here" badge, so
+staying on an unconnected environment reads as intentional rather than broken.
+
+**Connect-immediately (Changelog 1)**: in the dashboard, entering an OAuth Client ID
+(and Client Secret) can proceed straight to authorization — **Save & connect** stores
+them then calls `POST /integrations/:provider/connect` and redirects to the returned
+`authUrl`. **Save Client ID** stores/updates the values without connecting.
+
+**Client Secret required (Changelog 3)**: Jira, Linear, Shopify, Calendly and Stripe
+Connect are **confidential OAuth clients** — the code→token exchange needs the client
+secret. The `OAuthAppModal` therefore has a write-only **Client Secret** field (blank
+= keep the stored one; the value is never returned, only `hasSecret`), and **Save &
+connect** requires a secret when none is stored. This reverses Changelog 1/11's
+"Client ID only" simplification, which had left these providers unable to obtain a
+token (connections were stored tokenless yet marked "active"). Relatedly, every
+provider's `exchangeCode` now throws on a missing secret or a non-2xx / no-`access_token`
+response instead of silently storing an empty, fake-"Connected" credential.
+
 ### Routes — `apps/api/src/routes/integrations.routes.ts`
 
 ```
 GET    /integrations                      → list all available providers + org's connections
 GET    /integrations/:connectionId        → single connection (status, sandbox, tools)
+GET    /integrations/:provider/oauth-app?environment=sandbox|production → that env's
+                                           OAuth app config: {configured, clientId,
+                                           hasSecret, redirectUri, defaultRedirectUri}.
+                                           Secret never returned.
+PUT    /integrations/:provider/oauth-app  → save the operator's OAuth app for one env.
+                                           Requires clientId; **clientSecret is required
+                                           to CONNECT confidential providers** (Jira/
+                                           Linear/Shopify/Calendly/Stripe) — Changelog 3
+                                           (encrypted at rest as encryptedClientSecret;
+                                           blank on save keeps the stored one). The redirect
+                                           URI is no longer collected — the fixed platform
+                                           callback is always used and shown read-only for
+                                           the operator to register (2A.12, Changelog 7/9/11).
+                                           Per-environment (Changelog 9): OAuthAppConfig is
+                                           unique on (org, provider, sandbox) — sandbox and
+                                           production are separate OAuth apps; a legacy
+                                           single app falls back for both envs.
 POST   /integrations/:provider/connect   → {sandbox?} → returns {authUrl} for OAuth or
-                                           accepts {apiKey} for API-key providers. api-key
-                                           path calls adapter.verifyCredentials() first and
-                                           400s on a bad key (2A.11); stores into the matching
-                                           env slot and reuses an existing connection when the
-                                           OTHER environment is added.
+                                           accepts {apiKey} for API-key providers. OAuth
+                                           400s with {needsOAuthApp:true} if the org hasn't
+                                           configured its OAuth app yet. api-key path calls
+                                           adapter.verifyCredentials() first and 400s on a
+                                           bad key (2A.11); stores into the matching env slot
+                                           and reuses an existing connection when the OTHER
+                                           environment is added.
 GET    /integrations/:provider/callback  → OAuth code exchange (redirect from provider)
                                            stores encrypted credentials, seeds ToolDefinitions
 PATCH  /integrations/:connectionId       → update name, sandbox, description, rate limits,
                                            ToolDefinition overrides. Flipping `sandbox` swaps in
-                                           that env's stored creds, or returns {needsSetup:true}
-                                           when that environment isn't connected yet (2A.10).
+                                           that env's stored creds. When the target environment
+                                           isn't connected, the switch is now **persisted anyway**
+                                           and returns {ok:true, environment, connected:false}
+                                           (Changelog 1) — the operator can deliberately observe
+                                           the agent against a not-connected environment; the
+                                           selection is never auto-reverted to the connected env.
+                                           Tool calls then fail gracefully (see graceful-fail below).
 POST   /integrations/:connectionId/webhook-endpoint → add/replace ONE environment's
                                            endpoint (URL+method+auth) for an existing
                                            custom webhook; shared tool def/schema.
@@ -285,19 +362,67 @@ PATCH  /integrations/:connectionId/webhook-config → full edit of an existing c
                                            omit/blank keeps the stored one. Keeps the
                                            ToolDefinition's jsonSchema/name/desc in sync
                                            (2A.4a). Powers the card's "Edit webhook".
+PUT    /integrations/:connectionId/paddle-plans → the operator's own plan→price-id map
+                                           for their Paddle connection (active env),
+                                           stored in the encrypted blob; updates the
+                                           up/downgrade tools' targetPlan enum. Integration
+                                           Paddle is the OPERATOR's own (their customers'
+                                           subs), not platform billing (Changelog 8).
+                                           Reads/writes the ACTIVE environment's credential
+                                           slot (not the `encryptedCredentials` mirror), so
+                                           plans configured in one env are never lost when the
+                                           connection is switched to the other — the prior bug
+                                           surfaced as "no plans configured" on BOTH upgrade and
+                                           downgrade despite a working connection (Changelog 5).
+GET    /integrations/:connectionId/paddle-catalog → read-only list of the operator's OWN
+                                           active Paddle prices + products (active env),
+                                           plus a SUGGESTED plan→price-id mapping grouped by
+                                           product (monthly/yearly). The "Configure plans"
+                                           step pre-fills from this so operators map their
+                                           EXISTING plans in one confirm rather than hand-
+                                           typing price ids — which prevents the "no plans
+                                           configured" failure. Price/product ids are config,
+                                           not secrets (Changelog 5).
+PUT    /integrations/:connectionId/webhook-secret → store the signing secret for the
+                                           operator's inbound Paddle/Stripe subscription
+                                           webhook (active env). Returns the callback URL to
+                                           register. Secret verifies every incoming event's
+                                           HMAC signature (Changelog 5).
+POST   /integrations/paddle/webhook/:connectionId → PUBLIC inbound receiver for the
+POST   /integrations/stripe/webhook/:connectionId    operator's OWN Paddle/Stripe account.
+                                           No dashboard auth — authenticated by the provider
+                                           HMAC signature (verified against the per-connection
+                                           webhook secret). Verified subscription-lifecycle
+                                           events update an `ExternalSubscription` snapshot so
+                                           the assistant reflects out-of-band plan changes and
+                                           can answer even during a provider API outage. Distinct
+                                           from the platform's own `POST /billing/webhook`
+                                           (Changelog 5).
 POST   /integrations/:connectionId/verify → re-run the provider's real-connection
-                                           check against stored creds (refreshing an
-                                           OAuth token first if near expiry). Reports
-                                           {ok, error} inline only — never mutates the
-                                           persisted status (2A.11a). Powers the card's
-                                           "Test connection" button.
+                                           check. Body `{sandbox}` selects the env to
+                                           test (Changelog 4); it checks THAT env's own
+                                           credential slot, not the `encryptedCredentials`
+                                           mirror — so a wrong production key no longer
+                                           reports success by re-checking the active env.
+                                           A selected env with no creds returns
+                                           {ok:false, "The <env> environment isn't
+                                           connected."}. Refreshes an OAuth token first if
+                                           near expiry. Reports {ok, error} inline only —
+                                           never mutates the persisted status (2A.11a).
+                                           Powers the card's "Test connection" button.
 PATCH  /integrations/tools/:toolDefId/guardrails → per-tool guardrail spec (2A.6)
 PATCH  /integrations/tools/:toolDefId/registry   → displayName, description, enabledAgentIds
-DELETE /integrations/:connectionId       → soft-revoke connection (status:"revoked")
-                                           AND deactivate its ToolDefinitions
-                                           (isActive:false) so a re-added "exact"
-                                           connection never resolves to the dead one
-                                           (2A.4b).
+DELETE /integrations/:connectionId       → disconnect. `?environment=sandbox|production`
+                                           disconnects JUST that environment (clears its
+                                           credential slot; if it was active, promotes the
+                                           other) so an operator can drop a per-env account
+                                           while keeping the other live (Changelog 6).
+                                           Without the param — or when it's the last
+                                           connected env — soft-revoke the whole connection
+                                           (status:"revoked") AND deactivate its
+                                           ToolDefinitions (isActive:false) so a re-added
+                                           "exact" connection never resolves to the dead
+                                           one (2A.4b).
 ```
 
 Auth for all routes: `authenticateOperator` middleware (JWT).
@@ -382,6 +507,29 @@ On execution:
    (default: 10s, configurable).
 4. Validate response against `outputSchema` (warn but do not fail if mismatch).
 5. Return response body to the tool dispatcher.
+
+**Robustness (Changelog 5).** The adapter surfaces failures as clear, customer-safe,
+non-leaky messages instead of raw internals: schema-validation failures name the
+offending fields in plain language; `401/403 → "check the connection's auth"`,
+`404 → "endpoint not found"`, `5xx → "temporarily unavailable"`; an aborted request
+(timeout) becomes "took too long and timed out". A non-JSON / empty `200` body is
+tolerated (wrapped as `{ ok: true, message? }`) rather than crashing on `JSON.parse`,
+so the model never papers over an opaque error with a hallucinated answer.
+
+**Schema inference at creation (Changelog 5).** Operators frequently paste a *sample*
+payload (e.g. `{"orderId":"ORD-12345","reason":"lost"}`) where a JSON Schema is
+expected. Rather than storing an unusable value (which renders no inline form and lets
+the model guess args), the connect route infers a real object schema from the sample —
+each key becomes a required, typed property — via `normalizeWebhookInputSchema()`. A
+genuine schema passes through unchanged; a truly unusable value still falls back to an
+empty object schema so a bad definition can never 400 the whole tools array.
+
+**Per-agent enablement (Changelog 5).** A newly-created webhook tool starts enabled on
+NO agent — the operator explicitly enables it on the agents that should use it, and each
+agent only sees (and grounds answers in) the tools enabled for it. Re-adding a previously
+revoked webhook (same tool key) still carries its prior enablement forward so the "exact"
+re-add works immediately. A defined-but-not-yet-enabled tool won't be offered to that
+agent (the model may answer "I don't know") until the operator enables it.
 
 ### 2A.4a — Editing an existing webhook
 
@@ -552,8 +700,11 @@ interface GuardrailSpec {
   maxDaysSincePurchase?: number; // refund window
   requireOrderOwnership?: boolean;
 
-  // upgrade_subscription
-  planDirection?: "upgrade_only" | "downgrade_only" | "any";
+  // upgrade_subscription / downgrade_subscription
+  // NOTE: the earlier `planDirection` / `upgradeOnly` (block-downgrades) flag was
+  // REMOVED as redundant (Changelog 5) — downgrades are a legitimate self-service
+  // action, and `requireBillingOwner` already gates who may change a plan. The AI
+  // performs upgrades AND downgrades through the operator's Paddle.
   requireBillingOwner?: boolean;
 
   // book_meeting
@@ -794,9 +945,11 @@ verify endpoint returns `{ ok: true, unsupported: true }`.
 **Two call sites:**
 1. **Connect (api-key path)** — gate: a failed check 400s the connect, so the
    connection is never created/marked active with a bad key.
-2. **`POST /:connectionId/verify` (manual "Test connection")** — re-checks the stored
-   credentials for ANY connection, including OAuth ones that never hit the connect
-   gate. Refreshes a near-expiry OAuth token first. Reports the result inline and
+2. **`POST /:connectionId/verify` (manual "Test connection")** — re-checks the
+   credentials of the environment named in the body (`{sandbox}`, Changelog 4), reading
+   that env's own slot (never the mirror), for ANY connection including OAuth ones that
+   never hit the connect gate. A not-connected env returns `{ok:false, "…isn't
+   connected."}`. Refreshes a near-expiry OAuth token first. Reports the result inline and
    deliberately does NOT persist status (a transient network blip must not demote a
    working connection).
 

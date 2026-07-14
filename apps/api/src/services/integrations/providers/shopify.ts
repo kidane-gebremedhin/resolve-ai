@@ -1,39 +1,47 @@
-import type { ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
+import type { OAuthAppCreds, ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
 import type { EncryptedBlob } from "../../security/crypto.service.js";
 import { env } from "../../../config/env.js";
 
 export class ShopifyAdapter implements ProviderAdapter {
   readonly provider = "shopify";
 
-  buildAuthUrl(orgId: string, state: string): string {
-    const shop = process.env.SHOPIFY_SHOP ?? "";
-    const clientId = process.env.SHOPIFY_CLIENT_ID ?? "";
+  buildAuthUrl(_orgId: string, state: string, app?: OAuthAppCreds | null): string {
+    // The shop domain is a non-secret, per-operator app extra (e.g. acme.myshopify.com).
+    const shop = String(app?.extra?.shop ?? "");
+    const clientId = app?.clientId ?? "";
     if (!shop || !clientId) return "";
     const params = new URLSearchParams({
       client_id: clientId,
       scope: "read_orders,write_orders",
-      redirect_uri: `${env.apiBaseUrl}/api/v1/integrations/shopify/callback`,
+      redirect_uri: app?.redirectUri ?? `${env.apiBaseUrl}/api/v1/integrations/shopify/callback`,
       state,
     });
     return `https://${shop}/admin/oauth/authorize?${params.toString()}`;
   }
 
-  async exchangeCode(code: string, _orgId: string): Promise<RawCredentials> {
-    const shop = process.env.SHOPIFY_SHOP ?? "";
+  async exchangeCode(code: string, _orgId: string, app?: OAuthAppCreds | null): Promise<RawCredentials> {
+    const shop = String(app?.extra?.shop ?? "");
     const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        client_id: process.env.SHOPIFY_CLIENT_ID,
-        client_secret: process.env.SHOPIFY_CLIENT_SECRET,
+        client_id: app?.clientId,
+        client_secret: app?.clientSecret,
         code,
       }),
     });
     const data = (await res.json()) as Record<string, unknown>;
+    // A failed exchange (bad/missing secret, expired code) returns no access_token —
+    // surface it rather than storing a tokenless "connected" integration.
+    if (!res.ok || !data.access_token) {
+      throw new Error(
+        `Shopify token exchange failed: ${data.error_description ?? data.error ?? res.status}`,
+      );
+    }
     return { accessToken: data.access_token as string, extra: { shop } };
   }
 
-  async refreshTokens(_blob: EncryptedBlob): Promise<RawCredentials | null> {
+  async refreshTokens(_blob: EncryptedBlob, _app?: OAuthAppCreds | null): Promise<RawCredentials | null> {
     return null;
   }
 
@@ -72,7 +80,7 @@ export class ShopifyAdapter implements ProviderAdapter {
   }
 
   async verifyCredentials(credentials: RawCredentials): Promise<{ ok: boolean; error?: string }> {
-    const shop = (credentials.extra?.shop as string) ?? process.env.SHOPIFY_SHOP ?? "";
+    const shop = (credentials.extra?.shop as string) ?? "";
     const token = credentials.accessToken ?? credentials.apiKey ?? "";
     if (!shop) return { ok: false, error: "Missing Shopify store domain — reconnect via OAuth to capture it." };
     if (!token) return { ok: false, error: "No Shopify access token provided." };

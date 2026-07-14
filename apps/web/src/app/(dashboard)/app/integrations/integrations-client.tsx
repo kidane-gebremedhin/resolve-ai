@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Plug, CheckCircle2, AlertCircle, XCircle, ExternalLink } from "lucide-react";
 import { API_URL } from "@/lib/app-urls";
 
@@ -14,6 +14,12 @@ type ProviderInfo = {
   provider: string;
   cardId?: string;
   tools: { key: string; displayName: string; description: string }[];
+  // OAuth providers require the operator's own registered app (client_id/secret),
+  // configured in-app (encrypted at rest) before connecting — no platform-wide
+  // OAuth credentials live in the server environment.
+  isOAuth?: boolean;
+  // Per-environment: whether the operator's OAuth app is configured for sandbox / production.
+  oauthAppConfigured?: { sandbox: boolean; production: boolean };
   connection: {
     _id: string;
     name: string;
@@ -37,6 +43,12 @@ type ProviderInfo = {
       hasAuthValue?: boolean;
       inputSchema?: unknown;
     };
+    // Operator's own Paddle plan → price-id mapping for the active env (non-secret).
+    paddlePlans?: Record<string, { monthly?: string; yearly?: string }>;
+    // Inbound subscription-webhook callback URL to register in the provider's
+    // dashboard, and whether a signing secret has been stored (the secret is never
+    // returned). Present for Paddle/Stripe connections.
+    webhookReceiver?: { callbackUrl: string; hasWebhookSecret: boolean };
   } | null;
 };
 
@@ -50,7 +62,6 @@ type Guardrails = {
   businessDays?: number[];
   businessHoursTz?: string;
   requireNamedAttendee?: boolean;
-  upgradeOnly?: boolean;
   requireBillingOwner?: boolean;
 };
 type ToolDef = {
@@ -118,7 +129,6 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
   // Require a real attendee name defaults ON — bookings should capture the
   // customer's real name unless the operator explicitly turns it off.
   const [namedAttendee, setNamedAttendee] = useState(g.requireNamedAttendee ?? true);
-  const [upgradeOnly, setUpgradeOnly] = useState(g.upgradeOnly ?? false);
   const [billingOwner, setBillingOwner] = useState(g.requireBillingOwner ?? false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -144,7 +154,6 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
         businessDays: days,
         businessHoursTz: bhTz,
         requireNamedAttendee: namedAttendee,
-        upgradeOnly,
         requireBillingOwner: billingOwner,
       };
       const res = await fetch(`${API_URL}/integrations/tools/${tool._id}/guardrails`, {
@@ -227,10 +236,6 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
       {isSubscription && (
         <div className="mt-2 space-y-1.5">
           <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-600 dark:text-neutral-400">
-            <input type="checkbox" checked={upgradeOnly} onChange={(e) => setUpgradeOnly(e.target.checked)} className="h-3 w-3" />
-            Upgrades only (block downgrades through the AI)
-          </label>
-          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-600 dark:text-neutral-400">
             <input type="checkbox" checked={billingOwner} onChange={(e) => setBillingOwner(e.target.checked)} className="h-3 w-3" />
             Require the billing owner (verified account email)
           </label>
@@ -272,11 +277,12 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  // Backdrop does NOT close the modal — a click outside is easy to trigger by accident
+  // and would discard entered credentials. Close only via the ✕ button.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div
         className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-xl border border-neutral-200 bg-white p-4 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-1 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{title}</h3>
@@ -462,15 +468,24 @@ function EnvSegments({
       </button>
     );
   };
+  const selectedConnected = selected ? sandboxConnected : productionConnected;
   return (
     <div>
       <div className="flex gap-1 rounded-lg bg-neutral-100 p-0.5 dark:bg-neutral-800">
         {segment(true, "Sandbox", sandboxConnected)}
         {segment(false, "Production", productionConnected)}
       </div>
-      <p className="mt-1 text-[10px] text-neutral-400 dark:text-neutral-500">
+      <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] text-neutral-400 dark:text-neutral-500">
         <span className="font-medium text-neutral-500 dark:text-neutral-400">Viewing {selected ? "Sandbox" : "Production"}</span>
-        {selected ? " — test credentials, no live data" : " — live credentials and data"}
+        <span>{selected ? "— test credentials, no live data" : "— live credentials and data"}</span>
+        {/* When the operator selects an environment that has no stored credentials,
+            the choice is still saved (the dispatcher stays on this env and tool calls
+            fail gracefully) — surface a clear "Not connected" badge so that's expected. */}
+        {!selectedConnected && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">
+            <span aria-hidden>○</span> Not connected — tool calls will fail here
+          </span>
+        )}
       </p>
     </div>
   );
@@ -626,6 +641,438 @@ function WebhookEditModal({ info, onClose }: { info: ProviderInfo; onClose: () =
   );
 }
 
+// Per-operator OAuth *app* credentials (client_id / client_secret). Each operator
+// registers their own OAuth app with the provider and enters the credentials here —
+// they're encrypted at rest server-side; nothing is hardcoded in the environment.
+// The client secret is write-only (blank = keep the stored one).
+function OAuthAppModal({ provider, label, sandbox, onClose }: { provider: string; label: string; sandbox: boolean; onClose: () => void }) {
+  const envLabel = sandbox ? "sandbox" : "production";
+  const [clientId, setClientId] = useState("");
+  // Client secret is write-only: we never receive the stored value, only whether one
+  // exists (hasSecret). Blank on save = keep the stored secret. Confidential OAuth
+  // providers (Jira/Linear/Shopify/Calendly/Stripe) can't obtain a token without it.
+  const [clientSecret, setClientSecret] = useState("");
+  const [hasSecret, setHasSecret] = useState(false);
+  const [shop, setShop] = useState("");
+  const [defaultRedirectUri, setDefaultRedirectUri] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`${API_URL}/integrations/${provider}/oauth-app?environment=${envLabel}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          cache: "no-store",
+        });
+        const d = (await res.json()) as {
+          clientId?: string; hasSecret?: boolean; redirectUri?: string;
+          defaultRedirectUri?: string; extra?: { shop?: string };
+        };
+        if (cancelled) return;
+        setClientId(d.clientId ?? "");
+        setHasSecret(Boolean(d.hasSecret));
+        setDefaultRedirectUri(d.defaultRedirectUri ?? "");
+        setShop((d.extra?.shop as string) ?? "");
+      } catch {
+        /* ignore */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [provider, envLabel]);
+
+  // `connectAfter` = save the Client ID then immediately kick off authorization (the
+  // provider validates the Client ID on its authorize page — an invalid one is rejected
+  // there). Without it, just persist the Client ID (used to UPDATE it without re-auth).
+  async function save(connectAfter: boolean) {
+    setError(null);
+    if (!clientId.trim()) { setError("Client ID is required."); return; }
+    if (provider === "shopify" && !shop.trim()) { setError("Shop domain is required (e.g. acme.myshopify.com)."); return; }
+    // A confidential OAuth app needs its secret to complete the token exchange. Require
+    // it before connecting (unless one is already stored); updating the Client ID alone
+    // ("Save Client ID") doesn't force it.
+    if (connectAfter && !hasSecret && !clientSecret.trim()) {
+      setError("Client Secret is required to connect this integration.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_URL}/integrations/${provider}/oauth-app`, {
+        method: "PUT",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sandbox,
+          clientId: clientId.trim(),
+          ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+          ...(provider === "shopify" ? { extra: { shop: shop.trim() } } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(d.error ?? "Couldn't save — please try again.");
+        setSaving(false);
+        return;
+      }
+      if (!connectAfter) {
+        window.location.reload();
+        return;
+      }
+      // Proceed straight to the provider's authorization page for this environment.
+      const conn = await fetch(`${API_URL}/integrations/${provider}/connect`, {
+        method: "POST",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+        body: JSON.stringify({ sandbox }),
+      });
+      const data = (await conn.json().catch(() => ({}))) as { authUrl?: string; error?: string };
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+        return;
+      }
+      setError(data.error ?? "Saved, but couldn't start authorization. Try the Connect button.");
+      setSaving(false);
+    } catch {
+      setError("Couldn't save — please try again.");
+      setSaving(false);
+    }
+  }
+
+  const fieldCls =
+    "mt-0.5 w-full rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800";
+  return (
+    <Modal
+      title={`${label} — ${sandbox ? "Sandbox" : "Production"} OAuth app`}
+      subtitle={`Register your own ${label} OAuth app for ${envLabel} (sandbox and production are separate apps), then enter its Client ID and Client Secret here and register the callback URL below.`}
+      onClose={onClose}
+    >
+      {loading ? (
+        <p className="text-xs text-neutral-400">Loading…</p>
+      ) : (
+        <div className="space-y-2">
+          <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+            Client ID
+            <input className={fieldCls} value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder="your app's client id" />
+          </label>
+          <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+            Client Secret{" "}
+            {hasSecret && <span className="font-normal text-neutral-400">— stored; leave blank to keep it</span>}
+            <input
+              type="password"
+              autoComplete="off"
+              className={fieldCls}
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              placeholder={hasSecret ? "•••••••• (unchanged)" : "your app's client secret"}
+            />
+            <span className="mt-0.5 block font-normal text-neutral-400">
+              Required — {label} is a confidential OAuth app and can’t obtain a token without it. Stored encrypted; never shown again.
+            </span>
+          </label>
+          {provider === "shopify" && (
+            <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+              Shop domain
+              <input className={fieldCls} value={shop} onChange={(e) => setShop(e.target.value)} placeholder="acme.myshopify.com" />
+            </label>
+          )}
+          {defaultRedirectUri && (
+            <div className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
+              Callback URL <span className="font-normal text-neutral-400">— register this exact URL with {label}</span>
+              <p className="mt-0.5 select-all rounded bg-neutral-100 px-2 py-1 font-mono text-[10px] text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                {defaultRedirectUri}
+              </p>
+            </div>
+          )}
+          {error && <p className="text-[11px] text-red-500">{error}</p>}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button onClick={() => save(true)} disabled={saving} className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900">
+              {saving ? "Working…" : "Save & connect"}
+            </button>
+            <button onClick={() => save(false)} disabled={saving} className="rounded-md border border-neutral-300 px-3 py-1 text-xs font-medium text-neutral-700 disabled:opacity-50 dark:border-neutral-700 dark:text-neutral-300">
+              Save Client ID
+            </button>
+            <button onClick={onClose} className="text-xs text-neutral-500 hover:underline">Cancel</button>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// Operator's own Paddle plan → price-id mapping for the ACTIVE environment (sandbox and
+// live have different price ids). The subscription tools use this mapping — never the
+// platform's own billing prices — so operators bill their OWN customers via their OWN
+// Paddle. Each row is a plan name + its monthly / yearly Paddle price id.
+function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () => void }) {
+  const conn = info.connection!;
+  const envLabel = conn.sandbox ? "sandbox" : "production";
+  const initial = Object.entries(conn.paddlePlans ?? {}).map(([name, ids]) => ({
+    name,
+    monthly: ids.monthly ?? "",
+    yearly: ids.yearly ?? "",
+  }));
+  const unconfigured = initial.length === 0;
+  const [rows, setRows] = useState(
+    initial.length > 0 ? initial : [{ name: "", monthly: "", yearly: "" }],
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // The operator's actual Paddle prices, pulled so we can pre-fill and autocomplete the
+  // mapping — operators map their EXISTING plans instead of hand-typing ids, which is what
+  // prevents the "no plans are configured" failure on the first upgrade/downgrade.
+  const [prices, setPrices] = useState<{ priceId: string; name: string; interval: string }[]>([]);
+  const [loadingCatalog, setLoadingCatalog] = useState(false);
+  const [catalogNote, setCatalogNote] = useState<string | null>(null);
+  const listId = `paddle-prices-${conn._id}`;
+
+  const loadCatalog = useCallback(
+    async (prefill: boolean) => {
+      setLoadingCatalog(true);
+      setCatalogNote(null);
+      try {
+        const token = await getAccessToken();
+        const res = await fetch(`${API_URL}/integrations/${conn._id}/paddle-catalog`, {
+          headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        const d = (await res.json().catch(() => ({}))) as {
+          prices?: { priceId: string; name: string; interval: string }[];
+          suggested?: Record<string, { monthly?: string; yearly?: string }>;
+          error?: string;
+        };
+        if (!res.ok) {
+          setCatalogNote(d.error ?? "Couldn't load plans from Paddle.");
+          return;
+        }
+        setPrices(d.prices ?? []);
+        const suggestedRows = Object.entries(d.suggested ?? {}).map(([name, ids]) => ({
+          name,
+          monthly: ids.monthly ?? "",
+          yearly: ids.yearly ?? "",
+        }));
+        if (prefill && suggestedRows.length > 0) {
+          setRows(suggestedRows);
+          setCatalogNote(`Pre-filled ${suggestedRows.length} plan(s) from your Paddle ${envLabel} catalog — review and Save.`);
+        } else if (suggestedRows.length === 0) {
+          setCatalogNote("No recurring prices found in this Paddle environment.");
+        }
+      } catch {
+        setCatalogNote("Couldn't reach Paddle to load plans.");
+      } finally {
+        setLoadingCatalog(false);
+      }
+    },
+    [conn._id, envLabel],
+  );
+
+  // First open of an unconfigured connection → auto-pull the catalog and pre-fill so the
+  // operator can finish setup in one confirm instead of hunting for price ids.
+  useEffect(() => {
+    if (unconfigured) void loadCatalog(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function setRow(i: number, patch: Partial<{ name: string; monthly: string; yearly: string }>) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  async function save() {
+    setError(null);
+    const planPrices: Record<string, { monthly?: string; yearly?: string }> = {};
+    for (const r of rows) {
+      const name = r.name.trim().toLowerCase();
+      if (!name || (!r.monthly.trim() && !r.yearly.trim())) continue;
+      planPrices[name] = {
+        ...(r.monthly.trim() ? { monthly: r.monthly.trim() } : {}),
+        ...(r.yearly.trim() ? { yearly: r.yearly.trim() } : {}),
+      };
+    }
+    if (Object.keys(planPrices).length === 0) {
+      setError("Add at least one plan with a price id.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_URL}/integrations/${conn._id}/paddle-plans`, {
+        method: "PUT",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+        body: JSON.stringify({ planPrices }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(d.error ?? "Couldn't save — please try again.");
+        setSaving(false);
+        return;
+      }
+      window.location.reload();
+    } catch {
+      setError("Couldn't save — please try again.");
+      setSaving(false);
+    }
+  }
+
+  const fieldCls =
+    "w-full rounded-md border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800";
+  return (
+    <Modal
+      title={unconfigured ? "Finish setup — map your plans" : "Paddle plans"}
+      subtitle={`Map your ${envLabel} plans to their Paddle price ids. The AI uses these for upgrade/downgrade — your own Paddle, your own customers.`}
+      onClose={onClose}
+    >
+      <div className="space-y-2">
+        {unconfigured && (
+          <div className="rounded-md bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+            Until your plans are mapped, the assistant can’t upgrade or downgrade
+            subscriptions{loadingCatalog ? " — loading your Paddle plans…" : ". We’ve pulled your Paddle plans below — review and Save."}
+          </div>
+        )}
+        {/* Real price ids from the operator's Paddle, so each input autocompletes to an
+            existing price instead of relying on a hand-copied id. */}
+        <datalist id={listId}>
+          {prices
+            .filter((p) => p.interval !== "one_time")
+            .map((p) => (
+              <option key={p.priceId} value={p.priceId}>
+                {p.name} ({p.interval})
+              </option>
+            ))}
+        </datalist>
+        <div className="grid grid-cols-[1fr_1fr_1fr] gap-1.5 text-[10px] font-medium text-neutral-500 dark:text-neutral-400">
+          <span>Plan name</span><span>Monthly price id</span><span>Yearly price id</span>
+        </div>
+        {rows.map((r, i) => (
+          <div key={i} className="grid grid-cols-[1fr_1fr_1fr] gap-1.5">
+            <input className={fieldCls} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} placeholder="pro" />
+            <input list={listId} className={fieldCls} value={r.monthly} onChange={(e) => setRow(i, { monthly: e.target.value })} placeholder="pri_..." />
+            <input list={listId} className={fieldCls} value={r.yearly} onChange={(e) => setRow(i, { yearly: e.target.value })} placeholder="pri_..." />
+          </div>
+        ))}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setRows((p) => [...p, { name: "", monthly: "", yearly: "" }])}
+            className="text-[11px] text-neutral-500 hover:underline"
+          >
+            + Add plan
+          </button>
+          <button
+            type="button"
+            onClick={() => loadCatalog(true)}
+            disabled={loadingCatalog}
+            className="text-[11px] text-neutral-500 hover:underline disabled:opacity-50"
+          >
+            {loadingCatalog ? "Loading…" : "Load from Paddle"}
+          </button>
+        </div>
+        {catalogNote && <p className="text-[11px] text-neutral-500 dark:text-neutral-400">{catalogNote}</p>}
+        {error && <p className="text-[11px] text-red-500">{error}</p>}
+        <div className="flex items-center gap-2 pt-1">
+          <button onClick={save} disabled={saving} className="rounded-md bg-neutral-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900">
+            {saving ? "Saving…" : "Save"}
+          </button>
+          <button onClick={onClose} className="text-xs text-neutral-500 hover:underline">
+            {unconfigured ? "Skip for now" : "Cancel"}
+          </button>
+        </div>
+
+        {conn.webhookReceiver && (
+          <WebhookReceiverSection connectionId={conn._id} receiver={conn.webhookReceiver} />
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// Lets the operator register a callback URL in their OWN Paddle/Stripe dashboard so
+// subscription events (renewals, cancellations, out-of-band plan changes, payment
+// failures) flow back and keep the assistant's answers in sync. The signing secret is
+// stored per-connection and used to verify every incoming event's HMAC signature.
+function WebhookReceiverSection({
+  connectionId,
+  receiver,
+}: {
+  connectionId: string;
+  receiver: { callbackUrl: string; hasWebhookSecret: boolean };
+}) {
+  const [secret, setSecret] = useState("");
+  const [saved, setSaved] = useState(receiver.hasWebhookSecret);
+  const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function saveSecret() {
+    setSaving(true);
+    setErr(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`${API_URL}/integrations/${connectionId}/webhook-secret`, {
+        method: "PUT",
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+        body: JSON.stringify({ webhookSecret: secret }),
+      });
+      if (!res.ok) {
+        setErr("Couldn't save the secret — please try again.");
+      } else {
+        setSaved(Boolean(secret));
+        setSecret("");
+      }
+    } catch {
+      setErr("Couldn't save the secret — please try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const fieldCls =
+    "w-full rounded-md border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800";
+  return (
+    <div className="mt-4 space-y-2 border-t border-neutral-200 pt-3 dark:border-neutral-700">
+      <p className="text-xs font-semibold text-neutral-700 dark:text-neutral-300">Subscription webhook (optional)</p>
+      <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+        Register this URL as a notification destination in your provider dashboard so plan changes made outside
+        the chat stay in sync. Paste the signing secret it gives you to verify events.
+      </p>
+      <div className="flex items-center gap-1.5">
+        <input readOnly value={receiver.callbackUrl} className={`${fieldCls} font-mono`} onFocus={(e) => e.target.select()} />
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard?.writeText(receiver.callbackUrl);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="whitespace-nowrap rounded-md border border-neutral-300 px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="password"
+          value={secret}
+          onChange={(e) => setSecret(e.target.value)}
+          placeholder={saved ? "•••••••• (a secret is set — paste to replace)" : "Signing secret"}
+          className={fieldCls}
+        />
+        <button
+          type="button"
+          onClick={saveSecret}
+          disabled={saving || !secret.trim()}
+          className="whitespace-nowrap rounded-md bg-neutral-900 px-3 py-1 text-[11px] font-medium text-white disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900"
+        >
+          {saving ? "Saving…" : "Save secret"}
+        </button>
+      </div>
+      {saved && !err && <p className="text-[11px] text-green-600 dark:text-green-500">✓ Signing secret is set — incoming events are verified.</p>}
+      {err && <p className="text-[11px] text-red-500">{err}</p>}
+    </div>
+  );
+}
+
 function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: AgentOption[] }) {
   const [connecting, setConnecting] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -636,6 +1083,7 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
   const [savingMeta, setSavingMeta] = useState(false);
   const label = PROVIDER_LABELS[info.provider] ?? info.provider;
   const isOAuth = ["calendly", "stripe", "linear", "jira"].includes(info.provider);
+  const isPaddle = info.provider === "paddle";
 
   const [metaError, setMetaError] = useState<string | null>(null);
   async function saveMeta() {
@@ -664,6 +1112,25 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
   const [showGuardrails, setShowGuardrails] = useState(false);
   const [showRegistry, setShowRegistry] = useState(false);
   const [showWebhookEdit, setShowWebhookEdit] = useState(false);
+  const [showOAuthApp, setShowOAuthApp] = useState(false);
+  const [showPaddlePlans, setShowPaddlePlans] = useState(false);
+  // A Paddle connection with no plan→price-id mapping can't perform upgrade/downgrade —
+  // surface it and auto-open the setup right after connecting.
+  const paddlePlansUnconfigured =
+    isPaddle && info.connection ? Object.keys(info.connection.paddlePlans ?? {}).length === 0 : false;
+  useEffect(() => {
+    if (!isPaddle || !info.connection) return;
+    try {
+      const flag = sessionStorage.getItem("paddle-setup-plans");
+      if (flag && flag === String(info.connection._id)) {
+        sessionStorage.removeItem("paddle-setup-plans");
+        setShowPaddlePlans(true);
+      }
+    } catch {
+      /* sessionStorage unavailable — the warning badge still prompts setup */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPaddle, info.connection?._id]);
   // Client-side echoes of what was just saved in the multi-save modals, so that
   // reopening a modal shows the new values instead of the stale server props (the
   // rows remount on reopen). Keyed by toolDef id.
@@ -687,22 +1154,23 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
     if (wantSandbox === sandbox) return;
     setVerifyResult(null);
     closeKeyForm();
+    // Always stay on the selected environment — never snap the toggle back, even when
+    // that environment isn't connected yet (the "connect this environment" prompt takes
+    // over) or the server swap fails. Snapping back was confusing.
     setSandbox(wantSandbox);
     if (!info.connection) return; // fresh card — just choosing which env to connect
-    const targetConnected = wantSandbox ? sandboxConnected : productionConnected;
-    if (!targetConnected) return; // in view only; the connect prompt handles it
+    // Persist the selected environment server-side even when it isn't connected — the
+    // server keeps this env active and the agent's tool calls fail gracefully (so the
+    // operator can observe that behaviour). The toggle never snaps back on its own.
     try {
       const token = await getAccessToken();
-      const res = await fetch(`${API_URL}/integrations/${info.connection._id}`, {
+      await fetch(`${API_URL}/integrations/${info.connection._id}`, {
         method: "PATCH",
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
         body: JSON.stringify({ sandbox: wantSandbox }),
       });
-      // Should already be connected, but if the server says it needs setup, keep the
-      // selection so the connect prompt shows rather than snapping the view back.
-      if (!res.ok) setSandbox(!wantSandbox); // revert only on a hard failure
     } catch {
-      setSandbox(!wantSandbox);
+      /* keep the selected env in view */
     }
   }
 
@@ -754,7 +1222,10 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
       const token = await getAccessToken();
       const res = await fetch(`${API_URL}/integrations/${info.connection._id}/verify`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+        // Test the environment currently in view, not the active/mirror one — so
+        // testing production actually checks production's credentials.
+        body: JSON.stringify({ sandbox }),
       });
       const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: unknown };
       // Guard against a non-string error shape (e.g. an upstream {code,message}
@@ -779,6 +1250,12 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
       return;
     }
     if (isOAuth) {
+      // The operator must configure their own OAuth app for THIS environment first
+      // (sandbox and production are separate apps). Open that form instead of connecting.
+      if (!info.oauthAppConfigured?.[envSandbox ? "sandbox" : "production"]) {
+        setShowOAuthApp(true);
+        return;
+      }
       setConnecting(true);
       try {
         const token = await getAccessToken();
@@ -787,9 +1264,16 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
           headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
           body: JSON.stringify({ sandbox: envSandbox }),
         });
-        const data = (await res.json()) as { authUrl?: string };
+        const data = (await res.json()) as { authUrl?: string; needsOAuthApp?: boolean };
+        if (data.needsOAuthApp) {
+          setShowOAuthApp(true);
+          setConnecting(false);
+          return;
+        }
         if (data.authUrl) {
           window.location.href = data.authUrl;
+        } else {
+          setConnecting(false);
         }
       } catch {
         setConnecting(false);
@@ -811,15 +1295,21 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
   // way to reopen the form after Cancel, and as the initial connect action.
   function renderConnectPrompt() {
     const envLabel = sandbox ? "Sandbox" : "Production";
+    // OAuth providers must have the operator's own app configured for THIS environment.
+    const oauthNeedsApp = isOAuth && !info.oauthAppConfigured?.[sandbox ? "sandbox" : "production"];
     return (
       <div className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-center dark:border-neutral-700">
-        <p className="text-[11px] text-neutral-500 dark:text-neutral-400">{envLabel} isn’t connected yet.</p>
+        <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
+          {oauthNeedsApp ? `Set up your ${label} ${envLabel} OAuth app to connect.` : `${envLabel} isn’t connected yet.`}
+        </p>
         <button
-          onClick={connectSelectedEnv}
+          onClick={oauthNeedsApp ? () => setShowOAuthApp(true) : connectSelectedEnv}
           disabled={connecting}
           className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
         >
-          {isOAuth ? (
+          {oauthNeedsApp ? (
+            "Configure OAuth app"
+          ) : isOAuth ? (
             <>
               <ExternalLink className="h-3.5 w-3.5" />
               {connecting ? "Redirecting…" : `Connect ${envLabel} via OAuth`}
@@ -888,6 +1378,17 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
         setConnecting(false);
         return;
       }
+      // For Paddle, flag the just-connected connection so the plan-mapping step opens
+      // automatically after reload — mapping their existing plans during connect is what
+      // prevents the "no plans are configured" failure on the first upgrade/downgrade.
+      if (info.provider === "paddle") {
+        try {
+          const data = (await res.json().catch(() => ({}))) as { connection?: { _id?: string } };
+          if (data.connection?._id) sessionStorage.setItem("paddle-setup-plans", String(data.connection._id));
+        } catch {
+          /* non-fatal — the persistent "Configure plans" warning still prompts them */
+        }
+      }
       window.location.reload();
     } finally {
       setConnecting(false);
@@ -906,9 +1407,21 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
 
   async function handleRevoke() {
     if (!info.connection) return;
-    if (!confirm(`Disconnect ${label}? This will disable all related tools.`)) return;
+    // When BOTH environments are connected, disconnect only the one being viewed —
+    // the other account stays live. When only one is connected, disconnect the whole
+    // connection (disables its tools).
+    const bothConnected = sandboxConnected && productionConnected;
+    const viewedEnv = sandbox ? "sandbox" : "production";
+    const otherEnv = sandbox ? "production" : "sandbox";
+    const msg = bothConnected
+      ? `Disconnect the ${viewedEnv} ${label} account? The ${otherEnv} one stays connected.`
+      : `Disconnect ${label}? This will disable all related tools.`;
+    if (!confirm(msg)) return;
     const token = await getAccessToken();
-    await fetch(`${API_URL}/integrations/${info.connection._id}`, {
+    const url = bothConnected
+      ? `${API_URL}/integrations/${info.connection._id}?environment=${viewedEnv}`
+      : `${API_URL}/integrations/${info.connection._id}`;
+    await fetch(url, {
       method: "DELETE",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
@@ -974,16 +1487,24 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
   // not the whole tool definition, so that case uses a compact form.
   const webhookEndpointMode = isWebhook && connectionExists;
 
-  // The environment the stored `encryptedCredentials` belong to (server-persisted,
-  // not the optimistic client selection). That env is always credentialed; the
-  // other env is only connected once its own slot is filled. Both api-key AND
-  // OAuth connections now store per-environment credentials.
+  // Per-environment connectedness comes from the actual credential slots
+  // (hasSandboxCreds / hasProductionCreds). We can NO LONGER assume "the active env
+  // is always credentialed" — since operators can deliberately switch to an
+  // unconnected environment (it persists and tool calls fail gracefully), that
+  // assumption wrongly marked the empty target env as connected after a switch.
+  // The active-env fallback now only applies to LEGACY connections that predate
+  // per-env storage: both slots empty but the connection is active, so
+  // `encryptedCredentials` must belong to whichever env is active.
   const activeEnvIsSandbox = info.connection?.sandbox ?? false;
+  const bothSlotsEmpty =
+    !info.connection?.hasSandboxCreds && !info.connection?.hasProductionCreds;
+  const legacyActiveConnected =
+    Boolean(info.connection) && bothSlotsEmpty && info.connection!.status === "active";
   const sandboxConnected = info.connection
-    ? Boolean(info.connection.hasSandboxCreds) || activeEnvIsSandbox
+    ? Boolean(info.connection.hasSandboxCreds) || (legacyActiveConnected && activeEnvIsSandbox)
     : false;
   const productionConnected = info.connection
-    ? Boolean(info.connection.hasProductionCreds) || !activeEnvIsSandbox
+    ? Boolean(info.connection.hasProductionCreds) || (legacyActiveConnected && !activeEnvIsSandbox)
     : false;
   // Is the environment the operator is currently viewing actually connected? A
   // sandbox-only connection must NOT read as "Connected" while production is in
@@ -1231,6 +1752,23 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
                 Edit webhook
               </button>
             )}
+            {isOAuth && (
+              <button onClick={() => setShowOAuthApp(true)} className="text-xs text-neutral-500 hover:underline">
+                OAuth app
+              </button>
+            )}
+            {isPaddle && (
+              <button
+                onClick={() => setShowPaddlePlans(true)}
+                className={
+                  paddlePlansUnconfigured
+                    ? "rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400"
+                    : "text-xs text-neutral-500 hover:underline"
+                }
+              >
+                {paddlePlansUnconfigured ? "⚠ Configure plans" : "Configure plans"}
+              </button>
+            )}
             <button onClick={() => setShowGuardrails(true)} className="text-xs text-neutral-500 hover:underline">
               Guardrails
             </button>
@@ -1244,7 +1782,9 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
               {verifying ? "Testing…" : "Test connection"}
             </button>
             <button onClick={handleRevoke} className="text-xs text-red-500 hover:underline ml-auto">
-              Disconnect
+              {sandboxConnected && productionConnected
+                ? `Disconnect ${sandbox ? "Sandbox" : "Production"}`
+                : "Disconnect"}
             </button>
           </div>
           )}
@@ -1264,6 +1804,8 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
             />
           )}
           {showWebhookEdit && <WebhookEditModal info={info} onClose={() => setShowWebhookEdit(false)} />}
+          {showOAuthApp && <OAuthAppModal provider={info.provider} label={label} sandbox={sandbox} onClose={() => setShowOAuthApp(false)} />}
+          {showPaddlePlans && <PaddlePlansModal info={info} onClose={() => setShowPaddlePlans(false)} />}
           {editing && (
             <Modal title="Rename connection" onClose={() => setEditing(false)}>
               <label className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">Connection name</label>
@@ -1361,6 +1903,7 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
             onSelect={selectEnv}
           />
           {renderConnectPrompt()}
+          {showOAuthApp && <OAuthAppModal provider={info.provider} label={label} sandbox={sandbox} onClose={() => setShowOAuthApp(false)} />}
         </div>
       )}
     </div>
@@ -1386,8 +1929,7 @@ export function IntegrationsClient({
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
           </svg>
           <span>
-            Credentials are encrypted at rest with <strong>AES-256-GCM</strong> and stored in the credentials vault.
-            The encryption key is set via the <code className="rounded bg-neutral-100 px-1 dark:bg-neutral-700">CREDENTIALS_ENCRYPTION_KEY</code> environment variable.
+            Credentials are encrypted at rest and stored in secure credentials vault.
           </span>
         </div>
       </div>

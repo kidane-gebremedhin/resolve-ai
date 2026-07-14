@@ -14,6 +14,7 @@ export { AuditEvent, type AuditEventDocType } from "./AuditEvent.js";
 export { ApiKey, type ApiKeyDocType } from "./ApiKey.js";
 export { PlatformSetting, type PlatformSettingDocType } from "./PlatformSetting.js";
 export { ProcessedWebhook, type ProcessedWebhookDocType } from "./ProcessedWebhook.js";
+export { ExternalSubscription, type ExternalSubscriptionDocType } from "./ExternalSubscription.js";
 export { Referral, type ReferralDocType } from "./Referral.js";
 export { Campaign, type CampaignDocType } from "./Campaign.js";
 export { UsageRecord, type UsageRecordDocType } from "./UsageRecord.js";
@@ -22,6 +23,7 @@ export { MessageFeedback, type MessageFeedbackDocType } from "./MessageFeedback.
 export { ConversationRating, type ConversationRatingDocType } from "./ConversationRating.js";
 export { Connection, type ConnectionDocType } from "./Connection.js";
 export { ToolDefinition, type ToolDefinitionDocType } from "./ToolDefinition.js";
+export { OAuthAppConfig, type OAuthAppConfigDocType } from "./OAuthAppConfig.js";
 export { ToolCallLog, type ToolCallLogDocType } from "./ToolCallLog.js";
 export { KnowledgeGap, type KnowledgeGapDocType } from "./KnowledgeGap.js";
 export { ProactiveTrigger, type ProactiveTriggerDocType } from "./ProactiveTrigger.js";

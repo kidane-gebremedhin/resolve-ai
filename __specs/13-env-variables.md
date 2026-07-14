@@ -127,22 +127,17 @@ Socket.io infrastructure._
 
 ### Tier 2A — Integration framework (spec 30)
 
+> **Integration credentials are NOT env vars (Changelog 7).** Provider API keys and
+> OAuth tokens are stored per-connection, encrypted at rest. OAuth **app** credentials
+> (`<PROVIDER>_CLIENT_ID` / `_CLIENT_SECRET` for Jira/Atlassian, Calendly, Linear,
+> Shopify, Stripe) moved to a per-org encrypted `OAuthAppConfig` configured in the
+> Integrations UI — they are no longer read from the environment. Only the vault key +
+> the webhook timeout remain here. (Legacy deployments: run
+> `integrations:migrate-oauth-apps` to seed the per-org store from old env values first.)
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CREDENTIALS_ENCRYPTION_KEY` | ✅ | — | 32-byte base64 key for AES-256-GCM per-org credential storage. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
-| `CALCOM_CLIENT_ID` | — | — | Cal.com OAuth 2.0 app client ID |
-| `CALCOM_CLIENT_SECRET` | — | — | Cal.com OAuth 2.0 app client secret |
-| `CALENDLY_CLIENT_ID` | — | — | Calendly OAuth 2.0 app client ID |
-| `CALENDLY_CLIENT_SECRET` | — | — | Calendly OAuth 2.0 app client secret |
-| `STRIPE_CLIENT_ID` | — | — | Stripe Connect platform client ID (requires Connect approval) |
-| `STRIPE_SECRET_KEY` | — | — | Stripe platform secret key |
-| `STRIPE_WEBHOOK_SECRET` | — | — | Stripe webhook endpoint signing secret |
-| `SHOPIFY_CLIENT_ID` | — | — | Shopify partner app client ID |
-| `SHOPIFY_CLIENT_SECRET` | — | — | Shopify partner app client secret |
-| `LINEAR_CLIENT_ID` | — | — | Linear OAuth 2.0 app client ID |
-| `LINEAR_CLIENT_SECRET` | — | — | Linear OAuth 2.0 app client secret |
-| `ATLASSIAN_CLIENT_ID` | — | — | Atlassian (Jira) OAuth 2.0 app client ID |
-| `ATLASSIAN_CLIENT_SECRET` | — | — | Atlassian (Jira) OAuth 2.0 app client secret |
 | `WEBHOOK_TIMEOUT_MS` | — | `10000` | Max ms for custom webhook connector calls |
 | `OTP_EXPIRY_SECONDS` | — | `600` | OTP validity window (seconds) for identity verification before high-stakes tool calls |
 

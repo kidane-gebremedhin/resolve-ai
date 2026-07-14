@@ -1,27 +1,25 @@
-import type { ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
+import type { OAuthAppCreds, ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
 import type { EncryptedBlob } from "../../security/crypto.service.js";
 import { env } from "../../../config/env.js";
 
 const OAUTH_BASE = "https://auth.atlassian.com/authorize";
 const TOKEN_URL = "https://auth.atlassian.com/oauth/token";
 
-// Allow an explicit override so the redirect URI registered in the Atlassian
-// developer console can differ from API_BASE_URL (e.g. ngrok tunnel vs localhost).
-function getRedirectUri(): string {
-  return (
-    process.env.ATLASSIAN_REDIRECT_URI ??
-    `${env.apiBaseUrl}/api/v1/integrations/jira/callback`
-  );
+// The redirect URI must match the one registered in the operator's Atlassian OAuth
+// app. It can be overridden per-app config (e.g. an ngrok tunnel); otherwise it
+// derives from API_BASE_URL.
+function getRedirectUri(app?: OAuthAppCreds | null): string {
+  return app?.redirectUri ?? `${env.apiBaseUrl}/api/v1/integrations/jira/callback`;
 }
 
 export class JiraAdapter implements ProviderAdapter {
   readonly provider = "jira";
 
-  buildAuthUrl(orgId: string, state: string): string {
+  buildAuthUrl(_orgId: string, state: string, app?: OAuthAppCreds | null): string {
     const params = new URLSearchParams({
       audience: "api.atlassian.com",
-      client_id: process.env.ATLASSIAN_CLIENT_ID ?? "",
-      redirect_uri: getRedirectUri(),
+      client_id: app?.clientId ?? "",
+      redirect_uri: getRedirectUri(app),
       response_type: "code",
       // offline_access is required to get a refresh_token so the connection
       // stays alive beyond the 1-hour access-token lifetime. read:jira-work lets
@@ -33,19 +31,35 @@ export class JiraAdapter implements ProviderAdapter {
     return `${OAUTH_BASE}?${params.toString()}`;
   }
 
-  async exchangeCode(code: string, _orgId: string): Promise<RawCredentials> {
+  async exchangeCode(code: string, _orgId: string, app?: OAuthAppCreds | null): Promise<RawCredentials> {
+    // Atlassian is a CONFIDENTIAL OAuth client — the token exchange requires a client
+    // secret. Fail fast with a clear message if it's missing, otherwise the request
+    // below silently returns no access_token and we'd store a tokenless "connected"
+    // integration.
+    if (!app?.clientSecret) {
+      throw new Error(
+        "Jira requires an OAuth client secret. Add it to the Jira OAuth app in Integrations, then reconnect.",
+      );
+    }
     const res = await fetch(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         grant_type: "authorization_code",
-        client_id: process.env.ATLASSIAN_CLIENT_ID,
-        client_secret: process.env.ATLASSIAN_CLIENT_SECRET,
+        client_id: app?.clientId,
+        client_secret: app?.clientSecret,
         code,
-        redirect_uri: getRedirectUri(),
+        redirect_uri: getRedirectUri(app),
       }),
     });
     const data = (await res.json()) as Record<string, unknown>;
+    // A failed exchange (bad secret/redirect, expired code) returns a non-2xx with an
+    // error payload but no access_token — surface it instead of storing empty creds.
+    if (!res.ok || !data.access_token) {
+      throw new Error(
+        `Jira token exchange failed: ${data.error_description ?? data.error ?? res.status}`,
+      );
+    }
     // Fetch the accessible resources to get the cloud ID
     const cloudRes = await fetch("https://api.atlassian.com/oauth/token/accessible-resources", {
       headers: { Authorization: `Bearer ${data.access_token}`, Accept: "application/json" },
@@ -63,7 +77,7 @@ export class JiraAdapter implements ProviderAdapter {
     };
   }
 
-  async refreshTokens(blob: EncryptedBlob): Promise<RawCredentials | null> {
+  async refreshTokens(blob: EncryptedBlob, app?: OAuthAppCreds | null): Promise<RawCredentials | null> {
     const { decrypt } = await import("../../security/crypto.service.js");
     let existing: RawCredentials;
     try {
@@ -72,14 +86,15 @@ export class JiraAdapter implements ProviderAdapter {
       return null;
     }
     if (!existing.refreshToken) return null;
+    if (!app?.clientId || !app?.clientSecret) return null; // no app configured → can't refresh
 
     const res = await fetch(TOKEN_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         grant_type: "refresh_token",
-        client_id: process.env.ATLASSIAN_CLIENT_ID,
-        client_secret: process.env.ATLASSIAN_CLIENT_SECRET,
+        client_id: app.clientId,
+        client_secret: app.clientSecret,
         refresh_token: existing.refreshToken,
       }),
     });
@@ -117,9 +132,13 @@ export class JiraAdapter implements ProviderAdapter {
   // a pick-list instead of a free-text key (which let operators save a project
   // that doesn't exist — e.g. "PTKA" when only "KAN" exists — breaking ticket
   // creation). Best-effort: returns [] if the call fails / scope is missing.
+  // Throws a typed error (jira_missing_cloud_id / jira_unauthorized /
+  // jira_forbidden / jira_http_<status>) instead of silently returning [] so the
+  // route can tell an expired token (→ refresh & retry, or prompt reconnect) apart
+  // from a missing scope or a genuinely empty site, and show the operator why.
   async listProjects(credentials: RawCredentials): Promise<{ key: string; name: string }[]> {
     const cloudId = (credentials.extra?.cloudId as string) ?? "";
-    if (!cloudId) return [];
+    if (!cloudId) throw new Error("jira_missing_cloud_id");
     const apiBase = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`;
     const res = await fetch(`${apiBase}/project/search`, {
       headers: {
@@ -127,7 +146,9 @@ export class JiraAdapter implements ProviderAdapter {
         Accept: "application/json",
       },
     });
-    if (!res.ok) return [];
+    if (res.status === 401) throw new Error("jira_unauthorized");
+    if (res.status === 403) throw new Error("jira_forbidden");
+    if (!res.ok) throw new Error(`jira_http_${res.status}`);
     const data = (await res.json()) as { values?: { key: string; name: string }[] };
     return (data.values ?? []).map((p) => ({ key: p.key, name: p.name }));
   }

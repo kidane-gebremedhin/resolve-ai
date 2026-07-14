@@ -1,4 +1,4 @@
-import type { ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
+import type { OAuthAppCreds, ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
 import type { EncryptedBlob } from "../../security/crypto.service.js";
 import { env } from "../../../config/env.js";
 
@@ -9,12 +9,12 @@ const API_TEST = "https://api.stripe.com/v1";
 export class StripeAdapter implements ProviderAdapter {
   readonly provider = "stripe";
 
-  buildAuthUrl(orgId: string, state: string): string {
-    const clientId = process.env.STRIPE_CLIENT_ID;
+  buildAuthUrl(_orgId: string, state: string, app?: OAuthAppCreds | null): string {
+    const clientId = app?.clientId;
     if (!clientId) return "";
     const params = new URLSearchParams({
       client_id: clientId,
-      redirect_uri: `${env.apiBaseUrl}/api/v1/integrations/stripe/callback`,
+      redirect_uri: app?.redirectUri ?? `${env.apiBaseUrl}/api/v1/integrations/stripe/callback`,
       response_type: "code",
       scope: "read_write",
       state,
@@ -22,21 +22,29 @@ export class StripeAdapter implements ProviderAdapter {
     return `${OAUTH_BASE}/authorize?${params.toString()}`;
   }
 
-  async exchangeCode(code: string, _orgId: string): Promise<RawCredentials> {
+  async exchangeCode(code: string, _orgId: string, app?: OAuthAppCreds | null): Promise<RawCredentials> {
+    // Stripe Connect uses the platform's SECRET KEY as the client_secret here.
     const res = await fetch(`${OAUTH_BASE}/token`, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        client_secret: process.env.STRIPE_SECRET_KEY ?? "",
+        client_secret: app?.clientSecret ?? "",
         code,
         grant_type: "authorization_code",
       }),
     });
     const data = (await res.json()) as Record<string, unknown>;
+    // A failed exchange (bad/missing secret key, expired code) returns no access_token —
+    // surface it rather than storing a tokenless "connected" integration.
+    if (!res.ok || !data.access_token) {
+      throw new Error(
+        `Stripe token exchange failed: ${data.error_description ?? data.error ?? res.status}`,
+      );
+    }
     return { accessToken: data.access_token as string };
   }
 
-  async refreshTokens(_blob: EncryptedBlob): Promise<RawCredentials | null> {
+  async refreshTokens(_blob: EncryptedBlob, _app?: OAuthAppCreds | null): Promise<RawCredentials | null> {
     return null;
   }
 

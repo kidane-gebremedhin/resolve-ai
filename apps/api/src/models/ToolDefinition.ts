@@ -18,9 +18,6 @@ const guardrailsSchema = new Schema(
     // operator explicitly turns it off (in which case the adapter books under the
     // generic "Customer" attendee).
     requireNamedAttendee: { type: Boolean, default: true },
-    // Subscription changes (upgrade/downgrade): only allow moving to a plan at or
-    // above the current one (i.e. block downgrades through the AI).
-    upgradeOnly: { type: Boolean, default: false },
     // Subscription/refund: only act when the customer is the account's billing owner.
     requireBillingOwner: { type: Boolean, default: false },
   },

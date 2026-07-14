@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Sparkles, Plus, X, Save, Loader2, Wrench } from "lucide-react";
+import { Sparkles, Plus, X, Save, Loader2, Wrench, ChevronUp, ChevronDown, ListOrdered } from "lucide-react";
 import { Button } from "@csb/ui";
 import { Input } from "@csb/ui";
 import { Textarea } from "@csb/ui";
@@ -23,6 +23,7 @@ export type AgentDoc = {
   temperature?: number;
   confidenceThreshold?: number;
   jiraProjectKey?: string;
+  toolPriority?: { key: string; connectionIds: string[] }[];
 };
 
 /** Effective env defaults (GET /agents/defaults) used to prepopulate unset fields. */
@@ -37,6 +38,8 @@ export type ConnectedTool = {
   connectionName: string;
   provider: string;
   enabledAgentIds: string[];
+  /** Tool keys this connection exposes (to detect similar-capability tools). */
+  toolKeys?: string[];
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -202,22 +205,41 @@ export function AgentEditor({
   // Real Jira projects for the pick-list (so operators can't save a key that
   // doesn't exist). Falls back to a free-text field if the list can't load.
   const [jiraProjects, setJiraProjects] = useState<{ key: string; name: string }[] | null>(null);
+  // Why the project list is empty, if it is — so we can show an actionable message
+  // (expired session, missing scope, etc.) instead of a dead-end "no projects" hint.
+  const [jiraReason, setJiraReason] = useState<string | null>(null);
   const hasJira = connections.some((c) => c.provider === "jira");
   useEffect(() => {
     if (!hasJira) return;
     let cancelled = false;
     clientApi
-      .get<{ projects: { key: string; name: string }[] }>("/integrations/jira/projects")
+      .get<{ projects: { key: string; name: string }[]; reason?: string }>("/integrations/jira/projects")
       .then((r) => {
-        if (!cancelled) setJiraProjects(r.projects ?? []);
+        if (cancelled) return;
+        setJiraProjects(r.projects ?? []);
+        setJiraReason(r.reason ?? null);
       })
       .catch(() => {
-        if (!cancelled) setJiraProjects([]);
+        if (cancelled) return;
+        setJiraProjects([]);
+        setJiraReason("error");
       });
     return () => {
       cancelled = true;
     };
   }, [hasJira]);
+  const JIRA_REASON_MESSAGES: Record<string, string> = {
+    reconnect_required:
+      "Your Jira session expired. Reconnect Jira in Integrations to refresh access, then reopen this.",
+    missing_permission:
+      "This Jira connection can't read projects (missing the read:jira-work scope). Reconnect Jira in Integrations to grant it.",
+    not_connected:
+      "The active Jira environment isn't connected. Connect it in Integrations, then reopen this.",
+    empty:
+      "No projects found in your Jira site. Create a project in Jira, then reopen this.",
+    error:
+      "Couldn't load Jira projects right now. Check the Jira connection in Integrations, then reopen this.",
+  };
 
   // Per-connection enabled state for this agent's tools
   const [toolEnabled, setToolEnabled] = useState<Record<string, boolean>>(() => {
@@ -228,6 +250,55 @@ export function AgentEditor({
     return init;
   });
   const [toolSaving, setToolSaving] = useState<Record<string, boolean>>({});
+
+  // Operator-set primary→fallback order per shared tool key: { key → ordered
+  // connectionIds }. Seeded from the saved agent.toolPriority; edited via the
+  // move up/down controls below and persisted with "Save changes".
+  const [toolOrder, setToolOrder] = useState<Record<string, string[]>>(() => {
+    const init: Record<string, string[]> = {};
+    for (const p of agent.toolPriority ?? []) init[p.key] = [...p.connectionIds];
+    return init;
+  });
+
+  // Tool keys exposed by ≥2 currently-ENABLED connections — the "similar
+  // capability" case where the agent needs to know which tool to try first.
+  // Recomputed from live toggle state so it appears/disappears as tools toggle.
+  const sharedKeys: { key: string; conns: ConnectedTool[] }[] = (() => {
+    const byKey = new Map<string, ConnectedTool[]>();
+    for (const c of connections) {
+      if (!(toolEnabled[c.connectionId] ?? false)) continue;
+      for (const k of c.toolKeys ?? []) {
+        const list = byKey.get(k) ?? [];
+        list.push(c);
+        byKey.set(k, list);
+      }
+    }
+    const out: { key: string; conns: ConnectedTool[] }[] = [];
+    for (const [key, conns] of byKey) {
+      if (conns.length < 2) continue;
+      // Apply the saved/edited order: listed connections first (in order), then
+      // any newly-enabled ones the operator hasn't ranked yet.
+      const order = toolOrder[key] ?? [];
+      const ranked = [...conns].sort((a, b) => {
+        const ia = order.indexOf(a.connectionId);
+        const ib = order.indexOf(b.connectionId);
+        return (ia === -1 ? Infinity : ia) - (ib === -1 ? Infinity : ib);
+      });
+      out.push({ key, conns: ranked });
+    }
+    return out.sort((a, b) => a.key.localeCompare(b.key));
+  })();
+
+  function moveConn(key: string, connId: string, dir: -1 | 1): void {
+    const current = sharedKeys.find((s) => s.key === key);
+    if (!current) return;
+    const ids = current.conns.map((c) => c.connectionId);
+    const i = ids.indexOf(connId);
+    const j = i + dir;
+    if (i === -1 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    setToolOrder((prev) => ({ ...prev, [key]: ids }));
+  }
 
   async function toggleTool(connectionId: string, enable: boolean) {
     setToolEnabled((prev) => ({ ...prev, [connectionId]: enable }));
@@ -270,6 +341,12 @@ export function AgentEditor({
         confidenceThreshold: confidence,
         suggestedQuestions: suggested,
         jiraProjectKey: jiraProjectKey.trim(),
+        // Persist only the currently-shared keys' order; keys that are no longer
+        // ambiguous (one/zero enabled connections) drop out and use default order.
+        toolPriority: sharedKeys.map((s) => ({
+          key: s.key,
+          connectionIds: s.conns.map((c) => c.connectionId),
+        })),
       });
       setSavedAt(Date.now());
     } catch (e) {
@@ -529,39 +606,107 @@ export function AgentEditor({
                 Tickets this agent files go to this project. Leave as “Auto-pick” to
                 let the system choose.
               </p>
-              {jiraProjects && jiraProjects.length > 0 ? (
-                <select
-                  id="jira-project"
-                  className="mt-2 block w-full max-w-[280px] rounded-md border border-border bg-background px-3 py-2 text-sm"
-                  value={jiraProjectKey}
-                  onChange={(e) => setJiraProjectKey(e.target.value)}
-                >
-                  <option value="">Auto-pick a project</option>
-                  {jiraProjects.map((p) => (
-                    <option key={p.key} value={p.key}>
-                      {p.name} ({p.key})
-                    </option>
-                  ))}
-                  {/* Surface a previously-saved key that no longer exists in Jira
-                      (e.g. a typo like "PTKA") so it's visible, not silently blank. */}
-                  {jiraProjectKey && !jiraProjects.some((p) => p.key === jiraProjectKey) && (
-                    <option value={jiraProjectKey}>{jiraProjectKey} — not found in Jira</option>
-                  )}
-                </select>
-              ) : (
-                // Fallback: projects couldn't be loaded — keep free-text entry.
-                <Input
-                  id="jira-project"
-                  className="mt-2 max-w-[200px] font-mono"
-                  placeholder="SUPPORT"
-                  value={jiraProjectKey}
-                  onChange={(e) => setJiraProjectKey(e.target.value.toUpperCase())}
-                />
+              {/* Always a dropdown of real projects. While loading it's disabled; if the
+                  list can't load, it still shows Auto-pick + any saved key. */}
+              <select
+                id="jira-project"
+                disabled={jiraProjects === null}
+                className="mt-2 block w-full max-w-[280px] rounded-md border border-border bg-background px-3 py-2 text-sm disabled:opacity-60"
+                value={jiraProjectKey}
+                onChange={(e) => setJiraProjectKey(e.target.value)}
+              >
+                <option value="">
+                  {jiraProjects === null ? "Loading projects…" : "Auto-pick a project"}
+                </option>
+                {(jiraProjects ?? []).map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.name} ({p.key})
+                  </option>
+                ))}
+                {/* Surface a previously-saved key that no longer exists in Jira
+                    (e.g. a typo like "PTKA") so it's visible, not silently blank. */}
+                {jiraProjectKey && (jiraProjects ?? []).every((p) => p.key !== jiraProjectKey) && (
+                  <option value={jiraProjectKey}>{jiraProjectKey} — not found in Jira</option>
+                )}
+              </select>
+              {jiraProjects !== null && jiraProjects.length === 0 && (
+                <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-500">
+                  {JIRA_REASON_MESSAGES[jiraReason ?? "error"] ?? JIRA_REASON_MESSAGES.error}
+                </p>
               )}
               <p className="mt-1 text-[11px] text-muted-foreground">Saved with “Save changes” below.</p>
             </div>
           )}
         </div>
+
+        {sharedKeys.length > 0 && (
+          <div className="mt-6 rounded-xl border border-border bg-card p-5">
+            <Label className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              <ListOrdered className="h-3.5 w-3.5" /> Primary &amp; fallback order
+            </Label>
+            <p className="mt-1 text-xs text-muted-foreground">
+              These tools are offered by more than one connected integration. Set which one the
+              agent tries first — it falls back to the next on an error or low confidence.
+            </p>
+            <div className="mt-4 space-y-4">
+              {sharedKeys.map(({ key, conns }) => (
+                <div key={key} className="rounded-lg border border-border px-4 py-3">
+                  <p className="text-sm font-medium text-foreground">
+                    {key.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground">{key}</p>
+                  <ol className="mt-3 space-y-2">
+                    {conns.map((conn, idx) => (
+                      <li
+                        key={conn.connectionId}
+                        className="flex items-center justify-between gap-3 rounded-md border border-border bg-surface px-3 py-2"
+                      >
+                        <span className="flex min-w-0 items-center gap-2 text-sm">
+                          <span
+                            className={`inline-flex h-5 shrink-0 items-center rounded-full px-2 text-[10px] font-semibold ${
+                              idx === 0
+                                ? "bg-foreground text-background"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {idx === 0 ? "Primary" : `Fallback ${idx}`}
+                          </span>
+                          <span className="truncate">
+                            {PROVIDER_LABELS[conn.provider] ?? conn.provider}
+                            {conn.connectionName && conn.connectionName !== conn.provider && (
+                              <span className="text-muted-foreground"> · {conn.connectionName}</span>
+                            )}
+                          </span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            aria-label="Move up"
+                            disabled={idx === 0}
+                            onClick={() => moveConn(key, conn.connectionId, -1)}
+                            className="rounded p-1 text-muted-foreground hover:bg-muted disabled:opacity-30"
+                          >
+                            <ChevronUp className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label="Move down"
+                            disabled={idx === conns.length - 1}
+                            onClick={() => moveConn(key, conn.connectionId, 1)}
+                            className="rounded p-1 text-muted-foreground hover:bg-muted disabled:opacity-30"
+                          >
+                            <ChevronDown className="h-4 w-4" />
+                          </button>
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">Saved with “Save changes” below.</p>
+          </div>
+        )}
       </TabsContent>
 
       <div className="mt-6 flex items-center justify-end gap-3">

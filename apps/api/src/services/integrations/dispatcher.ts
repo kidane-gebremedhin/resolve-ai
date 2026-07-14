@@ -1,5 +1,5 @@
 import type { Types } from "mongoose";
-import { ToolDefinition, ToolCallLog, ContactSession, Agent, Connection, Message } from "../../models/index.js";
+import { ToolDefinition, ToolCallLog, ContactSession, Agent, Connection, Message, ExternalSubscription } from "../../models/index.js";
 import { getAdapter } from "./adapters/index.js";
 import { evaluateGuardrails } from "./guardrails.js";
 import { checkRateLimit } from "./rateLimit.js";
@@ -123,6 +123,10 @@ export async function dispatchToolCall(
   toolKey: string,
   args: Record<string, unknown>,
   ctx: DispatchContext,
+  // Pin a specific connection for this call — used to route to a chosen PRIMARY tool
+  // (and fall back to another connection on error) when several connections expose the
+  // same tool key (e.g. Jira + Linear both `create_support_ticket`).
+  connectionId?: Types.ObjectId | string,
 ): Promise<DispatchResult> {
   const startMs = Date.now();
 
@@ -135,6 +139,7 @@ export async function dispatchToolCall(
     organizationId: ctx.organizationId,
     key: toolKey,
     isActive: true,
+    ...(connectionId ? { connectionId } : {}),
   }).populate("connectionId");
 
   const toolDef =
@@ -155,11 +160,31 @@ export async function dispatchToolCall(
     rateLimitPerConnection?: number;
     rateLimitWindowMs?: number;
     encryptedCredentials: Parameters<typeof decrypt>[0];
+    sandboxCredentials?: Parameters<typeof decrypt>[0];
+    productionCredentials?: Parameters<typeof decrypt>[0];
   };
 
   if (connection.status === "revoked") {
     return { ok: false, blocked: true, reason: "Integration connection has been revoked.", status: "guardrail_blocked" };
   }
+
+  // Resolve the credentials for the ACTIVE environment. The operator can switch the
+  // connection to an environment that isn't connected (to observe how the agent behaves
+  // when a tool has no credentials) — in that case the tool call must fail GRACEFULLY
+  // rather than silently using the other environment's tokens.
+  const activeEnvCreds = connection.sandbox ? connection.sandboxCredentials : connection.productionCredentials;
+  const otherEnvCreds = connection.sandbox ? connection.productionCredentials : connection.sandboxCredentials;
+  if ((activeEnvCreds || otherEnvCreds) && !activeEnvCreds) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: `This integration's ${connection.sandbox ? "sandbox" : "production"} environment isn't connected, so I can't complete that right now.`,
+      status: "guardrail_blocked",
+    };
+  }
+  // Env-aware connection → use the active env's slot; legacy connections (no slots) fall
+  // back to the mirror `encryptedCredentials`.
+  const activeCredsBlob = activeEnvCreds ?? connection.encryptedCredentials;
 
   // NOTE: guardrail evaluation runs LATER, after argument enrichment, so
   // per-tool checks (named attendee, business hours, billing-owner email) see the
@@ -216,7 +241,7 @@ export async function dispatchToolCall(
     : never;
   let rawCredentials: import("./providers/types.js").RawCredentials;
   try {
-    const plaintext = decrypt(connection.encryptedCredentials as Parameters<typeof decrypt>[0]);
+    const plaintext = decrypt(activeCredsBlob as Parameters<typeof decrypt>[0]);
     rawCredentials = JSON.parse(plaintext) as import("./providers/types.js").RawCredentials;
   } catch (err) {
     logger.error("[dispatcher] credential decrypt failed", { toolKey, err: (err as Error).message });
@@ -230,7 +255,9 @@ export async function dispatchToolCall(
   }
   if (rawCredentials.expiresAt && rawCredentials.expiresAt - Date.now() / 1000 < 300) {
     try {
-      const refreshed = await adapter.refreshTokens(connection.encryptedCredentials);
+      const { getOAuthAppCreds } = await import("./oauthApp.service.js");
+      const appCreds = await getOAuthAppCreds(ctx.organizationId, connection.provider, Boolean(connection.sandbox));
+      const refreshed = await adapter.refreshTokens(connection.encryptedCredentials, appCreds);
       if (refreshed) {
         const newEncrypted = encrypt(JSON.stringify(refreshed));
         // Persist into the active environment's slot too (not just the mirror), so a
@@ -337,21 +364,14 @@ export async function dispatchToolCall(
     }
   }
 
-  // Paddle: a customer's email can map to subscriptions across many tenants. Pass
-  // the current org so the adapter targets THIS workspace's subscription (matched
-  // on custom_data.organizationId), never another org's.
-  const PADDLE_SUB_TOOLS = new Set([
-    "get_subscription",
-    "upgrade_subscription",
-    "downgrade_subscription",
-    "cancel_subscription",
-  ]);
-  if (PADDLE_SUB_TOOLS.has(toolKey) && ctx.organizationId) {
-    enrichedArgs = { ...enrichedArgs, organizationId: String(ctx.organizationId) };
-  }
+  // Paddle: the subscription tools act on the OPERATOR's OWN Paddle (their customer's
+  // subscription), resolved by the customer's email — NOT this platform's Paddle. So we
+  // do NOT inject this platform's organizationId (that org tag only exists in the
+  // platform's own billing Paddle, never in the operator's account). The adapter picks
+  // the customer's active subscription by email.
 
   // Guardrail evaluation — on the ENRICHED args + toolKey, so per-tool limits
-  // (refund caps, business hours, named attendee, upgrade-only, billing owner)
+  // (refund caps, business hours, named attendee, billing owner)
   // are enforced against the final values right before we execute.
   const guardrailResult = evaluateGuardrails(toolDef.guardrails ?? undefined, enrichedArgs, toolKey);
   if (guardrailResult.blocked) {
@@ -397,26 +417,82 @@ export async function dispatchToolCall(
   });
 
   if (execError) {
+    // Resilience: a subscription LOOKUP that failed because the provider API was
+    // unreachable can be answered from the last snapshot the webhook receiver stored
+    // for this customer. Read-only tools only (never mutations), and only when the
+    // adapter threw (a definite not-found returns a normal result, not an error) —
+    // so we never contradict a live "no subscription" with a stale snapshot.
+    if (toolKey === "get_subscription" && (connection.provider === "paddle" || connection.provider === "stripe")) {
+      const email = String((enrichedArgs as Record<string, unknown>).email ?? "").trim().toLowerCase();
+      if (email) {
+        const snap = await ExternalSubscription.findOne({ connectionId: connection._id, customerEmail: email })
+          .sort({ updatedAt: -1 })
+          .lean();
+        if (snap) {
+          logger.info("[dispatcher] get_subscription served from webhook snapshot", { connectionId: String(connection._id) });
+          return {
+            ok: true,
+            result: {
+              found: true,
+              hasSubscription: true,
+              plan: snap.plan ?? "current plan",
+              status: snap.status,
+              subscriptionId: snap.externalSubscriptionId,
+              nextBillDate: snap.currentPeriodEnd,
+              fromCache: true,
+            },
+          };
+        }
+      }
+    }
     return { ok: false, blocked: false, error: execError, status: "error" };
   }
 
-  // After a widget-driven Paddle plan change, mirror it into our own
-  // Subscription/Organization immediately so the dashboard billing page reflects
-  // the new plan without waiting for the async Paddle webhook (which may never
-  // reach a local/dev host). Best-effort — never fail the tool over a sync error.
+  // After a widget-driven Paddle plan change, keep our subscription snapshot in sync
+  // immediately so the assistant reflects the new plan without waiting for the async
+  // provider webhook (which may never reach a local/dev host). Best-effort — never
+  // fail the tool over a sync error.
   const PADDLE_WRITE_TOOLS = new Set([
     "upgrade_subscription",
     "downgrade_subscription",
     "cancel_subscription",
   ]);
-  if (PADDLE_WRITE_TOOLS.has(toolKey)) {
-    const subId = (result as { subscriptionId?: string } | null)?.subscriptionId;
+  if (PADDLE_WRITE_TOOLS.has(toolKey) && (connection.provider === "paddle" || connection.provider === "stripe")) {
+    const r = result as { subscriptionId?: string; plan?: string; status?: string; billingInterval?: string } | null;
+    const subId = r?.subscriptionId;
     if (subId) {
-      try {
-        const { syncSubscriptionFromPaddle } = await import("../billing.service.js");
-        await syncSubscriptionFromPaddle(subId);
-      } catch (err) {
-        logger.warn("[dispatcher] paddle billing sync failed", { err: (err as Error).message });
+      const email = String((enrichedArgs as Record<string, unknown>).email ?? "").trim().toLowerCase();
+      ExternalSubscription.updateOne(
+        { connectionId: connection._id, externalSubscriptionId: subId },
+        {
+          $set: {
+            organizationId: ctx.organizationId,
+            connectionId: connection._id,
+            provider: connection.provider,
+            ...(email ? { customerEmail: email } : {}),
+            ...(r?.plan ? { plan: r.plan } : {}),
+            ...(r?.status ? { status: r.status } : {}),
+            ...(r?.billingInterval ? { billingInterval: r.billingInterval === "yearly" ? "year" : "month" } : {}),
+          },
+        },
+        { upsert: true },
+      ).catch((err) => logger.warn("[dispatcher] subscription snapshot sync failed", { err: (err as Error).message }));
+
+      // When the operator's integration Paddle IS the platform's own Paddle (the common
+      // dogfood case — the widget is embedded on the SaaS's own site), also reconcile the
+      // change into the platform's Subscription/Organization so the operator's billing
+      // portal reflects the new plan immediately instead of waiting on the async webhook.
+      // Best-effort and safely a no-op for a separate operator account: the subscription
+      // id won't resolve against the platform's Paddle, so it just logs and moves on.
+      if (connection.provider === "paddle") {
+        void (async () => {
+          try {
+            const { syncSubscriptionFromPaddle } = await import("../billing.service.js");
+            await syncSubscriptionFromPaddle(subId);
+          } catch (err) {
+            logger.warn("[dispatcher] paddle billing-portal sync skipped", { err: (err as Error).message });
+          }
+        })();
       }
     }
   }

@@ -78,6 +78,24 @@ by a `webhook` connection (via a populated connection `provider`) and calls
 operator's schema, and optional fields (e.g. a boolean `expedited`, rendered as a Yes/No
 select) are always captured. Built-in tools keep the targeted missing-fields form.
 
+**Custom-webhook reliability — "I don't know", no form, hallucination (Changelog 5).**
+Three root causes were fixed so a clearly-defined webhook tool actually works:
+- **"I don't know" despite a defined tool** — a webhook tool is only offered to an agent
+  it is **enabled** for (`enabledAgentIds`), and each agent grounds answers only in its
+  own enabled tools. This is operator-controlled by design: after creating a webhook tool,
+  enable it on the specific agents that should use it (Integrations → per-agent toggle).
+  A tool that isn't enabled for an agent won't be offered to it.
+- **No inline form for the input schema** — operators often pasted a *sample* payload
+  instead of a JSON Schema, which was coerced to an empty schema (no fields → no form →
+  the model guessed args). The connect route now **infers a real object schema from the
+  sample** (`normalizeWebhookInputSchema`), so the form renders and inputs are validated.
+- **Hallucinated answers** — the prompt's integration-tools layer now adds a *grounding*
+  directive: treat a tool's returned JSON as authoritative live data, quote the real
+  values, never invent required args just to force a call (leave them blank for the form
+  to collect), and state an empty/`error` result plainly instead of fabricating one. The
+  webhook adapter also returns clear, non-leaky error messages so the model surfaces a
+  truthful failure rather than papering over an opaque one.
+
 ### Support-ticket description — concise summary (updated, Changelog 1)
 Superseded the earlier full-transcript injection. The dispatcher no longer dumps
 the whole conversation into the ticket: `JIRA_TOOL_INSTRUCTIONS` in
@@ -91,6 +109,15 @@ routing), so tickets land on the right board without leaking unrelated chat.
 (`agent.routes.ts`), and the AI editor Tools tab (`agent-editor.tsx`, shown when
 a Jira connection exists). The dispatcher injects it as `projectKey` for
 `create_support_ticket`.
+
+The editor's project dropdown is populated from `GET /integrations/jira/projects`.
+**(Changelog 2)** That endpoint no longer swallows failures: `listProjects` throws
+typed errors, and the route proactively refreshes the (~1h) OAuth token, retries once
+on a 401, and returns an actionable `reason` alongside `projects` when the list is
+empty — `not_connected`, `reconnect_required` (expired token / no client secret to
+refresh with), `missing_permission` (no `read:jira-work` scope), `empty` (site has no
+projects), or `error`. The editor renders a specific hint per `reason` instead of a
+generic "no projects loaded" message.
 
 ### Paddle tools — email + plan name (Changelog 1)
 Reworked so `get_subscription` / `upgrade_subscription` / `downgrade_subscription`
@@ -106,6 +133,27 @@ webhook connect route rejects non-schema input. This prevents a single malformed
 tool definition (e.g. a pasted sample response) from causing OpenAI to 400 the
 entire `tools` array — which previously forced a tool-less fallback where the
 model hallucinated actions.
+
+### Similar-capability tools: dedup + primary/fallback routing (Changelog 1)
+When several connected integrations expose the **same tool key** (e.g. Jira and
+Linear both offering `create_support_ticket`), the agent must still call the right
+tool for each intent and survive one integration failing.
+
+- **Offered once.** `agent.service.ts` groups integration tool defs by `key` and
+  pushes a **single** function per key to the LLM (duplicate function names 400 the
+  whole `tools` array). The model picks the right tool for an intent from the tool
+  **description** (the Tool registry copy). The offered description/schema/guardrails
+  come from the key's **primary** connection.
+- **Operator-set order.** `Agent.toolPriority: [{ key, connectionIds }]` fixes the
+  primary → fallback order per key. Within a key, defs are sorted by the operator's
+  `connectionIds` rank, then `createdAt`. The dashboard (**AI agent → Tools →
+  Primary & fallback order**) only shows the control when ≥2 **enabled** connections
+  share a key, and saves the order via `PATCH /agents/:id`.
+- **Fallback on error.** The runtime builds a per-key connection chain and calls
+  `dispatchToolCall(name, args, ctx, connectionId)` for the primary; if the result
+  is `status: "error"`, it re-dispatches to the next connection in the chain.
+  Intentional stops — `guardrail_blocked`, `otp_pending`, `rate_limited` — are
+  respected and do **not** fall through.
 
 ### Contact email/name injection (Changelog 1)
 `book_meeting` and the Paddle subscription tools receive the visitor's verified
@@ -313,10 +361,14 @@ export const PaddleAdapter: ProviderAdapter = {
 ### Guardrails
 ```json
 {
-  "planDirection": "upgrade_only",
   "requireBillingOwner": true
 }
 ```
+
+> **Changelog 5:** the `planDirection` / `upgradeOnly` ("block downgrades") guardrail
+> was **removed** as redundant. Downgrades are a legitimate self-service action, and
+> `requireBillingOwner` already controls *who* may change a plan. Keeping the flag only
+> produced a confusing "I can't downgrade" refusal.
 
 `requireBillingOwner`: before executing, compare `contactSession.email` with the
 Paddle subscription's billing email. If they don't match → guardrail blocks.

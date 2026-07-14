@@ -46,6 +46,16 @@ Authenticate with Google OAuth token (from NextAuth callback).
 | Response `200` | `{ user, token, isNewUser }` |
 | Side effects | Creates user + org if new |
 
+### `POST /api/v1/auth/forgot-password` (Changelog 9)
+Request a password reset. Always returns a generic `200 { ok, message }` — never reveals
+whether the email is registered. For a credentials account it emails a 1-hour reset link
+(`${WEB_BASE_URL}/reset-password?token=…`); only a SHA-256 **hash** of the token is stored
+on the user. Body `{ email }`.
+
+### `POST /api/v1/auth/reset-password` (Changelog 9)
+Set a new password with a valid, unexpired token. Body `{ token, password }`. `200 { ok }`
+on success; `401` if the token is invalid/expired. Clears the reset token on success.
+
 ### `POST /api/v1/auth/refresh`
 Exchange a (7d) refresh token for a fresh (15m) access token.
 

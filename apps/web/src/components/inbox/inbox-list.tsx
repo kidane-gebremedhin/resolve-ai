@@ -23,6 +23,8 @@ import type {
 type Props = {
   initialItems: Conversation[];
   initialFilter: InboxFilter;
+  /** Cursor for the next page of conversations (null = no more). */
+  initialNextCursor?: string | null;
   /** Active website scope (null = All websites). Set via the sidebar switcher. */
   websiteId?: string | null;
   children?: React.ReactNode;
@@ -62,7 +64,7 @@ function contactLabel(c: Conversation): string {
   return `Visitor #${tail}`;
 }
 
-export function InboxList({ initialItems, initialFilter, websiteId = null, children }: Props) {
+export function InboxList({ initialItems, initialFilter, initialNextCursor = null, websiteId = null, children }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const params = useParams<{ conversationId?: string }>();
@@ -70,6 +72,10 @@ export function InboxList({ initialItems, initialFilter, websiteId = null, child
 
   const [items, setItems] = useState<Conversation[]>(initialItems);
   const [filter, setFilter] = useState<InboxFilter>(initialFilter);
+  // Cursor-based pagination for the sidebar. A live socket refetch resets to the
+  // first page (with its cursor); "Load more" appends older conversations.
+  const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // Keep up-to-date refs so the socket callback can refetch with the current
   // filter + website scope without re-binding the socket listener every render.
@@ -88,10 +94,33 @@ export function InboxList({ initialItems, initialFilter, websiteId = null, child
         `/conversations?${qs.toString()}`,
       );
       setItems(res.items);
+      setNextCursor(res.nextCursor);
     } catch {
       // Silent — list will refresh on the next event.
     }
   }, []);
+
+  // Append the next page of older conversations (cursor pagination).
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    const status = statusToFilterValue(filterRef.current);
+    const qs = new URLSearchParams({ limit: "50", cursor: nextCursor });
+    if (status) qs.set("status", status);
+    if (websiteIdRef.current) qs.set("websiteId", websiteIdRef.current);
+    try {
+      const res = await clientApi.get<ConversationListResponse>(`/conversations?${qs.toString()}`);
+      setItems((prev) => {
+        const seen = new Set(prev.map((p) => p._id));
+        return [...prev, ...res.items.filter((i) => !seen.has(i._id))];
+      });
+      setNextCursor(res.nextCursor);
+    } catch {
+      /* leave the cursor so the operator can retry */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore]);
 
   // When the user clicks a filter pill, reflect it in the URL and refetch.
   useEffect(() => {
@@ -186,14 +215,26 @@ export function InboxList({ initialItems, initialFilter, websiteId = null, child
               No conversations match this filter yet.
             </div>
           ) : (
-            filtered.map((c) => (
-              <ConversationRow
-                key={c._id}
-                conversation={c}
-                isActive={c._id === activeId}
-                searchParams={searchParams?.toString() ?? ""}
-              />
-            ))
+            <>
+              {filtered.map((c) => (
+                <ConversationRow
+                  key={c._id}
+                  conversation={c}
+                  isActive={c._id === activeId}
+                  searchParams={searchParams?.toString() ?? ""}
+                />
+              ))}
+              {nextCursor && (
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  className="w-full border-t border-border px-4 py-3 text-center text-[11px] font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-60"
+                >
+                  {loadingMore ? "Loading…" : "Load more"}
+                </button>
+              )}
+            </>
           )}
         </div>
       </section>

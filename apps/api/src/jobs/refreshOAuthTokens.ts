@@ -1,6 +1,7 @@
 import { Connection } from "../models/index.js";
 import { getAdapter } from "../services/integrations/adapters/index.js";
-import type { ProviderAdapter } from "../services/integrations/providers/types.js";
+import type { OAuthAppCreds, ProviderAdapter } from "../services/integrations/providers/types.js";
+import { getOAuthAppCreds } from "../services/integrations/oauthApp.service.js";
 import { encrypt, decrypt } from "../services/security/crypto.service.js";
 import { logger } from "../config/logger.js";
 
@@ -14,6 +15,8 @@ async function refreshBlobIfExpiring(
   provider: string,
   blob: EncBlob,
   thresholdMs: number,
+  isActive: boolean,
+  app: OAuthAppCreds | null,
 ): Promise<{ enc: EncBlob; expiresAt?: Date } | null> {
   // Only refresh when actually near expiry — avoids needlessly rotating the refresh
   // token (providers like Atlassian invalidate the previous one on every refresh).
@@ -24,9 +27,13 @@ async function refreshBlobIfExpiring(
   } catch {
     return null; // can't read this slot — leave it alone
   }
-  const refreshed = await adapter.refreshTokens(blob);
+  const refreshed = await adapter.refreshTokens(blob, app);
   if (!refreshed) {
-    logger.warn("[oauth-refresh] adapter returned null, skipping slot", { provider });
+    // A dead INACTIVE slot (e.g. a disconnected/expired test account) can't refresh
+    // and would otherwise warn every sweep — log it at debug. An ACTIVE-slot failure
+    // means the live connection is about to break, so keep that at warn.
+    if (isActive) logger.warn("[oauth-refresh] active-slot refresh failed", { provider });
+    else logger.debug?.("[oauth-refresh] inactive-slot refresh failed (expected if disconnected)", { provider });
     return null;
   }
   return {
@@ -71,10 +78,18 @@ export async function refreshExpiringSoon(): Promise<void> {
       const inactiveSlot = c.sandbox ? "productionCredentials" : "sandboxCredentials";
       const set: Record<string, unknown> = {};
 
+      // The operator's OAuth app credentials (client_id/secret) — now PER ENVIRONMENT,
+      // since sandbox and production can be separate OAuth apps. Each slot is refreshed
+      // with its own environment's app. No app for an environment → that slot can't be
+      // refreshed (it just can't stay alive until the operator configures one).
+      const activeSandbox = Boolean(c.sandbox);
+      const appActive = await getOAuthAppCreds(conn.organizationId, conn.provider, activeSandbox);
+      const appInactive = await getOAuthAppCreds(conn.organizationId, conn.provider, !activeSandbox);
+
       // Active environment — the authoritative `encryptedCredentials` mirror. Keep the
       // active slot in sync so a later env switch can't restore a stale/rotated token.
-      if (c.encryptedCredentials) {
-        const res = await refreshBlobIfExpiring(adapter, conn.provider, c.encryptedCredentials, thresholdMs);
+      if (c.encryptedCredentials && appActive) {
+        const res = await refreshBlobIfExpiring(adapter, conn.provider, c.encryptedCredentials, thresholdMs, true, appActive);
         if (res) {
           set.encryptedCredentials = res.enc;
           set[activeSlot] = res.enc;
@@ -85,8 +100,8 @@ export async function refreshExpiringSoon(): Promise<void> {
       // Inactive environment slot — refreshed independently so BOTH environments stay
       // valid and switching between them is always safe (Changelog 5, Option A).
       const inactiveBlob = c[inactiveSlot];
-      if (inactiveBlob) {
-        const res = await refreshBlobIfExpiring(adapter, conn.provider, inactiveBlob, thresholdMs);
+      if (inactiveBlob && appInactive) {
+        const res = await refreshBlobIfExpiring(adapter, conn.provider, inactiveBlob, thresholdMs, false, appInactive);
         if (res) set[inactiveSlot] = res.enc;
       }
 

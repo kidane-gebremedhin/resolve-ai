@@ -4,16 +4,99 @@ import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { Agent, Connection, ToolDefinition } from "../models/index.js";
 import { getAdapter, listAdapters } from "../services/integrations/adapters/index.js";
 import { encrypt, decrypt } from "../services/security/crypto.service.js";
+import {
+  getOAuthAppCreds,
+  saveOAuthApp,
+  isOAuthProvider,
+  OAUTH_PROVIDERS,
+} from "../services/integrations/oauthApp.service.js";
+import { OAuthAppConfig } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { env } from "../config/env.js";
+import {
+  verifyPaddleSignature,
+  verifyStripeSignature,
+  handlePaddleSubscriptionEvent,
+  handleStripeSubscriptionEvent,
+  type ReceiverConnection,
+} from "../services/integrations/webhookReceiver.js";
 
 const router = Router();
+
+// Resolve the credential blob for a connection's ACTIVE environment. Per-connection
+// config that differs between sandbox and live — Paddle plan→price-id maps, webhook
+// endpoints — is stored in the env-specific slot. Reading the env slot (not the
+// last-written `encryptedCredentials` mirror) is what makes the config the operator
+// sees, and the config the tools actually run against, the SAME environment. A prior
+// bug read the mirror everywhere: configuring plans in sandbox then switching the
+// connection to production left the production slot with no planPrices, so every
+// upgrade/downgrade failed with "no plans configured" even though the UI still showed
+// the sandbox plans.
+type ConnCredsShape = {
+  sandbox?: boolean;
+  encryptedCredentials?: unknown;
+  sandboxCredentials?: unknown;
+  productionCredentials?: unknown;
+};
+function activeCredsBlob(conn: ConnCredsShape): Parameters<typeof decrypt>[0] | undefined {
+  const slot = conn.sandbox ? conn.sandboxCredentials : conn.productionCredentials;
+  return (slot ?? conn.encryptedCredentials) as Parameters<typeof decrypt>[0] | undefined;
+}
+
+// A real JSON Schema is an object with `type:"object"` and a `properties` map.
+function isJsonObjectSchema(v: unknown): v is { type: "object"; properties: Record<string, unknown> } {
+  return (
+    !!v && typeof v === "object" &&
+    (v as { type?: unknown }).type === "object" &&
+    typeof (v as { properties?: unknown }).properties === "object" &&
+    (v as { properties?: unknown }).properties !== null
+  );
+}
+
+// Operators frequently paste a SAMPLE payload (e.g. {"orderId":"ORD-12345","reason":"lost"})
+// where a JSON Schema is expected. Storing that verbatim gives the tool no usable
+// `properties`, so no inline form renders and the model dispatches with guessed args.
+// Infer a real object schema from the sample instead: each key becomes a required,
+// typed property. The result is what the widget's form builder and the webhook adapter's
+// validator consume — so the tool's inputs are surfaced and enforced, not hallucinated.
+function jsonTypeOf(v: unknown): string {
+  if (typeof v === "number") return Number.isInteger(v) ? "integer" : "number";
+  if (typeof v === "boolean") return "boolean";
+  if (Array.isArray(v)) return "array";
+  if (v && typeof v === "object") return "object";
+  return "string";
+}
+function inferSchemaFromSample(sample: Record<string, unknown>): {
+  type: "object";
+  properties: Record<string, { type: string; description?: string }>;
+  required: string[];
+} {
+  const properties: Record<string, { type: string; description?: string }> = {};
+  const required: string[] = [];
+  for (const [key, value] of Object.entries(sample)) {
+    properties[key] = { type: jsonTypeOf(value) };
+    required.push(key);
+  }
+  return { type: "object", properties, required };
+}
+
+// Normalise whatever the operator submitted as a webhook tool's input schema into a
+// genuine object schema: pass a real schema through, infer one from a non-empty sample
+// object, else fall back to an empty (loose-args) schema so a bad definition can never
+// 400 the chat request.
+function normalizeWebhookInputSchema(input: unknown): Record<string, unknown> {
+  if (isJsonObjectSchema(input)) return input as Record<string, unknown>;
+  if (input && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0) {
+    return inferSchemaFromSample(input as Record<string, unknown>);
+  }
+  return { type: "object", properties: {}, required: [] };
+}
 
 // ---- GET /integrations ---- list providers catalog + installed connections
 router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const orgId = req.orgId;
 
-  const [connections, adapters, agents, toolDefs] = await Promise.all([
+  const [connections, adapters, agents, toolDefs, oauthApps] = await Promise.all([
     Connection.find({ organizationId: orgId }).lean(),
     Promise.resolve(listAdapters()),
     Agent.find({ organizationId: orgId }, { _id: 1, name: 1 }).lean(),
@@ -21,7 +104,17 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
       { organizationId: orgId },
       { connectionId: 1, enabledAgentIds: 1, key: 1, displayName: 1, description: 1, guardrails: 1 },
     ).lean(),
+    OAuthAppConfig.find({ organizationId: orgId }, { provider: 1, sandbox: 1, clientId: 1 }).lean(),
   ]);
+  // Which OAuth providers this org has configured an app for, PER environment.
+  const oauthAppEnv = new Map<string, { sandbox: boolean; production: boolean }>();
+  for (const a of oauthApps) {
+    if (!a.clientId) continue;
+    const cur = oauthAppEnv.get(a.provider) ?? { sandbox: false, production: false };
+    if (a.sandbox) cur.sandbox = true;
+    else cur.production = true;
+    oauthAppEnv.set(a.provider, cur);
+  }
 
   // Map connectionId → union of enabledAgentIds across its tools
   const enabledByConn = new Map<string, Set<string>>();
@@ -52,10 +145,11 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
   const webhookConfigOf = (conn: (typeof connections)[number]): {
     url?: string; method?: string; authHeader?: string; hasAuthValue: boolean; inputSchema?: unknown;
   } | undefined => {
-    if (conn.provider !== "webhook" || !conn.encryptedCredentials) return undefined;
+    const blob = activeCredsBlob(conn);
+    if (conn.provider !== "webhook" || !blob) return undefined;
     try {
       const creds = JSON.parse(
-        decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
+        decrypt(blob),
       ) as { extra?: { url?: string; method?: string; authHeader?: string; authValue?: string; inputSchema?: unknown } };
       const extra = creds.extra ?? {};
       return {
@@ -68,6 +162,42 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     } catch {
       return undefined;
     }
+  };
+
+  // The operator's own Paddle plan → price-id mapping for the active env (non-secret;
+  // powers the "Configure plans" form). The api key in the same blob is never returned.
+  const paddlePlansOf = (conn: (typeof connections)[number]): Record<string, { monthly?: string; yearly?: string }> | undefined => {
+    const blob = activeCredsBlob(conn);
+    if (conn.provider !== "paddle" || !blob) return undefined;
+    try {
+      const creds = JSON.parse(
+        decrypt(blob),
+      ) as { extra?: { planPrices?: Record<string, { monthly?: string; yearly?: string }> } };
+      return creds.extra?.planPrices ?? {};
+    } catch {
+      return {};
+    }
+  };
+
+  // For Paddle/Stripe connections, surface the inbound-webhook callback URL the
+  // operator registers in their provider dashboard, and whether a signing secret is
+  // stored (the secret itself is never returned).
+  const webhookReceiverOf = (conn: (typeof connections)[number]): { callbackUrl: string; hasWebhookSecret: boolean } | undefined => {
+    if (conn.provider !== "paddle" && conn.provider !== "stripe") return undefined;
+    let hasWebhookSecret = false;
+    const blob = activeCredsBlob(conn);
+    if (blob) {
+      try {
+        const creds = JSON.parse(decrypt(blob)) as { extra?: { webhookSecret?: string } };
+        hasWebhookSecret = Boolean(creds.extra?.webhookSecret);
+      } catch {
+        /* unreadable → treat as unset */
+      }
+    }
+    return {
+      callbackUrl: `${env.apiBaseUrl}/api/v1/integrations/${conn.provider}/webhook/${conn._id}`,
+      hasWebhookSecret,
+    };
   };
 
   const connCard = (conn: (typeof connections)[number]) => ({
@@ -86,6 +216,8 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     enabledAgentIds: [...(enabledByConn.get(String(conn._id)) ?? [])],
     toolDefs: toolsByConn.get(String(conn._id)) ?? [],
     webhookConfig: webhookConfigOf(conn),
+    paddlePlans: paddlePlansOf(conn),
+    webhookReceiver: webhookReceiverOf(conn),
   });
 
   const providers = adapters.flatMap((a) => {
@@ -115,6 +247,11 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
       cardId: a.provider,
       tools: staticTools,
       connection: conn ? connCard(conn) : null,
+      // OAuth providers need the operator's own app (client_id/secret) configured
+      // before they can connect — the UI shows a "Configure OAuth app" step first.
+      isOAuth: isOAuthProvider(a.provider),
+      // Per-environment: which of sandbox/production have an OAuth app configured.
+      oauthAppConfigured: oauthAppEnv.get(a.provider) ?? { sandbox: false, production: false },
     }];
   });
 
@@ -131,37 +268,85 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
 router.get("/jira/projects", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const conn = await Connection.findOne({ organizationId: req.orgId, provider: "jira", status: "active" });
   if (!conn) {
-    res.json({ projects: [] });
+    // Jira is only "connected" per-environment; the active env may be the one that
+    // has no credentials (the operator selected it deliberately — see 2a).
+    res.json({ projects: [], reason: "not_connected" });
     return;
   }
   const adapter = getAdapter("jira") as {
     listProjects?: (creds: unknown) => Promise<{ key: string; name: string }[]>;
-    refreshTokens?: (blob: unknown) => Promise<unknown>;
+    refreshTokens?: (blob: unknown, app?: unknown) => Promise<unknown>;
   } | undefined;
   if (!adapter?.listProjects) {
     res.json({ projects: [] });
     return;
   }
+
+  const appCreds = await getOAuthAppCreds(req.orgId!, "jira", Boolean(conn.sandbox));
+  // Read the ACTIVE environment's credential slot (matching the dispatcher and the
+  // 2a graceful-fail design), not just the `encryptedCredentials` mirror which can be
+  // stale after an environment switch. Fall back to the mirror for legacy connections
+  // whose per-env slots were never populated.
+  const activeSlotKey = conn.sandbox ? "sandboxCredentials" : "productionCredentials";
+  const activeBlob =
+    (conn.sandbox ? conn.sandboxCredentials : conn.productionCredentials) ??
+    conn.encryptedCredentials;
+  // Refresh the access token and persist the new blob to BOTH the active env slot and
+  // the mirror; returns the fresh creds or null when refresh isn't possible (no
+  // refresh token / no client secret configured).
+  const refresh = async (): Promise<{ expiresAt?: number } | null> => {
+    if (!adapter.refreshTokens) return null;
+    const refreshed = await adapter.refreshTokens(
+      activeBlob as Parameters<typeof decrypt>[0],
+      appCreds,
+    );
+    if (!refreshed) return null;
+    const enc = encrypt(JSON.stringify(refreshed));
+    await Connection.updateOne(
+      { _id: conn._id },
+      { $set: { encryptedCredentials: enc, [activeSlotKey]: enc } },
+    );
+    return refreshed as { expiresAt?: number };
+  };
+
   try {
-    let creds = JSON.parse(decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0])) as {
+    let creds = JSON.parse(decrypt(activeBlob as Parameters<typeof decrypt>[0])) as {
       expiresAt?: number;
     };
-    // Jira OAuth tokens expire (~1h) — refresh if within 5 min of expiry.
-    if (creds.expiresAt && creds.expiresAt - Date.now() / 1000 < 300 && adapter.refreshTokens) {
-      const refreshed = await adapter.refreshTokens(conn.encryptedCredentials);
-      if (refreshed) {
-        await Connection.updateOne(
-          { _id: conn._id },
-          { $set: { encryptedCredentials: encrypt(JSON.stringify(refreshed)) } },
-        );
-        creds = refreshed as typeof creds;
-      }
+    // Jira OAuth tokens expire (~1h) — proactively refresh if within 5 min of expiry.
+    if (creds.expiresAt && creds.expiresAt - Date.now() / 1000 < 300) {
+      const r = await refresh();
+      if (r) creds = r;
     }
-    const projects = await adapter.listProjects(creds);
-    res.json({ projects });
+    try {
+      const projects = await adapter.listProjects(creds);
+      res.json({ projects, ...(projects.length === 0 ? { reason: "empty" } : {}) });
+    } catch (inner) {
+      const msg = (inner as Error).message;
+      // Stale/invalid token — try a single refresh + retry before giving up.
+      if (msg === "jira_unauthorized") {
+        const r = await refresh();
+        if (r) {
+          const projects = await adapter.listProjects(r);
+          res.json({ projects, ...(projects.length === 0 ? { reason: "empty" } : {}) });
+          return;
+        }
+        res.json({ projects: [], reason: "reconnect_required" });
+        return;
+      }
+      if (msg === "jira_missing_cloud_id") {
+        res.json({ projects: [], reason: "reconnect_required" });
+        return;
+      }
+      if (msg === "jira_forbidden") {
+        res.json({ projects: [], reason: "missing_permission" });
+        return;
+      }
+      throw inner;
+    }
   } catch (err) {
     logger.warn("[integrations] jira project list failed", { err: (err as Error).message });
-    res.json({ projects: [] });
+    res.json({ projects: [], reason: "error" });
   }
 });
 
@@ -193,18 +378,12 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
       res.status(400).json({ error: "A tool key (lowercase snake_case, e.g. lookup_order) is required." });
       return;
     }
-    // Only accept a genuine JSON Schema (an object with type:"object" and a
-    // properties map). Operators sometimes paste a sample RESPONSE instead
-    // (e.g. {"orderId":"ORD-12345"}) — that's an object but not a schema, and
-    // storing it makes OpenAI 400 the whole tools array at chat time. Fall back
-    // to an empty object schema so the tool still works (accepts loose args).
-    const looksLikeSchema =
-      inputSchema && typeof inputSchema === "object" &&
-      (inputSchema as { type?: unknown }).type === "object" &&
-      typeof (inputSchema as { properties?: unknown }).properties === "object";
-    const schema = looksLikeSchema
-      ? inputSchema
-      : { type: "object", properties: {}, required: [] };
+    // Accept a genuine JSON Schema as-is; if the operator pasted a sample payload
+    // (e.g. {"orderId":"ORD-12345"}) instead, infer a real object schema from it so
+    // the inline form still renders and the inputs are validated (not guessed). A
+    // truly unusable value falls back to an empty object schema so a bad definition
+    // can never 400 the whole tools array at chat time.
+    const schema = normalizeWebhookInputSchema(inputSchema);
     const credentials = {
       extra: {
         url: String(webhookUrl),
@@ -241,6 +420,11 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
     )
       .sort({ updatedAt: -1 })
       .lean();
+    // A brand-new webhook tool starts enabled on NO agent — the operator picks which
+    // agents may use it (per-agent enablement in the UI), and each agent only sees the
+    // tools enabled for it. The one exception is re-adding a previously revoked webhook
+    // (same tool key): carry its prior enablement forward so the "exact" re-add works
+    // immediately instead of silently starting disabled.
     const inheritedAgentIds = (priorToolDef?.enabledAgentIds ?? []) as unknown[];
     await ToolDefinition.updateOne(
       { connectionId: conn._id, key: String(toolKey) },
@@ -352,20 +536,89 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
     return;
   }
 
-  // OAuth mode — return redirect URL.
+  // OAuth mode — return redirect URL. The operator must have configured their own
+  // OAuth app (client_id/secret) for THIS environment first — there are no platform-wide
+  // OAuth credentials in the environment anymore.
+  const appCreds = await getOAuthAppCreds(orgId!, provider, Boolean(sandbox));
+  if (!appCreds?.clientId) {
+    res.status(400).json({
+      error: `Configure your ${provider} OAuth app (Client ID + Secret) for ${Boolean(sandbox) ? "sandbox" : "production"} before connecting.`,
+      needsOAuthApp: true,
+    });
+    return;
+  }
   // Encode orgId AND the target environment into the state so the callback can
   // identify the org (OAuth redirects carry no JWT) and store the tokens in the
   // right per-environment slot. Format: "<orgId>.<nonce>.<s|p>".
   const nonce = randomBytes(16).toString("hex");
   const envCode = Boolean(sandbox) ? "s" : "p";
   const state = `${String(orgId)}.${nonce}.${envCode}`;
-  const authUrl = adapter.buildAuthUrl(String(orgId), state);
+  const authUrl = adapter.buildAuthUrl(String(orgId), state, appCreds);
   if (!authUrl) {
     res.status(400).json({ error: `Provider ${provider} does not support OAuth. Use apiKey instead.` });
     return;
   }
 
   res.json({ authUrl, state });
+});
+
+// ---- GET /integrations/:provider/oauth-app?environment=sandbox|production ----
+// Read this org's OAuth app config for one environment. Returns the (public) client_id
+// + whether a secret is stored — never the secret. Sandbox and production are separate
+// apps, so the modal reads/writes one environment at a time.
+router.get("/:provider/oauth-app", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const provider = String(req.params.provider);
+  if (!isOAuthProvider(provider)) {
+    res.status(400).json({ error: `${provider} is not an OAuth provider.` });
+    return;
+  }
+  const sandbox = req.query.environment === "sandbox";
+  const cfg = await OAuthAppConfig.findOne({ organizationId: req.orgId, provider, sandbox }).lean();
+  res.json({
+    environment: sandbox ? "sandbox" : "production",
+    configured: Boolean(cfg?.clientId),
+    clientId: cfg?.clientId ?? "",
+    hasSecret: Boolean(cfg?.encryptedClientSecret),
+    redirectUri: cfg?.redirectUri ?? "",
+    extra: (cfg?.extra as Record<string, unknown> | undefined) ?? {},
+    // The redirect URI the operator must register with the provider.
+    defaultRedirectUri: `${env.apiBaseUrl}/api/v1/integrations/${provider}/callback`,
+  });
+});
+
+// ---- PUT /integrations/:provider/oauth-app ---- save this org's OAuth app config for
+// one environment (`sandbox` in the body). The operator brings their own registered
+// OAuth app; the client_secret is encrypted at rest. A blank secret keeps the stored
+// one (so they can edit the id/redirect only).
+router.put("/:provider/oauth-app", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const provider = String(req.params.provider);
+  if (!isOAuthProvider(provider)) {
+    res.status(400).json({ error: `${provider} is not an OAuth provider.` });
+    return;
+  }
+  const { clientId, clientSecret, redirectUri, extra, sandbox } = req.body as {
+    clientId?: string; clientSecret?: string; redirectUri?: string; extra?: Record<string, unknown>; sandbox?: boolean;
+  };
+  const isSandbox = Boolean(sandbox);
+  if (!clientId || !String(clientId).trim()) {
+    res.status(400).json({ error: "A Client ID is required." });
+    return;
+  }
+  // The Client ID is the only required value — a secret is optional (stored + used
+  // as the confidential-client secret only when the operator provides one).
+  await saveOAuthApp(
+    req.orgId!,
+    provider,
+    isSandbox,
+    {
+      clientId: String(clientId),
+      clientSecret: String(clientSecret ?? ""),
+      redirectUri: typeof redirectUri === "string" ? redirectUri : undefined,
+      extra: extra && typeof extra === "object" ? extra : undefined,
+    },
+    req.auth!.userId,
+  );
+  res.json({ ok: true });
 });
 
 // ---- GET /integrations/:provider/callback ---- OAuth code exchange
@@ -395,9 +648,10 @@ router.get("/:provider/callback", async (req: Request, res: Response) => {
     return;
   }
 
+  const appCreds = await getOAuthAppCreds(orgId, provider, isSandbox);
   let rawCreds: import("../services/integrations/providers/types.js").RawCredentials;
   try {
-    rawCreds = await adapter.exchangeCode(code, orgId);
+    rawCreds = await adapter.exchangeCode(code, orgId, appCreds);
   } catch (err) {
     logger.error("[integrations] OAuth code exchange failed", { provider, err: (err as Error).message });
     res.status(400).send("OAuth code exchange failed. Please try connecting again.");
@@ -467,7 +721,7 @@ router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, async (req
   const {
     maxAmount, maxDaysSincePurchase, requireIdentityVerification, allowedContactEmails,
     businessHoursStart, businessHoursEnd, businessDays, businessHoursTz,
-    requireNamedAttendee, upgradeOnly, requireBillingOwner,
+    requireNamedAttendee, requireBillingOwner,
   } = req.body as Record<string, unknown>;
 
   const guardrails: Record<string, unknown> = {};
@@ -489,7 +743,6 @@ router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, async (req
   }
   if (typeof businessHoursTz === "string" && businessHoursTz.trim()) guardrails.businessHoursTz = businessHoursTz.trim();
   guardrails.requireNamedAttendee = Boolean(requireNamedAttendee);
-  guardrails.upgradeOnly = Boolean(upgradeOnly);
   guardrails.requireBillingOwner = Boolean(requireBillingOwner);
 
   const result = await ToolDefinition.updateOne(
@@ -564,19 +817,32 @@ router.patch("/:connectionId", requireAuth, requireOrg, async (req: Request, res
         c[curKey] = c.encryptedCredentials;
       }
       const targetCreds = wantSandbox ? c.sandboxCredentials : c.productionCredentials;
+      if (targetCreds) {
+        $set.encryptedCredentials = targetCreds;
+      }
+      // If the target environment isn't connected we STILL switch to it (persist the
+      // choice) so the operator can observe the agent with a disconnected tool — the
+      // dispatcher reads the active env's slot, finds it empty, and fails gracefully.
+      // We leave `encryptedCredentials` as the (stale) mirror; the dispatcher ignores
+      // it when the active env slot is empty.
       if (!targetCreds) {
-        // That environment isn't connected yet. The UI uses authMode to decide how
-        // to prompt: an api-key form, or a fresh OAuth redirect for that env.
+        const result = await Connection.updateOne(
+          { _id: req.params.connectionId, organizationId: orgId },
+          { $set: { ...$set, sandbox: wantSandbox } },
+        );
+        if (result.matchedCount === 0) {
+          res.status(404).json({ error: "Connection not found." });
+          return;
+        }
         res.json({
-          ok: false,
-          needsSetup: true,
-          authMode: conn.authMode,
+          ok: true,
           environment: wantSandbox ? "sandbox" : "production",
-          message: `No ${wantSandbox ? "sandbox" : "production"} credentials connected yet. Connect them to switch environments.`,
+          connected: false,
+          authMode: conn.authMode,
+          message: `Switched to ${wantSandbox ? "sandbox" : "production"} — not connected yet, so its tools will report they're unavailable until you connect it.`,
         });
         return;
       }
-      $set.encryptedCredentials = targetCreds;
     }
     $set.sandbox = wantSandbox;
   }
@@ -618,24 +884,64 @@ router.patch("/:connectionId", requireAuth, requireOrg, async (req: Request, res
   res.json({ ok: true });
 });
 
-// ---- DELETE /integrations/:connectionId ---- soft-revoke
+// ---- DELETE /integrations/:connectionId ---- disconnect a connection.
+// `?environment=sandbox|production` disconnects JUST that environment (clearing its
+// stored credentials and, if it was the active env, promoting the other) so an
+// operator can drop e.g. a test account while keeping production live. Without the
+// query param — or when only one environment is connected — the whole connection is
+// soft-revoked and its tools deactivated.
 router.delete("/:connectionId", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const orgId = req.orgId;
-  // Use updateOne to avoid Mongoose save-time validation on fields not being modified
-  const result = await Connection.updateOne(
-    { _id: req.params.connectionId, organizationId: orgId },
-    { $set: { status: "revoked" } },
-  );
-  if (result.matchedCount === 0) {
+  const conn = await Connection.findOne({ _id: req.params.connectionId, organizationId: orgId }).lean();
+  if (!conn) {
     res.status(404).json({ error: "Connection not found." });
     return;
   }
+
+  const env = String(req.query.environment ?? "");
+  const perEnv = env === "sandbox" || env === "production";
+  const isSandbox = env === "sandbox";
+  const c = conn as {
+    sandbox?: boolean;
+    encryptedCredentials?: Parameters<typeof decrypt>[0];
+    sandboxCredentials?: Parameters<typeof decrypt>[0];
+    productionCredentials?: Parameters<typeof decrypt>[0];
+  };
+  const otherSlotVal = isSandbox ? c.productionCredentials : c.sandboxCredentials;
+
+  // Per-environment disconnect — only when the OTHER environment is still connected,
+  // otherwise dropping this one leaves nothing and we fall through to a full revoke.
+  if (perEnv && otherSlotVal) {
+    const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
+    const $set: Record<string, unknown> = {};
+    if (Boolean(c.sandbox) === isSandbox) {
+      // The environment being disconnected is the active one — promote the other so
+      // tool calls keep working against the remaining account.
+      $set.encryptedCredentials = otherSlotVal;
+      $set.sandbox = !isSandbox;
+      try {
+        const creds = JSON.parse(decrypt(otherSlotVal)) as { expiresAt?: number };
+        if (creds.expiresAt) $set.expiresAt = new Date(creds.expiresAt * 1000);
+      } catch {
+        /* leave expiresAt; the dispatcher refreshes on demand */
+      }
+    }
+    await Connection.updateOne(
+      { _id: conn._id },
+      { $unset: { [slot]: "" }, ...(Object.keys($set).length ? { $set } : {}) },
+    );
+    res.json({ ok: true, disconnected: env, remaining: isSandbox ? "production" : "sandbox" });
+    return;
+  }
+
+  // Full revoke (both environments, or the last remaining one).
+  await Connection.updateOne({ _id: conn._id }, { $set: { status: "revoked" } });
   // Deactivate this connection's tool definitions so they are no longer offered to
   // the AI or picked up by the dispatcher. Without this, a re-added "exact" webhook
   // (same tool key, new connection) can still resolve to the revoked connection and
   // fail with "the integration connection has been revoked".
   await ToolDefinition.updateMany(
-    { connectionId: req.params.connectionId, organizationId: orgId },
+    { connectionId: conn._id, organizationId: orgId },
     { $set: { isActive: false } },
   );
   res.json({ ok: true });
@@ -775,6 +1081,149 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
   res.json({ ok: true });
 });
 
+// ---- PUT /integrations/:connectionId/paddle-plans ---- the operator's own plan →
+// price-id mapping for their Paddle connection (per environment, since sandbox and
+// live have different price ids). The integration subscription tools use THIS mapping,
+// never the platform's PADDLE_PRICE_* env — those bill operators for this SaaS, whereas
+// these tools act on the operator's OWN customers' subscriptions. Stored in the active
+// environment's encrypted credential blob; also updates the plan tools' targetPlan enum
+// so the AI offers the operator's actual plan names.
+// ---- GET /integrations/:connectionId/paddle-catalog ---- read-only list of the
+// operator's OWN Paddle products/prices for the active environment, plus a suggested
+// plan→price-id mapping (grouped by product, monthly/yearly). The "Configure plans"
+// step pre-fills from this so operators map their EXISTING plans instead of hand-typing
+// price ids — which is what prevents the "no plans configured" failure. Price/product
+// ids are integration config, not secrets (they appear in client-side checkout).
+router.get("/:connectionId/paddle-catalog", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const conn = await Connection.findOne({
+    _id: req.params.connectionId,
+    organizationId: req.orgId,
+    provider: "paddle",
+  }).lean();
+  if (!conn) {
+    res.status(404).json({ error: "Paddle connection not found." });
+    return;
+  }
+  let apiKey = "";
+  try {
+    apiKey = (JSON.parse(decrypt(activeCredsBlob(conn)!)) as { apiKey?: string }).apiKey ?? "";
+  } catch {
+    /* fall through to the no-key error below */
+  }
+  if (!apiKey) {
+    res.status(400).json({ error: "This connection's active environment has no API key." });
+    return;
+  }
+  const baseUrl = conn.sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  try {
+    const [pricesRes, productsRes] = await Promise.all([
+      fetch(`${baseUrl}/prices?per_page=100&status=active`, { headers }),
+      fetch(`${baseUrl}/products?per_page=100&status=active`, { headers }),
+    ]);
+    if (!pricesRes.ok) {
+      res.status(502).json({ error: `Paddle returned HTTP ${pricesRes.status} listing prices.` });
+      return;
+    }
+    const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
+    const productsJson = (await productsRes.json().catch(() => ({}))) as { data?: Array<{ id?: string; name?: string }> };
+    const productName = new Map<string, string>();
+    for (const p of productsJson.data ?? []) if (p.id) productName.set(p.id, p.name ?? "");
+
+    const prices = (pricesJson.data ?? []).map((p) => {
+      const cycle = (p.billing_cycle as { interval?: string } | null | undefined)?.interval;
+      const productId = String(p.product_id ?? "");
+      return {
+        priceId: String(p.id ?? ""),
+        name: String(p.name ?? ""),
+        interval: cycle === "year" ? "year" : cycle === "month" ? "month" : "one_time",
+        productId,
+        productName: productName.get(productId) ?? "",
+      };
+    });
+
+    // Suggested mapping: group recurring prices by their product's name (falling back to
+    // the price name minus a trailing "monthly"/"yearly"), one price id per interval.
+    const suggested: Record<string, { monthly?: string; yearly?: string }> = {};
+    for (const p of prices) {
+      if (p.interval === "one_time") continue;
+      const base = (p.productName || p.name.replace(/\b(monthly|yearly|annual|month|year)\b/gi, "")).trim().toLowerCase();
+      if (!base) continue;
+      const entry = (suggested[base] ??= {});
+      if (p.interval === "year") entry.yearly ??= p.priceId;
+      else entry.monthly ??= p.priceId;
+    }
+    res.json({ prices, suggested });
+  } catch (err) {
+    res.status(502).json({ error: `Couldn't reach Paddle: ${(err as Error).message}` });
+  }
+});
+
+router.put("/:connectionId/paddle-plans", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const conn = await Connection.findOne({
+    _id: req.params.connectionId,
+    organizationId: req.orgId,
+    provider: "paddle",
+  });
+  if (!conn) {
+    res.status(404).json({ error: "Paddle connection not found." });
+    return;
+  }
+  const raw = (req.body as { planPrices?: Record<string, { monthly?: string; yearly?: string }> }).planPrices;
+  if (!raw || typeof raw !== "object") {
+    res.status(400).json({ error: "planPrices object is required." });
+    return;
+  }
+  // Normalise: keep only plans with at least one price id; trim values.
+  const planPrices: Record<string, { monthly?: string; yearly?: string }> = {};
+  for (const [name, ids] of Object.entries(raw)) {
+    const plan = String(name).trim().toLowerCase();
+    const monthly = typeof ids?.monthly === "string" ? ids.monthly.trim() : "";
+    const yearly = typeof ids?.yearly === "string" ? ids.yearly.trim() : "";
+    if (!plan || (!monthly && !yearly)) continue;
+    planPrices[plan] = { ...(monthly ? { monthly } : {}), ...(yearly ? { yearly } : {}) };
+  }
+
+  // Merge into the ACTIVE environment's credential blob (preserves the api key).
+  // Read the env-specific slot as the base — NOT the `encryptedCredentials` mirror,
+  // which may hold the OTHER environment's api key/config after an env switch. Using
+  // the mirror would write planPrices onto the wrong environment's key.
+  let creds: { apiKey?: string; extra?: Record<string, unknown> } = {};
+  try {
+    creds = JSON.parse(decrypt(activeCredsBlob(conn)!));
+  } catch {
+    /* start from empty if unreadable */
+  }
+  creds.extra = { ...(creds.extra ?? {}), planPrices };
+  const encrypted = encrypt(JSON.stringify(creds));
+  const slot = conn.sandbox ? "sandboxCredentials" : "productionCredentials";
+  await Connection.updateOne(
+    { _id: conn._id },
+    { $set: { [slot]: encrypted, encryptedCredentials: encrypted } },
+  );
+
+  // Update the upgrade/downgrade tools' targetPlan enum to the operator's plan names.
+  const planNames = Object.keys(planPrices);
+  if (planNames.length > 0) {
+    const defs = await ToolDefinition.find({
+      connectionId: conn._id,
+      organizationId: req.orgId,
+      key: { $in: ["upgrade_subscription", "downgrade_subscription"] },
+    });
+    for (const def of defs) {
+      const schema = (def.jsonSchema as { properties?: { targetPlan?: { enum?: unknown } } }) ?? {};
+      if (schema.properties?.targetPlan) {
+        schema.properties.targetPlan.enum = planNames;
+        def.jsonSchema = schema as typeof def.jsonSchema;
+        def.markModified("jsonSchema");
+        await def.save();
+      }
+    }
+  }
+
+  res.json({ ok: true, plans: planNames });
+});
+
 // ---- POST /integrations/:connectionId/verify ---- re-check a live connection
 // Runs the provider's real-connection check against the CURRENTLY stored
 // credentials (refreshing an OAuth token first if it's near expiry). This gives
@@ -788,7 +1237,10 @@ router.post("/:connectionId/verify", requireAuth, requireOrg, async (req: Reques
   }
   const adapter = getAdapter(conn.provider) as {
     verifyCredentials?: (c: unknown, s: boolean) => Promise<{ ok: boolean; error?: string }>;
-    refreshTokens?: (blob: unknown) => Promise<import("../services/integrations/providers/types.js").RawCredentials | null>;
+    refreshTokens?: (
+      blob: unknown,
+      app?: import("../services/integrations/providers/types.js").OAuthAppCreds | null,
+    ) => Promise<import("../services/integrations/providers/types.js").RawCredentials | null>;
   } | undefined;
   if (!adapter?.verifyCredentials) {
     // Nothing to check (e.g. custom webhook) — treat as verified so the UI can
@@ -796,29 +1248,183 @@ router.post("/:connectionId/verify", requireAuth, requireOrg, async (req: Reques
     res.json({ ok: true, unsupported: true });
     return;
   }
+  // Test the environment the operator is VIEWING (sent in the body), not the stale
+  // `encryptedCredentials` mirror — otherwise testing production would silently check
+  // the active env's (e.g. sandbox's) creds and report a false success. Default to the
+  // active env when the body doesn't specify one.
+  const bodySandbox = (req.body as { sandbox?: unknown } | undefined)?.sandbox;
+  const wantSandbox = typeof bodySandbox === "boolean" ? bodySandbox : Boolean(conn.sandbox);
+  const envLabel = wantSandbox ? "sandbox" : "production";
+  const c = conn as unknown as {
+    sandbox?: boolean;
+    encryptedCredentials?: Parameters<typeof decrypt>[0];
+    sandboxCredentials?: Parameters<typeof decrypt>[0];
+    productionCredentials?: Parameters<typeof decrypt>[0];
+  };
+  // Read that environment's OWN slot. Fall back to the mirror only for legacy
+  // connections whose per-env slots were never populated (both empty).
+  const slotBlob = wantSandbox ? c.sandboxCredentials : c.productionCredentials;
+  const bothSlotsEmpty = !c.sandboxCredentials && !c.productionCredentials;
+  const blob = slotBlob ?? (bothSlotsEmpty ? c.encryptedCredentials : undefined);
+  if (!blob) {
+    // The selected environment has no stored credentials — it isn't connected, so
+    // there's nothing valid to verify (this is what makes a not-connected env report
+    // as such instead of borrowing the other env's creds).
+    res.json({ ok: false, error: `The ${envLabel} environment isn't connected.`, environment: envLabel });
+    return;
+  }
   try {
-    let creds = JSON.parse(
-      decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
-    ) as { expiresAt?: number };
+    let creds = JSON.parse(decrypt(blob)) as { expiresAt?: number };
     // Refresh an OAuth token within 5 min of expiry so verification (and the AI)
     // don't fail on a token that's technically still stored but stale.
     if (creds.expiresAt && creds.expiresAt - Date.now() / 1000 < 300 && adapter.refreshTokens) {
-      const refreshed = await adapter.refreshTokens(conn.encryptedCredentials);
+      const appCreds = await getOAuthAppCreds(req.orgId!, conn.provider, wantSandbox);
+      const refreshed = await adapter.refreshTokens(blob, appCreds);
       if (refreshed) {
         const encrypted = encrypt(JSON.stringify(refreshed));
-        await Connection.updateOne({ _id: conn._id }, { $set: { encryptedCredentials: encrypted } });
+        const slotKey = wantSandbox ? "sandboxCredentials" : "productionCredentials";
+        // Persist to that env's slot, and keep the mirror in sync only when we're
+        // testing the currently-active environment.
+        const upd: Record<string, unknown> = { [slotKey]: encrypted };
+        if (Boolean(conn.sandbox) === wantSandbox) upd.encryptedCredentials = encrypted;
+        await Connection.updateOne({ _id: conn._id }, { $set: upd });
         creds = refreshed as typeof creds;
       }
     }
-    const check = await adapter.verifyCredentials(creds, Boolean(conn.sandbox));
+    const check = await adapter.verifyCredentials(creds, wantSandbox);
     // Report the live result inline only — a manual test must NOT mutate persisted
     // status (a transient network blip shouldn't demote a working connection and
     // hide its config behind a "Connect" button).
-    res.json({ ok: check.ok, error: check.error, environment: conn.sandbox ? "sandbox" : "production" });
+    res.json({ ok: check.ok, error: check.error, environment: envLabel });
   } catch (err) {
     logger.warn("[integrations] verify failed", { err: (err as Error).message });
     res.status(500).json({ ok: false, error: "Verification failed — please try again." });
   }
+});
+
+// ---- Inbound subscription webhook receiver ---------------------------------
+// Per-connection callback endpoints an operator registers in their OWN Paddle/Stripe
+// dashboard. They are PUBLIC (no dashboard auth) but authenticated by the provider's
+// HMAC signature, verified against the per-connection webhook secret. Verified events
+// update an ExternalSubscription snapshot so the assistant reflects out-of-band plan
+// changes. See services/integrations/webhookReceiver.ts.
+
+// Load a connection + its active-env secret/api key for the receiver. Returns null
+// (→ 404) when the connection doesn't exist so we never leak which ids are valid.
+async function loadReceiverConnection(
+  connectionId: string,
+  provider: string,
+): Promise<{ conn: ReceiverConnection; webhookSecret?: string } | null> {
+  let doc;
+  try {
+    doc = await Connection.findOne({ _id: connectionId, provider }).lean();
+  } catch {
+    return null; // malformed ObjectId
+  }
+  if (!doc) return null;
+  let extra: { webhookSecret?: string; planPrices?: Record<string, { monthly?: string; yearly?: string }> } = {};
+  let apiKey: string | undefined;
+  const blob = activeCredsBlob(doc);
+  if (blob) {
+    try {
+      const creds = JSON.parse(decrypt(blob)) as {
+        apiKey?: string;
+        accessToken?: string;
+        extra?: typeof extra;
+      };
+      apiKey = creds.apiKey ?? creds.accessToken;
+      extra = creds.extra ?? {};
+    } catch {
+      /* unreadable creds → no secret, verification will fail closed */
+    }
+  }
+  return {
+    conn: {
+      _id: doc._id,
+      organizationId: doc.organizationId,
+      provider,
+      sandbox: doc.sandbox,
+      apiKey,
+      planPrices: extra.planPrices,
+    },
+    webhookSecret: extra.webhookSecret,
+  };
+}
+
+router.post("/paddle/webhook/:connectionId", async (req: Request, res: Response) => {
+  const loaded = await loadReceiverConnection(String(req.params.connectionId), "paddle");
+  if (!loaded) {
+    res.status(404).json({ error: { code: "not_found", message: "Unknown connection." } });
+    return;
+  }
+  const raw = (req as unknown as { rawBody?: string }).rawBody ?? "";
+  const sig = req.headers["paddle-signature"] as string | undefined;
+  if (!verifyPaddleSignature(raw, sig, loaded.webhookSecret)) {
+    res.status(401).json({ error: { code: "invalid_signature", message: "Bad signature." } });
+    return;
+  }
+  try {
+    await handlePaddleSubscriptionEvent(loaded.conn, JSON.parse(raw));
+    res.status(204).send();
+  } catch (err) {
+    logger.error("[integrations] paddle receiver failed", { err: (err as Error).message });
+    res.status(500).json({ error: { code: "webhook_error", message: "Failed to process event." } });
+  }
+});
+
+router.post("/stripe/webhook/:connectionId", async (req: Request, res: Response) => {
+  const loaded = await loadReceiverConnection(String(req.params.connectionId), "stripe");
+  if (!loaded) {
+    res.status(404).json({ error: { code: "not_found", message: "Unknown connection." } });
+    return;
+  }
+  const raw = (req as unknown as { rawBody?: string }).rawBody ?? "";
+  const sig = req.headers["stripe-signature"] as string | undefined;
+  if (!verifyStripeSignature(raw, sig, loaded.webhookSecret)) {
+    res.status(401).json({ error: { code: "invalid_signature", message: "Bad signature." } });
+    return;
+  }
+  try {
+    await handleStripeSubscriptionEvent(loaded.conn, JSON.parse(raw));
+    res.status(204).send();
+  } catch (err) {
+    logger.error("[integrations] stripe receiver failed", { err: (err as Error).message });
+    res.status(500).json({ error: { code: "webhook_error", message: "Failed to process event." } });
+  }
+});
+
+// ---- PUT /integrations/:connectionId/webhook-secret ---- store the signing secret
+// the operator copies from their Paddle/Stripe notification-destination setup, into
+// the ACTIVE environment's credential blob. Returns the callback URL to register.
+router.put("/:connectionId/webhook-secret", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const conn = await Connection.findOne({
+    _id: req.params.connectionId,
+    organizationId: req.orgId,
+    provider: { $in: ["paddle", "stripe"] },
+  });
+  if (!conn) {
+    res.status(404).json({ error: "Paddle/Stripe connection not found." });
+    return;
+  }
+  const secret = String((req.body as { webhookSecret?: unknown }).webhookSecret ?? "").trim();
+  let creds: { apiKey?: string; accessToken?: string; extra?: Record<string, unknown> } = {};
+  try {
+    creds = JSON.parse(decrypt(activeCredsBlob(conn)!));
+  } catch {
+    /* start from empty if unreadable */
+  }
+  creds.extra = { ...(creds.extra ?? {}), webhookSecret: secret || undefined };
+  const encrypted = encrypt(JSON.stringify(creds));
+  const slot = conn.sandbox ? "sandboxCredentials" : "productionCredentials";
+  await Connection.updateOne(
+    { _id: conn._id },
+    { $set: { [slot]: encrypted, encryptedCredentials: encrypted } },
+  );
+  res.json({
+    ok: true,
+    hasWebhookSecret: Boolean(secret),
+    callbackUrl: `${env.apiBaseUrl}/api/v1/integrations/${conn.provider}/webhook/${conn._id}`,
+  });
 });
 
 export default router;

@@ -614,18 +614,48 @@ export async function generateAiReply(
     const integrationGuardrailsByKey = new Map<string, { requireNamedAttendee?: boolean } | undefined>();
     // Tool keys backed by a custom-webhook connection (operator-defined schema).
     const webhookToolKeys = new Set<string>();
+    // Ordered connection chain per tool key (primary → fallbacks). When several
+    // connections expose the SAME tool key (similar-capability tools), the AI is offered
+    // the key ONCE (duplicate function names would 400 the whole tools array) and the
+    // dispatcher tries the primary first, falling back to the next on a hard error.
+    const connectionChainByKey = new Map<string, string[]>();
+    // The operator's configured primary→fallback order per key (connection ids).
+    const priorityByKey = new Map<string, string[]>();
+    for (const p of (agent.toolPriority ?? []) as { key?: string; connectionIds?: unknown[] }[]) {
+      if (p.key) priorityByKey.set(p.key, (p.connectionIds ?? []).map((c) => String(c)));
+    }
+    const connOf = (td: (typeof integrationToolDefs)[number]) =>
+      String((td.connectionId as { _id?: unknown } | null)?._id ?? td.connectionId ?? "");
+    const defsByKey = new Map<string, typeof integrationToolDefs>();
     for (const td of integrationToolDefs) {
-      integrationSchemaByKey.set(td.key, td.jsonSchema);
-      integrationGuardrailsByKey.set(td.key, td.guardrails as { requireNamedAttendee?: boolean } | undefined);
-      if ((td.connectionId as { provider?: string } | null)?.provider === "webhook") {
-        webhookToolKeys.add(td.key as string);
+      const k = td.key as string;
+      if (!defsByKey.has(k)) defsByKey.set(k, [] as unknown as typeof integrationToolDefs);
+      (defsByKey.get(k) as unknown as (typeof integrationToolDefs)[number][]).push(td);
+    }
+    for (const [key, defs] of defsByKey) {
+      const order = priorityByKey.get(key) ?? [];
+      const rank = (id: string) => {
+        const i = order.indexOf(id);
+        return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+      };
+      const sorted = [...(defs as unknown as (typeof integrationToolDefs)[number][])].sort((a, b) => {
+        const d = rank(connOf(a)) - rank(connOf(b));
+        if (d !== 0) return d;
+        return new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
+      });
+      const primary = sorted[0]!; // the tool the AI sees (its description/schema)
+      integrationSchemaByKey.set(key, primary.jsonSchema);
+      integrationGuardrailsByKey.set(key, primary.guardrails as { requireNamedAttendee?: boolean } | undefined);
+      if ((primary.connectionId as { provider?: string } | null)?.provider === "webhook") {
+        webhookToolKeys.add(key);
       }
+      connectionChainByKey.set(key, sorted.map(connOf));
       (agentTools as unknown[]).push({
         type: "function" as const,
         function: {
-          name: td.key,
-          description: td.description,
-          parameters: safeToolParameters(td.jsonSchema),
+          name: key,
+          description: primary.description,
+          parameters: safeToolParameters(primary.jsonSchema),
         },
       });
     }
@@ -898,17 +928,23 @@ export async function generateAiReply(
                 note: `An inline form is now shown to collect the required inputs. STOP and wait for the customer to submit it. Do NOT call ${call.name} again, claim a result, or ask for these fields in chat.`,
               });
             } else {
-            // Integration tool — dispatch through guardrails + audit log
-            const dispatch = await dispatchToolCall(
-              call.name,
-              call.arguments,
-              {
-                organizationId: conversation.organizationId,
-                agentId: conversation.agentId,
-                conversationId: conversation._id,
-                contactSessionId: conversation.contactSessionId,
-              },
-            );
+            // Integration tool — dispatch through guardrails + audit log. When several
+            // connections expose this tool key, try the operator's PRIMARY connection
+            // first and fall back to the next on a hard error (a guardrail block / OTP /
+            // rate-limit is intentional, not a failure, so we stop there).
+            const dispatchCtx = {
+              organizationId: conversation.organizationId,
+              agentId: conversation.agentId,
+              conversationId: conversation._id,
+              contactSessionId: conversation.contactSessionId,
+            };
+            const chain = connectionChainByKey.get(String(call.name)) ?? [];
+            let dispatch = await dispatchToolCall(call.name, call.arguments, dispatchCtx, chain[0] || undefined);
+            for (let i = 1; i < chain.length; i++) {
+              if (dispatch.ok || dispatch.status !== "error") break;
+              logger.info("[ai] tool primary failed, trying fallback", { tool: call.name, attempt: i });
+              dispatch = await dispatchToolCall(call.name, call.arguments, dispatchCtx, chain[i]);
+            }
             if (dispatch.ok) {
               // Ticket creation returns a browsable ticket URL; never expose it to
               // the model, or it offers the customer a "track it here" link.

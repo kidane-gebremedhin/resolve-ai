@@ -24,6 +24,7 @@ const websiteSchema = z.object({
     .refine((d) => DOMAIN_RE.test(d), {
       message: "Enter a valid domain like example.com (no http://, paths, or spaces).",
     }),
+  description: z.string().max(2000).optional(),
   allowedOrigins: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
 });

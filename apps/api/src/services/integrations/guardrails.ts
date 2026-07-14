@@ -13,9 +13,6 @@ const WEEKDAY_INDEX: Record<string, number> = {
   Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
 };
 
-// Plan ordering for subscription guardrails (upgradeOnly).
-const PLAN_RANK: Record<string, number> = { starter: 0, pro: 1, business: 2, enterprise: 3 };
-
 export function looksLikeRealName(name: string): boolean {
   const n = name.trim();
   if (n.length < 2) return false;
@@ -126,21 +123,6 @@ export function evaluateGuardrails(
         blocked: true,
         reason: "A real attendee name is required before booking. Ask the customer for their full name.",
       };
-    }
-  }
-
-  // ---- Subscription: upgrade-only (block downgrades through the AI) ----------
-  if (guardrails.upgradeOnly) {
-    if (toolKey === "downgrade_subscription") {
-      return { blocked: true, reason: "Downgrades aren't available through the assistant — please contact support." };
-    }
-    // If a target plan is given and we can rank it below the current, block too.
-    const target = String(args.targetPlan ?? "").toLowerCase();
-    const current = String(args.currentPlan ?? "").toLowerCase();
-    if (target && current && PLAN_RANK[target] !== undefined && PLAN_RANK[current] !== undefined) {
-      if (PLAN_RANK[target] < PLAN_RANK[current]) {
-        return { blocked: true, reason: `Only upgrades are allowed here — ${target} is below the current ${current} plan.` };
-      }
     }
   }
 

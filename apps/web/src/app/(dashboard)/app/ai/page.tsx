@@ -63,7 +63,10 @@ async function Page() {
       const intData = await api.get<{
         providers: {
           provider: string;
-          connection: { _id: string; name: string; status: string; enabledAgentIds: string[] } | null;
+          connection: {
+            _id: string; name: string; status: string; enabledAgentIds: string[];
+            toolDefs?: { key: string }[];
+          } | null;
         }[];
       }>("/integrations");
       connections = intData.providers
@@ -73,6 +76,7 @@ async function Page() {
           connectionName: p.connection!.name ?? p.provider,
           provider: p.provider,
           enabledAgentIds: p.connection!.enabledAgentIds,
+          toolKeys: (p.connection!.toolDefs ?? []).map((t) => t.key),
         }));
     } catch {
       // best-effort
