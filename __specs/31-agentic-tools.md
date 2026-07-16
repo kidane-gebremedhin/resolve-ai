@@ -358,25 +358,43 @@ export const PaddleAdapter: ProviderAdapter = {
 };
 ```
 
-### Guardrails
-```json
-{
-  "requireBillingOwner": true
-}
-```
+### Guardrails — enforced in code, not operator-configurable
+
+Subscription-change tools no longer expose billing-owner / OTP toggles; both protections
+are enforced by default in code (Changelog 6):
 
 > **Changelog 5:** the `planDirection` / `upgradeOnly` ("block downgrades") guardrail
-> was **removed** as redundant. Downgrades are a legitimate self-service action, and
-> `requireBillingOwner` already controls *who* may change a plan. Keeping the flag only
-> produced a confusing "I can't downgrade" refusal.
+> was **removed** as redundant — downgrades are a legitimate self-service action.
+>
+> **Changelog 6:**
+> - `requireBillingOwner` is **removed from the operator UI** and enforced in code. The
+>   `ALWAYS_BILLING_OWNER` set in `guardrails.ts` (`upgrade/downgrade/cancel_subscription`,
+>   `refund_payment`, `issue_refund`) always requires a valid account email — checked
+>   ABOVE the empty-guardrails early return, so it applies even when a tool has no
+>   guardrails configured. (A stored `requireBillingOwner:true` still works for any other
+>   tool, for backward compatibility.)
+> - **Email-OTP identity verification defaults ON** for `upgrade/downgrade/cancel_
+>   subscription` — `OTP_DEFAULT_ON_TOOLKEYS` in `dispatcher.ts` requires it unless the
+>   operator explicitly turns the `requireIdentityVerification` toggle off (`flag !== false`);
+>   other tools require it only when the flag is on. `get_subscription` is read-only (no OTP).
+>   **Enforcement fix (Changelog 6):** the check keys off `contactSessionId` (loads the
+>   session token server-side) — it previously gated on `ctx.sessionToken`, which the
+>   assistant tool-loop never passes, so OTP silently never fired and changes ran unverified.
+> - **OTP has a widget UX (Changelog 6):** on `otp_pending` the assistant emits an `otp`
+>   message block (`OtpBlockRenderer`); the customer enters the 6-digit code → `POST
+>   /widget/verify-otp` → the original tool is re-run via the message route's
+>   `toolKey`/`formPayload` path, now past the OTP gate (`identityVerifiedUntil`, 15 min).
 
-`requireBillingOwner`: before executing, compare `contactSession.email` with the
-Paddle subscription's billing email. If they don't match → guardrail blocks.
+`requireBillingOwner` (enforced): the customer must be identified by a valid account
+email — the dispatcher injects the verified `ContactSession` email; without one the tool
+is blocked with "confirm the email on the account first."
 
-**Identity verification**: OTP via email is required before executing
-`upgrade_subscription`, `downgrade_subscription`, and `cancel_subscription`
-(decided — see spec 30 § 2A.6 and BLOCKERS.md B-6). `get_subscription` is
-read-only and does not require OTP.
+**Why OTP is the real guard:** a contact-form email is self-asserted (a customer can type
+someone else's address). The OTP code is emailed to **that same address** (the one the
+subscription is also resolved by), so only the true inbox owner can complete the change.
+The OTP email is **branded with the operator's organization name** (Changelog 6). Delivery
+uses the platform mailer, which now falls back to the `SMTP_*` env vars when the admin
+panel SMTP isn't configured (Changelog 6) — so OTP email actually sends on a fresh deploy.
 
 ### No new credentials required
 Uses existing `PADDLE_API_KEY` and `PADDLE_ENVIRONMENT`. The Paddle connection in

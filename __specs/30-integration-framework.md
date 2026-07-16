@@ -29,7 +29,7 @@ settings**. What each one is for, and how the widget customer experiences it:
 |---|---|---|---|---|
 | **Cal.com** | API key | `list_event_types`, `list_calendar_slots`, `book_meeting` | Let a visitor book a meeting on the operator's Cal.com calendar (demos, support calls). | "I'd like a demo" → AI lists meeting types, then available slots as tappable **cards** in the visitor's timezone → visitor picks one → inline **name** form → booked, with a "Join meeting" confirmation card. |
 | **Calendly** | OAuth | `list_calendar_slots`, `book_meeting` | Same as Cal.com for operators on Calendly. | Same slot-card → pick → book flow. |
-| **Stripe** | OAuth (Connect) | `look_up_order`, `issue_refund` | Look up a payment/order and issue a refund on the operator's Stripe, within guardrails (max amount, window, identity check). | "I want a refund for order X" → AI looks it up → issues the refund if within the operator's guardrails, else explains it needs a human. |
+| **Stripe** | API key (or OAuth Connect) | `look_up_order`, `issue_refund`, `get_subscription`, `upgrade_subscription`, `downgrade_subscription`, `cancel_subscription` | Look up a payment/order, issue a refund, and let a visitor self-manage **their own** subscription on the operator's Stripe (Changelog 6 mirrors the Paddle subscription tool set — same email-keyed resolution, plan→price-id map via "Configure plans", proration, cancel-at-period-end). Connect with a **secret/restricted key** (`sk_test_…`/`sk_live_…`) — the common case of wiring your OWN Stripe, no Connect needed; the adapter still supports Connect OAuth tokens. Keys are checked for test-vs-live matching the environment. | "Upgrade me to Pro" → AI verifies by email + OTP → changes the plan (interval preserved) → confirms. "I want a refund for order X" → looks it up → refunds within guardrails. |
 | **Shopify** | OAuth | `look_up_order` | Order/shipping status lookup on the operator's Shopify store. | "Where's my order?" → AI returns status/tracking. |
 | **Jira** | OAuth (Atlassian 3LO) | `create_support_ticket` | File a support ticket in the operator's Jira when the AI can't resolve an issue (routes to a configured project; attaches a PII-masked transcript). | "This is still broken" → AI files a ticket and tells the customer a human will follow up (never leaks the internal ticket URL). |
 | **Linear** | OAuth | `create_support_ticket` | Same as Jira for operators on Linear. | Ticket filed; human follow-up promised. |
@@ -702,9 +702,12 @@ interface GuardrailSpec {
 
   // upgrade_subscription / downgrade_subscription
   // NOTE: the earlier `planDirection` / `upgradeOnly` (block-downgrades) flag was
-  // REMOVED as redundant (Changelog 5) — downgrades are a legitimate self-service
-  // action, and `requireBillingOwner` already gates who may change a plan. The AI
-  // performs upgrades AND downgrades through the operator's Paddle.
+  // REMOVED as redundant (Changelog 5) — downgrades are a legitimate self-service action.
+  // Changelog 6: `requireBillingOwner` is no longer an operator toggle — it's enforced in
+  // code (guardrails.ts ALWAYS_BILLING_OWNER) for subscription + refund tools, and
+  // email-OTP identity verification is MANDATORY for subscription-change tools
+  // (dispatcher.ts OTP_REQUIRED_TOOLKEYS), regardless of the stored flags below. The
+  // field is kept only for backward-compatible reads on other tools.
   requireBillingOwner?: boolean;
 
   // book_meeting

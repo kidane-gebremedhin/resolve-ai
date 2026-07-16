@@ -4,6 +4,7 @@ import { CardBlockRenderer } from "./CardBlockRenderer";
 import { CarouselBlockRenderer } from "./CarouselBlockRenderer";
 import { FormBlockRenderer } from "./FormBlockRenderer";
 import { LinkPreviewBlockRenderer } from "./LinkPreviewBlockRenderer";
+import { OtpBlockRenderer } from "./OtpBlockRenderer";
 import type { MessageBlock } from "../../lib/api-client";
 
 export function BlockRenderer({
@@ -58,6 +59,17 @@ export function BlockRenderer({
               <LinkPreviewBlockRenderer
                 key={i}
                 block={block as Parameters<typeof LinkPreviewBlockRenderer>[0]["block"]}
+              />
+            );
+          case "otp":
+            return (
+              <OtpBlockRenderer
+                key={i}
+                block={block as Parameters<typeof OtpBlockRenderer>[0]["block"]}
+                primaryColor={primaryColor}
+                onSendMessage={onSendMessage}
+                conversationId={conversationId}
+                sessionToken={sessionToken}
               />
             );
           default:

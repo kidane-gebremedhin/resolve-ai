@@ -289,6 +289,20 @@ export function AgentEditor({
     return out.sort((a, b) => a.key.localeCompare(b.key));
   })();
 
+  // Both Paddle AND Stripe can expose the subscription tools. When both are enabled on
+  // this agent those keys collide — only ONE provider handles a given call (the primary),
+  // so surface which one wins instead of leaving it silent/ambiguous.
+  const SUBSCRIPTION_KEYS = ["get_subscription", "upgrade_subscription", "downgrade_subscription", "cancel_subscription"];
+  const billingConflictPrimary: string | null = (() => {
+    const s = sharedKeys.find(
+      (sk) =>
+        SUBSCRIPTION_KEYS.includes(sk.key) &&
+        sk.conns.some((c) => c.provider === "paddle") &&
+        sk.conns.some((c) => c.provider === "stripe"),
+    );
+    return s?.conns[0]?.provider ?? null;
+  })();
+
   function moveConn(key: string, connId: string, dir: -1 | 1): void {
     const current = sharedKeys.find((s) => s.key === key);
     if (!current) return;
@@ -648,6 +662,15 @@ export function AgentEditor({
               These tools are offered by more than one connected integration. Set which one the
               agent tries first — it falls back to the next on an error or low confidence.
             </p>
+            {billingConflictPrimary && (
+              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11px] leading-snug text-amber-800 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                <span className="font-semibold">Two billing providers are enabled.</span>{" "}
+                Paddle and Stripe both expose the subscription tools, so a plan change goes to your{" "}
+                <span className="font-semibold">{PROVIDER_LABELS[billingConflictPrimary] ?? billingConflictPrimary}</span>{" "}
+                connection first (the Primary below), only falling back to the other on error.
+                Most operators use a single billing provider — disable one, or set the Primary you want.
+              </div>
+            )}
             <div className="mt-4 space-y-4">
               {sharedKeys.map(({ key, conns }) => (
                 <div key={key} className="rounded-lg border border-border px-4 py-3">

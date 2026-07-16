@@ -5,7 +5,12 @@ const guardrailsSchema = new Schema(
     // Amount / refund limits (refund_payment, issue_refund)
     maxAmount: { type: Number },
     maxDaysSincePurchase: { type: Number },
-    requireIdentityVerification: { type: Boolean, default: false },
+    // Tri-state ON PURPOSE — no schema default. true = require email-OTP; false = the
+    // operator explicitly disabled it; absent = the per-tool default applies (the
+    // dispatcher requires OTP for subscription-CHANGE tools unless explicitly false).
+    // A `default: false` here materialized an explicit false on every tool def, which
+    // read as "operator disabled it" and silently turned the default-on OTP off.
+    requireIdentityVerification: { type: Boolean },
     allowedContactEmails: [{ type: String }],
     // Booking window (book_meeting): only allow slots inside business hours.
     // Times are "HH:MM" (24h) in `businessHoursTz`; days are 0=Sun … 6=Sat.

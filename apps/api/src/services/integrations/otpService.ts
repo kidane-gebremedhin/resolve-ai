@@ -21,13 +21,37 @@ function generateCode(): string {
   return String(Math.floor(100000 + (randomBytes(4).readUInt32BE(0) % 900000)));
 }
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 export async function sendIdentityOtp(
   sessionToken: string,
   session: { email?: string | null } | null,
+  // The operator's brand (e.g. their organization name), so the customer sees a code
+  // email that reads as coming from the business they're actually talking to rather
+  // than the bare platform sender. Optional — falls back to a generic message.
+  brandName?: string,
 ): Promise<string> {
   const email = session?.email;
   if (!email) {
     throw new Error("Cannot send OTP: no email on contact session.");
+  }
+
+  // Reuse an outstanding, un-expired code for this session instead of minting a new one
+  // per send. Without this, a retried tool call (or the model calling twice) emailed a
+  // SECOND code while the widget's card carried the newer token — entering the code from
+  // the older email then failed as "invalid", even though the customer did nothing wrong.
+  const now = new Date();
+  for (const [existingHash, entry] of otpStore) {
+    if (entry.sessionToken === sessionToken && entry.expiresAt > now) {
+      logger.info("[otp] reusing outstanding code", { to: email, hash: existingHash });
+      return existingHash;
+    }
   }
 
   const code = generateCode();
@@ -36,11 +60,15 @@ export async function sendIdentityOtp(
 
   otpStore.set(hash, { code, sessionToken, expiresAt });
 
+  const brand = brandName?.trim();
+  const minutes = Math.round(env.otpExpirySeconds / 60);
   await sendMail({
     to: email,
-    subject: "Your verification code",
-    html: `<p>Your one-time verification code is: <strong>${code}</strong></p>
-           <p>It expires in ${Math.round(env.otpExpirySeconds / 60)} minutes.</p>`,
+    fromName: brand || undefined,
+    subject: brand ? `Your ${brand} verification code` : "Your verification code",
+    html: `${brand ? `<p>You're verifying your identity with <strong>${escapeHtml(brand)}</strong>.</p>` : ""}
+           <p>Your one-time verification code is: <strong>${code}</strong></p>
+           <p>It expires in ${minutes} minute${minutes === 1 ? "" : "s"}. If you didn't request this, you can ignore this email.</p>`,
   });
 
   logger.info("[otp] sent", { to: email, hash });

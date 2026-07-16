@@ -13,6 +13,18 @@ const WEEKDAY_INDEX: Record<string, number> = {
   Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6,
 };
 
+// Tool keys that ALWAYS require an identified billing owner (a valid account email),
+// regardless of any per-tool flag — subscription changes and refunds act on someone's
+// account, so we never run them for an anonymous visitor. This replaced the operator-
+// facing `requireBillingOwner` toggle, which is now enforced in code by default.
+const ALWAYS_BILLING_OWNER = new Set([
+  "upgrade_subscription",
+  "downgrade_subscription",
+  "cancel_subscription",
+  "refund_payment",
+  "issue_refund",
+]);
+
 export function looksLikeRealName(name: string): boolean {
   const n = name.trim();
   if (n.length < 2) return false;
@@ -31,6 +43,23 @@ export function evaluateGuardrails(
   args: Record<string, unknown>,
   toolKey?: string,
 ): GuardrailResult {
+  // ---- Billing owner (subscription / refund) --------------------------------
+  // Enforced for the high-stakes tools ABOVE the empty-guardrails early return, so it
+  // applies even when a tool has no guardrails configured. The customer must be
+  // identified by their account email (the dispatcher injects the verified
+  // ContactSession email). Without one we can't confirm ownership.
+  const enforceBillingOwner =
+    Boolean(guardrails?.requireBillingOwner) || (toolKey !== undefined && ALWAYS_BILLING_OWNER.has(toolKey));
+  if (enforceBillingOwner) {
+    const email = String(args.email ?? args.contactEmail ?? "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return {
+        blocked: true,
+        reason: "This action requires the account holder. Please confirm the email on the account first.",
+      };
+    }
+  }
+
   if (!guardrails) return { blocked: false };
 
   // ---- Refund / amount limits (refund_payment, issue_refund) ----------------
@@ -122,19 +151,6 @@ export function evaluateGuardrails(
       return {
         blocked: true,
         reason: "A real attendee name is required before booking. Ask the customer for their full name.",
-      };
-    }
-  }
-
-  // ---- Billing owner (subscription / refund) --------------------------------
-  // The customer must be identified by their account email (the widget injects
-  // the verified ContactSession email). Without one we can't confirm ownership.
-  if (guardrails.requireBillingOwner) {
-    const email = String(args.email ?? args.contactEmail ?? "").trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return {
-        blocked: true,
-        reason: "This action requires a verified account holder. Please confirm the email on the account first.",
       };
     }
   }

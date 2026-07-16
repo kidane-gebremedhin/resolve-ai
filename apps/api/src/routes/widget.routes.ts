@@ -675,12 +675,17 @@ router.post(
       io.to(`conversation:${conversation._id.toString()}`).emit("message:new", payload);
     }
 
+    // When an inline-form submission executes a tool below, we pass its result to
+    // generateAiReply so the reply PRESENTS that result (with its rich card) and skips
+    // the agentic loop — otherwise the model can wander to an unrelated earlier request.
+    let presentToolResult: { toolKey: string; result: unknown } | undefined;
+
     // Inline form submission: validate payload against tool schema, execute the
     // tool ONCE here (with the customer's submitted values), and rewrite the
     // message so the AI presents THIS result instead of re-calling the tool with
     // guessed values (important for non-idempotent tools like booking/refund).
     if (req.body.toolKey && req.body.formPayload && conversation.status === "active") {
-      const { ToolDefinition } = await import("../models/index.js");
+      const { ToolDefinition, Agent } = await import("../models/index.js");
       const toolKey = req.body.toolKey as string;
       const formPayload = req.body.formPayload as Record<string, unknown>;
       const toolDef = await ToolDefinition.findOne({
@@ -698,17 +703,126 @@ router.post(
         // provider adapter still enforce real completeness downstream.
         const schema = { ...(toolDef.jsonSchema as Record<string, unknown>) };
         delete (schema as { required?: unknown }).required;
+        // Also drop per-property `enum`s: several connections can share this tool key
+        // (Paddle + Stripe both expose upgrade/downgrade), and THIS def is an arbitrary
+        // match — its plan-name enum would wrongly reject a value the connection that
+        // actually executes (via the chain below) accepts. Validate TYPES only; the
+        // adapters authoritatively validate values ("Unknown plan …") and a hard error
+        // falls through the chain.
+        const props = (schema as { properties?: Record<string, unknown> }).properties;
+        if (props && typeof props === "object") {
+          const loosened: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(props)) {
+            if (v && typeof v === "object" && "enum" in (v as Record<string, unknown>)) {
+              const { enum: _enum, ...rest } = v as Record<string, unknown>;
+              loosened[k] = rest;
+            } else {
+              loosened[k] = v;
+            }
+          }
+          (schema as { properties?: Record<string, unknown> }).properties = loosened;
+        }
         const validate = ajv.compile(schema);
         if (!validate(formPayload)) {
           throw new ValidationError("Form payload failed schema validation.");
         }
       }
-      const dispatch = await dispatchToolCall(toolKey, formPayload, {
+      // Same primary→fallback chain the AI tool loop uses. Without it, a form/OTP
+      // submission dispatched to whichever connection the dispatcher picked first —
+      // e.g. Stripe when the customer's subscription lives in Paddle — and its
+      // "no customer found" error surfaced as "the action couldn't be completed",
+      // even though the fallback provider would have succeeded.
+      const dispatchCtx = {
         organizationId: req.orgId!,
         agentId: conversation.agentId?.toString() ?? "",
         conversationId: conversation._id,
         contactSessionId: req.contactSessionId!,
-      }).catch(() => null);
+      };
+      const agentDoc = conversation.agentId
+        ? await Agent.findById(conversation.agentId).select("toolPriority").lean()
+        : null;
+      const order = (
+        ((agentDoc as { toolPriority?: { key?: string; connectionIds?: unknown[] }[] } | null)?.toolPriority ?? [])
+          .find((p) => p.key === toolKey)?.connectionIds ?? []
+      ).map((c) => String(c));
+      const chainDefs = await ToolDefinition.find({
+        organizationId: req.orgId,
+        key: toolKey,
+        isActive: true,
+        ...(conversation.agentId ? { enabledAgentIds: conversation.agentId } : {}),
+      })
+        .select("connectionId createdAt")
+        .lean();
+      const rank = (id: string) => {
+        const i = order.indexOf(id);
+        return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+      };
+      const chain = chainDefs
+        .filter((d) => d.connectionId)
+        .sort(
+          (a, b) =>
+            rank(String(a.connectionId)) - rank(String(b.connectionId)) ||
+            new Date((a as { createdAt?: Date }).createdAt ?? 0).getTime() -
+              new Date((b as { createdAt?: Date }).createdAt ?? 0).getTime(),
+        )
+        .map((d) => String(d.connectionId));
+      let dispatch = await dispatchToolCall(toolKey, formPayload, dispatchCtx, chain[0] || undefined).catch(() => null);
+      for (let i = 1; i < chain.length; i++) {
+        const hardError = dispatch !== null && !dispatch.ok && dispatch.status === "error";
+        const softMiss = dispatch?.ok === true && (dispatch.result as { found?: boolean } | null)?.found === false;
+        if (dispatch !== null && !hardError && !softMiss) break; // success or intentional stop
+        dispatch = await dispatchToolCall(toolKey, formPayload, dispatchCtx, chain[i]).catch(() => null);
+      }
+      // Identity gate hit on a FORM submission (e.g. an OTP-guarded custom webhook or a
+      // subscription form). The AI tool loop renders the code-entry block itself, but a
+      // form submission bypasses that loop — without this branch the code email went out
+      // while the widget showed NO way to enter it (and typing the digits in chat did
+      // nothing). Persist a deterministic AI message carrying the OTP block — with this
+      // exact toolKey + payload so the post-verify re-run executes the same submission —
+      // and skip the LLM reply for this turn.
+      if (dispatch && !dispatch.ok && dispatch.status === "otp_pending") {
+        let otpToken = "";
+        try {
+          otpToken = (JSON.parse(dispatch.reason) as { otpToken?: string }).otpToken ?? "";
+        } catch {
+          /* reason wasn't JSON — fall through to the generic handling below */
+        }
+        if (otpToken) {
+          const otpText = "For your security, we just emailed you a 6-digit verification code. Enter it below to continue.";
+          const aiMessage = await Message.create({
+            conversationId: conversation._id,
+            organizationId: conversation.organizationId,
+            role: "ai",
+            senderType: "ai",
+            content: otpText,
+            confidence: 1,
+            blocks: [
+              {
+                type: "otp",
+                otpToken,
+                toolKey,
+                args: formPayload,
+                message: "Enter the 6-digit code we emailed you to confirm it's you.",
+              },
+            ],
+          });
+          conversation.lastMessageAt = (aiMessage.createdAt as Date | undefined) ?? new Date();
+          conversation.lastMessagePreview = otpText.slice(0, 140);
+          conversation.messageCount = (conversation.messageCount ?? 0) + 1;
+          await conversation.save();
+          if (io) {
+            const otpPayload = {
+              conversationId: conversation._id.toString(),
+              messageId: aiMessage._id.toString(),
+            };
+            io.to(`org:${conversation.organizationId.toString()}`).emit("message:new", otpPayload);
+            io.to(`conversation:${conversation._id.toString()}`).emit("message:new", otpPayload);
+            io.to(`contact:${conversation.contactSessionId.toString()}`).emit("message:new", otpPayload);
+          }
+          res.status(201).json({ message });
+          return;
+        }
+      }
       if (dispatch?.ok === false && dispatch.status === "error") {
         throw new ValidationError("Form submission failed: " + dispatch.error);
       }
@@ -730,6 +844,9 @@ router.post(
       await message.save();
       conversation.lastMessagePreview = `Submitted ${toolDef?.displayName ?? toolKey}`;
       await conversation.save();
+      // Present-only mode for the reply: only when the tool actually returned a result
+      // (a guardrail block / no-result still goes through the normal reply path).
+      if (dispatch?.ok) presentToolResult = { toolKey, result: dispatch.result };
     }
 
     // Abuse detection — check message content against configured patterns.
@@ -765,6 +882,7 @@ router.post(
         content,
         io,
         req.body.attachments as import("../services/ai/agent.service.js").CurrentAttachment[] | undefined,
+        presentToolResult,
       ).catch((err) => {
         logger.error("[widget] AI reply failed", {
           conversationId: conversation._id.toString(),
@@ -1084,7 +1202,11 @@ router.post(
       return;
     }
 
-    const sessionToken = (req as unknown as { sessionToken: string }).sessionToken;
+    const sessionToken = req.sessionToken;
+    if (!sessionToken) {
+      res.status(401).json({ error: "Missing widget session." });
+      return;
+    }
     const { verifyOtp } = await import("../services/integrations/otpService.js");
     const ok = await verifyOtp(sessionToken, String(otpToken), String(otp));
 

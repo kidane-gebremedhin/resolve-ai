@@ -1,5 +1,5 @@
 import type { Types } from "mongoose";
-import { ToolDefinition, ToolCallLog, ContactSession, Agent, Connection, Message, ExternalSubscription } from "../../models/index.js";
+import { ToolDefinition, ToolCallLog, ContactSession, Agent, Connection, Message, ExternalSubscription, Organization } from "../../models/index.js";
 import { getAdapter } from "./adapters/index.js";
 import { evaluateGuardrails } from "./guardrails.js";
 import { checkRateLimit } from "./rateLimit.js";
@@ -8,6 +8,18 @@ import { decrypt, encrypt } from "../security/crypto.service.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
 import type { MessageBlock, CardBlock, CarouselBlock } from "../../types/messageBlocks.js";
+
+// Tool keys where email-OTP identity verification is ON BY DEFAULT — required unless the
+// operator explicitly turns the `requireIdentityVerification` flag off. These change a
+// subscription or move money (refunds), high-stakes actions where a self-asserted contact
+// email isn't proof of ownership, so the customer proves control of the account inbox first.
+const OTP_DEFAULT_ON_TOOLKEYS = new Set([
+  "upgrade_subscription",
+  "downgrade_subscription",
+  "cancel_subscription",
+  "issue_refund",
+  "refund_payment",
+]);
 
 // Convert a tool result into rich message blocks for the widget UI.
 // Returns null when the tool has no special display.
@@ -190,14 +202,27 @@ export async function dispatchToolCall(
   // per-tool checks (named attendee, business hours, billing-owner email) see the
   // final values the system injects — not the raw, often-incomplete LLM args.
 
-  // OTP identity verification
-  if (toolDef.guardrails?.requireIdentityVerification && ctx.sessionToken) {
-    const session = await ContactSession.findOne({ token: ctx.sessionToken }).lean();
-    const verifiedUntil = (session as unknown as { identityVerifiedUntil?: Date })?.identityVerifiedUntil;
-    if (!verifiedUntil || verifiedUntil < new Date()) {
-      // Generate and send OTP — handled by the OTP service
+  // OTP identity verification. Subscription-change tools require it BY DEFAULT (unless the
+  // operator explicitly turned the flag off); other tools require it only when the flag is
+  // on. Changing/cancelling a plan is high-stakes and a self-asserted contact email alone
+  // isn't proof of ownership — the emailed code is.
+  //
+  // NOTE: keyed off `contactSessionId`, NOT `ctx.sessionToken` — the AI tool-loop caller
+  // (agent.service) has the session id but not the raw token, so gating on sessionToken
+  // meant OTP NEVER fired from the assistant path and high-stakes actions ran unverified.
+  const otpFlag = toolDef.guardrails?.requireIdentityVerification;
+  const otpRequired = OTP_DEFAULT_ON_TOOLKEYS.has(toolKey) ? otpFlag !== false : otpFlag === true;
+  if (otpRequired && ctx.contactSessionId) {
+    const session = await ContactSession.findById(ctx.contactSessionId).lean();
+    const sessionToken = (session as { token?: string } | null)?.token;
+    const verifiedUntil = (session as { identityVerifiedUntil?: Date } | null)?.identityVerifiedUntil;
+    if (sessionToken && (!verifiedUntil || verifiedUntil < new Date())) {
+      // Generate and send OTP — branded with the operator's organization name so the
+      // customer recognises who the code is from.
       const { sendIdentityOtp } = await import("./otpService.js");
-      const otpToken = await sendIdentityOtp(ctx.sessionToken, session);
+      const org = await Organization.findById(ctx.organizationId).select("name").lean();
+      const brand = (org as { name?: string } | null)?.name;
+      const otpToken = await sendIdentityOtp(sessionToken, session, brand);
 
       await ToolCallLog.create({
         organizationId: ctx.organizationId,
@@ -211,10 +236,12 @@ export async function dispatchToolCall(
         durationMs: Date.now() - startMs,
       });
 
+      // Carry the toolKey so the widget can re-run this exact tool once the code is
+      // verified (identityVerifiedUntil is then set, so the retry passes this gate).
       return {
         ok: false,
         blocked: true,
-        reason: JSON.stringify({ otpRequired: true, otpToken }),
+        reason: JSON.stringify({ otpRequired: true, otpToken, toolKey }),
         status: "otp_pending",
       };
     }

@@ -12,10 +12,6 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:wipe": "tsx scripts/wipe-all-data.ts",
     "kb:reembed": "tsx scripts/reembed.ts",
-    "kb:migrate-website": "tsx scripts/migrate-kb-website.ts",
-    "agents:migrate-website": "tsx scripts/migrate-agent-website.ts",
-    "agents:clean-names": "tsx scripts/migrate-agent-names.ts",
-    "integrations:migrate-oauth-apps": "tsx scripts/migrate-oauth-apps.ts",
     "gen:cred-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
     "clean": "rm -rf dist .turbo node_modules"
   },

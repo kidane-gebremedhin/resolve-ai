@@ -6,6 +6,40 @@ const OAUTH_BASE = "https://connect.stripe.com/oauth";
 const API_BASE = "https://api.stripe.com/v1";
 const API_TEST = "https://api.stripe.com/v1";
 
+type BillingInterval = "month" | "year";
+
+// The OPERATOR's own plan → price-id mapping, stored per-connection in
+// credentials.extra.planPrices (configured via "Configure plans"). Identical shape to the
+// Paddle adapter — the subscription tools act on the operator's OWN Stripe (their customers'
+// subscriptions), never this platform's Stripe. Shape:
+//   { pro: { monthly: "price_x", yearly: "price_y" }, business: {...}, ... }
+type StripePlanPrices = Record<string, { monthly?: string; yearly?: string }>;
+
+function readPlanPrices(credentials: RawCredentials): StripePlanPrices {
+  const pp = (credentials.extra as { planPrices?: unknown } | undefined)?.planPrices;
+  return pp && typeof pp === "object" ? (pp as StripePlanPrices) : {};
+}
+function priceForPlan(planPrices: StripePlanPrices, plan: string, interval: BillingInterval): string | undefined {
+  return planPrices[plan]?.[interval === "year" ? "yearly" : "monthly"];
+}
+// price id → operator plan name (covers monthly AND yearly), so get_subscription can name
+// the customer's current plan regardless of billing cycle.
+function planForPriceId(planPrices: StripePlanPrices, priceId: string | undefined): string | undefined {
+  if (!priceId) return undefined;
+  return Object.entries(planPrices).find(([, ids]) => ids.monthly === priceId || ids.yearly === priceId)?.[0];
+}
+
+type StripeSub = {
+  id: string;
+  status?: string;
+  itemId?: string; // si_… — needed to update the priced item on a plan change
+  currentPriceId?: string;
+  plan?: string;
+  currentInterval: BillingInterval;
+  currentQuantity: number;
+  currentPeriodEnd?: number; // unix seconds
+};
+
 export class StripeAdapter implements ProviderAdapter {
   readonly provider = "stripe";
 
@@ -49,6 +83,16 @@ export class StripeAdapter implements ProviderAdapter {
   }
 
   getTools(): ToolTemplate[] {
+    // Subscription tools are keyed off the customer's EMAIL and a human plan NAME — never
+    // raw Stripe price ids. `email` is OPTIONAL: the widget already knows the visitor's
+    // verified account email and the dispatcher injects it authoritatively (PII redaction
+    // masks it from the model), so requiring it would just make the AI re-ask for something
+    // the system already has. Mirrors the Paddle adapter.
+    const planEnum = ["pro", "business", "enterprise"];
+    const emailProp = {
+      type: "string" as const,
+      description: "The customer's account email. Optional — leave blank and the system uses their verified account email automatically.",
+    };
     return [
       {
         key: "lookup_order",
@@ -76,6 +120,38 @@ export class StripeAdapter implements ProviderAdapter {
           required: ["chargeId", "amount"],
         },
       },
+      {
+        key: "get_subscription",
+        displayName: "Get Subscription",
+        description: "Look up the customer's current subscription (plan, status, renewal). Uses their verified account email automatically — do NOT ask the customer for their email.",
+        jsonSchema: { type: "object", properties: { email: emailProp }, required: [] },
+      },
+      {
+        key: "upgrade_subscription",
+        displayName: "Upgrade Subscription",
+        description: "Upgrade the customer's subscription to a higher plan. Uses their verified account email automatically.",
+        jsonSchema: {
+          type: "object",
+          properties: { email: emailProp, targetPlan: { type: "string", enum: planEnum, description: "Plan to move to" } },
+          required: ["targetPlan"],
+        },
+      },
+      {
+        key: "downgrade_subscription",
+        displayName: "Downgrade Subscription",
+        description: "Downgrade the customer's subscription to a lower plan. Uses their verified account email automatically.",
+        jsonSchema: {
+          type: "object",
+          properties: { email: emailProp, targetPlan: { type: "string", enum: planEnum, description: "Plan to move to" } },
+          required: ["targetPlan"],
+        },
+      },
+      {
+        key: "cancel_subscription",
+        displayName: "Cancel Subscription",
+        description: "Cancel the customer's subscription at the end of the current billing period. Uses their verified account email automatically.",
+        jsonSchema: { type: "object", properties: { email: emailProp }, required: [] },
+      },
     ];
   }
 
@@ -86,8 +162,25 @@ export class StripeAdapter implements ProviderAdapter {
     sandbox: boolean,
   ): Promise<unknown> {
     const base = sandbox ? API_TEST : API_BASE;
-    const auth = `Basic ${Buffer.from(`${credentials.accessToken ?? ""}:`).toString("base64")}`;
+    // Works with EITHER auth style: an OAuth Connect access token (`accessToken`, from the
+    // Connect flow) OR a plain secret key (`apiKey`, e.g. `sk_test_…`/a restricted key) when
+    // the operator connected their own Stripe with a key instead of Connect. Stripe uses the
+    // same HTTP Basic scheme (`<key>:`) for both, and the key's own mode (test vs live)
+    // determines the environment — not the URL.
+    const key = credentials.accessToken ?? credentials.apiKey ?? "";
+    const auth = `Basic ${Buffer.from(`${key}:`).toString("base64")}`;
     const headers = { Authorization: auth, "Content-Type": "application/x-www-form-urlencoded" };
+    const planPrices = readPlanPrices(credentials);
+
+    const stripeFetch = async (path: string, init?: RequestInit): Promise<Record<string, unknown>> => {
+      const res = await fetch(`${base}${path}`, { ...init, headers });
+      const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        const err = json.error as { message?: string; code?: string } | undefined;
+        throw new Error(`Stripe ${err?.code ?? res.status}: ${err?.message ?? "request failed"}`);
+      }
+      return json;
+    };
 
     if (toolKey === "lookup_order") {
       const id = args.orderId as string;
@@ -107,6 +200,121 @@ export class StripeAdapter implements ProviderAdapter {
       return res.json();
     }
 
+    // ---- Subscription tools (operator's OWN Stripe, resolved by customer email) --------
+
+    // `softMissing` makes a genuine "no customer / no active subscription" return null
+    // instead of throwing — read tools (get_subscription) use it so a not-found is a
+    // definite fact the model states rather than an error it might paper over. Mutations
+    // keep throwing (they can't proceed without a subscription).
+    const resolveSubscription = async (
+      email: string,
+      opts?: { softMissing?: boolean },
+    ): Promise<StripeSub | null> => {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new Error("A valid account email is required. Ask the customer for the email on their account, then try again.");
+      }
+      const cust = await stripeFetch(`/customers?email=${encodeURIComponent(email)}&limit=1`);
+      const customer = (cust.data as { id: string }[] | undefined)?.[0];
+      if (!customer) {
+        if (opts?.softMissing) return null;
+        throw new Error(`No Stripe customer found for ${email}.`);
+      }
+      const subs = await stripeFetch(`/subscriptions?customer=${customer.id}&status=all&limit=100`);
+      const list = (subs.data as Array<Record<string, unknown>> | undefined) ?? [];
+      const active = list.find((s) => s.status === "active" || s.status === "trialing");
+      if (!active) {
+        if (opts?.softMissing) return null;
+        throw new Error(`No active subscription found for ${email}.`);
+      }
+      const items = ((active.items as { data?: Array<Record<string, unknown>> } | undefined)?.data) ?? [];
+      const item0 = items[0] as
+        | { id?: string; quantity?: number; price?: { id?: string; recurring?: { interval?: string } } }
+        | undefined;
+      const currentPriceId = item0?.price?.id;
+      const currentInterval: BillingInterval = item0?.price?.recurring?.interval === "year" ? "year" : "month";
+      return {
+        id: String(active.id),
+        status: active.status as string | undefined,
+        itemId: item0?.id,
+        currentPriceId,
+        plan: planForPriceId(planPrices, currentPriceId),
+        currentInterval,
+        currentQuantity: item0?.quantity ?? 1,
+        currentPeriodEnd: active.current_period_end as number | undefined,
+      };
+    };
+
+    const periodEndIso = (sub: StripeSub): string | undefined =>
+      sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd * 1000).toISOString() : undefined;
+
+    if (toolKey === "get_subscription") {
+      const sub = await resolveSubscription(String(args.email), { softMissing: true });
+      if (!sub) {
+        return { found: false, hasSubscription: false, message: "No subscription is associated with this email address in our records." };
+      }
+      return {
+        found: true,
+        hasSubscription: true,
+        plan: sub.plan ?? "current plan",
+        status: sub.status,
+        subscriptionId: sub.id,
+        nextBillDate: periodEndIso(sub),
+      };
+    }
+
+    if (toolKey === "upgrade_subscription" || toolKey === "downgrade_subscription") {
+      const configuredPlans = Object.keys(planPrices);
+      if (configuredPlans.length === 0) {
+        throw new Error(
+          `No plans are configured for this Stripe connection's ${sandbox ? "sandbox" : "production"} environment yet. Add the plan price ids for this environment in the dashboard (Integrations → Stripe → Configure plans), or a human can help with the plan change.`,
+        );
+      }
+      const targetPlan = String(args.targetPlan ?? "").toLowerCase();
+      if (!planPrices[targetPlan]) {
+        throw new Error(`Unknown plan "${String(args.targetPlan)}". Available plans: ${configuredPlans.join(", ")}.`);
+      }
+      const sub = await resolveSubscription(String(args.email));
+      if (!sub) throw new Error(`No active subscription found for ${String(args.email)}.`);
+      const currentPlan = planForPriceId(planPrices, sub.currentPriceId);
+      if (currentPlan === targetPlan) {
+        return { ok: true, plan: targetPlan, status: sub.status, noChange: true, message: `Already on the ${targetPlan} plan.` };
+      }
+      // Change the tier but KEEP the customer's current billing interval — never mix monthly
+      // and yearly. If the target plan has no price at that interval, fail clearly.
+      const newPriceId = priceForPlan(planPrices, targetPlan, sub.currentInterval);
+      if (!newPriceId) {
+        throw new Error(
+          `The ${targetPlan} plan isn't available for ${sub.currentInterval === "year" ? "annual" : "monthly"} billing. A human can help switch the plan.`,
+        );
+      }
+      if (sub.currentPriceId === newPriceId) {
+        return { ok: true, plan: targetPlan, status: sub.status, noChange: true, message: `Already on the ${targetPlan} plan.` };
+      }
+      if (!sub.itemId) throw new Error("Could not resolve the subscription item to update.");
+      // Replace the priced item, preserving the seat quantity, and prorate the change.
+      const body = new URLSearchParams();
+      body.set("items[0][id]", sub.itemId);
+      body.set("items[0][price]", newPriceId);
+      body.set("items[0][quantity]", String(sub.currentQuantity));
+      body.set("proration_behavior", "create_prorations");
+      const updated = await stripeFetch(`/subscriptions/${sub.id}`, { method: "POST", body });
+      return {
+        ok: true,
+        plan: targetPlan,
+        billingInterval: sub.currentInterval === "year" ? "yearly" : "monthly",
+        status: updated.status ?? sub.status,
+        subscriptionId: sub.id,
+      };
+    }
+
+    if (toolKey === "cancel_subscription") {
+      const sub = await resolveSubscription(String(args.email));
+      if (!sub) throw new Error(`No active subscription found for ${String(args.email)}.`);
+      const body = new URLSearchParams({ cancel_at_period_end: "true" });
+      const res = await stripeFetch(`/subscriptions/${sub.id}`, { method: "POST", body });
+      return { ok: true, status: res.status ?? "active", cancelsAt: periodEndIso(sub) };
+    }
+
     throw new Error(`Unknown tool key: ${toolKey}`);
   }
 
@@ -114,6 +322,17 @@ export class StripeAdapter implements ProviderAdapter {
     const base = sandbox ? API_TEST : API_BASE;
     const key = credentials.accessToken ?? credentials.apiKey ?? "";
     if (!key) return { ok: false, error: "No Stripe key provided." };
+    // For a pasted secret/restricted key (sk_/rk_), fail fast on a test-vs-live mismatch —
+    // connecting a LIVE key to the sandbox environment would let the AI issue REAL refunds.
+    // (OAuth access tokens carry no such prefix and skip this check.)
+    if (/_(test|live)_/.test(key)) {
+      if (sandbox && /_live_/.test(key)) {
+        return { ok: false, error: "That's a LIVE Stripe key (…_live_…). Use a test key (sk_test_…) for the sandbox environment." };
+      }
+      if (!sandbox && /_test_/.test(key)) {
+        return { ok: false, error: "That's a TEST Stripe key (…_test_…). Use a live key for the production environment." };
+      }
+    }
     try {
       const auth = `Basic ${Buffer.from(`${key}:`).toString("base64")}`;
       const res = await fetch(`${base}/account`, { headers: { Authorization: auth } });

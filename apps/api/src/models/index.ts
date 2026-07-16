@@ -15,6 +15,7 @@ export { ApiKey, type ApiKeyDocType } from "./ApiKey.js";
 export { PlatformSetting, type PlatformSettingDocType } from "./PlatformSetting.js";
 export { ProcessedWebhook, type ProcessedWebhookDocType } from "./ProcessedWebhook.js";
 export { ExternalSubscription, type ExternalSubscriptionDocType } from "./ExternalSubscription.js";
+export { SchemaMigration, type SchemaMigrationDocType } from "./SchemaMigration.js";
 export { Referral, type ReferralDocType } from "./Referral.js";
 export { Campaign, type CampaignDocType } from "./Campaign.js";
 export { UsageRecord, type UsageRecordDocType } from "./UsageRecord.js";

@@ -89,12 +89,18 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SMTP_HOST` | ✅ | — | SMTP server hostname |
+| `SMTP_HOST` | ✅ | — | SMTP server hostname (e.g. `smtp.gmail.com`) |
 | `SMTP_PORT` | — | `587` | SMTP port |
 | `SMTP_USER` | ✅ | — | SMTP username |
-| `SMTP_PASS` | ✅ | — | SMTP password |
+| `SMTP_PASS` | ✅ | — | SMTP password (for Gmail, a 16-char App Password) |
 | `SMTP_FROM` | ✅ | — | Default "from" address (e.g., `noreply@yourdomain.com`) |
-| `SMTP_SECURE` | — | `false` | Use TLS (`true` for port 465) |
+| `SMTP_SECURE` | — | `false` | Implicit TLS. Port `465` **always** uses TLS regardless of this flag (Changelog 6) |
+
+> **Changelog 6 — the mailer reads these.** `mailer.service.ts` prefers the admin panel's
+> `PlatformSetting.smtp`, but now **falls back to these `SMTP_*` env vars** when it isn't
+> configured (previously the env vars were ignored, so a `.env`-only deploy sent no mail —
+> including OTP identity-verification codes). Port `465` is forced to implicit TLS to avoid
+> the common `SMTP_PORT=465` + `SMTP_SECURE=false` handshake failure.
 
 ### File Storage
 
@@ -132,8 +138,8 @@ Socket.io infrastructure._
 > (`<PROVIDER>_CLIENT_ID` / `_CLIENT_SECRET` for Jira/Atlassian, Calendly, Linear,
 > Shopify, Stripe) moved to a per-org encrypted `OAuthAppConfig` configured in the
 > Integrations UI — they are no longer read from the environment. Only the vault key +
-> the webhook timeout remain here. (Legacy deployments: run
-> `integrations:migrate-oauth-apps` to seed the per-org store from old env values first.)
+> the webhook timeout remain here. (Operators enter these in the Integrations UI; the
+> old env→DB seeding one-off has been retired.)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|

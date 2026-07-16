@@ -56,6 +56,8 @@ type Guardrails = {
   maxAmount?: number;
   maxDaysSincePurchase?: number;
   requireIdentityVerification?: boolean;
+  // requireBillingOwner is no longer operator-configurable — it's enforced in code for
+  // subscription/refund tools. Kept optional here only for backward-compatible reads.
   allowedContactEmails?: string[];
   businessHoursStart?: string;
   businessHoursEnd?: string;
@@ -84,6 +86,19 @@ const PROVIDER_LABELS: Record<string, string> = {
   paddle: "Paddle",
   webhook: "Custom Webhook",
 };
+
+// Generate a sensible default description for a tool from its snake_case key, so the
+// "tells the AI when to use this" field starts pre-filled with a broad, routing-friendly
+// description derived from the tool's key (e.g. `shipment_details` → "Handles any shipment
+// details related customer queries.") instead of an unrelated "talk to sales" placeholder.
+// Deliberately BROAD: the description is the LLM's routing signal, and narrow phrasing
+// ("Looks up the customer's order.") made the model skip the tool for slightly different
+// wording. It's a starting point — the operator edits it to match their exact tool.
+function defaultToolDescription(key?: string | null): string {
+  const words = String(key ?? "").replace(/[_-]+/g, " ").trim().toLowerCase();
+  if (!words) return "";
+  return `Handles any ${words} related customer queries.`;
+}
 
 function StatusBadge({ status }: { status: string }) {
   if (status === "active") {
@@ -116,11 +131,19 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
   // Which controls to show depends on what the tool does.
   const isRefund = /refund/i.test(tool.key);
   const isBooking = tool.key === "book_meeting";
-  const isSubscription = /^(upgrade|downgrade)_subscription$/.test(tool.key);
+  // Includes cancel_subscription: its OTP toggle must ALSO default on — without it, saving
+  // cancel's guardrails (e.g. to set allowed emails) would persist requireIdentityVerification
+  // false and silently disable the OTP the dispatcher otherwise applies by default.
+  const isSubscription = /^(upgrade|downgrade|cancel)_subscription$/.test(tool.key);
+  // High-stakes tools where OTP is ON by default (mirrors the server's OTP_DEFAULT_ON set):
+  // subscription changes and refunds.
+  const otpDefaultOn = isSubscription || isRefund;
 
   const [maxAmount, setMaxAmount] = useState(g.maxAmount != null ? String(g.maxAmount) : "");
   const [maxDays, setMaxDays] = useState(g.maxDaysSincePurchase != null ? String(g.maxDaysSincePurchase) : "");
-  const [requireOtp, setRequireOtp] = useState(g.requireIdentityVerification ?? false);
+  // OTP defaults ON for subscription-change + refund tools (operators can still turn it
+  // off); other tools default off.
+  const [requireOtp, setRequireOtp] = useState(g.requireIdentityVerification ?? otpDefaultOn);
   const [emails, setEmails] = useState((g.allowedContactEmails ?? []).join(", "));
   const [bhStart, setBhStart] = useState(g.businessHoursStart ?? "");
   const [bhEnd, setBhEnd] = useState(g.businessHoursEnd ?? "");
@@ -129,7 +152,6 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
   // Require a real attendee name defaults ON — bookings should capture the
   // customer's real name unless the operator explicitly turns it off.
   const [namedAttendee, setNamedAttendee] = useState(g.requireNamedAttendee ?? true);
-  const [billingOwner, setBillingOwner] = useState(g.requireBillingOwner ?? false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState(false);
@@ -154,7 +176,6 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
         businessDays: days,
         businessHoursTz: bhTz,
         requireNamedAttendee: namedAttendee,
-        requireBillingOwner: billingOwner,
       };
       const res = await fetch(`${API_URL}/integrations/tools/${tool._id}/guardrails`, {
         method: "PATCH",
@@ -233,13 +254,13 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
         </div>
       )}
 
-      {isSubscription && (
-        <div className="mt-2 space-y-1.5">
-          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-600 dark:text-neutral-400">
-            <input type="checkbox" checked={billingOwner} onChange={(e) => setBillingOwner(e.target.checked)} className="h-3 w-3" />
-            Require the billing owner (verified account email)
-          </label>
-        </div>
+      {otpDefaultOn && (
+        <p className="mt-2 rounded bg-neutral-100 px-2 py-1.5 text-[10px] leading-snug text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+          {isRefund ? "Refunds" : "Subscription changes"} require the customer's account email
+          automatically. Email OTP verification is <strong>on by default</strong> for these
+          actions — you can turn it off below, but it's the strongest protection against
+          someone using another person's email.
+        </p>
       )}
 
       <label className="mt-2 block text-[10px] text-neutral-500 dark:text-neutral-400">
@@ -307,7 +328,7 @@ function ToolRegistryRow({
   onSaved?: (v: { displayName: string; description: string; enabledAgentIds: string[] }) => void;
 }) {
   const [name, setName] = useState(tool.displayName ?? tool.key);
-  const [desc, setDesc] = useState(tool.description ?? "");
+  const [desc, setDesc] = useState(tool.description || defaultToolDescription(tool.key));
   const [agentIds, setAgentIds] = useState<string[]>(tool.enabledAgentIds ?? []);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -351,7 +372,7 @@ function ToolRegistryRow({
           className={`${inputCls} min-h-[46px]`}
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
-          placeholder="e.g. Use when the customer wants to talk to sales"
+          placeholder={defaultToolDescription(tool.key) || "Describe when the AI should use this tool"}
         />
       </label>
       <div className="mt-2 text-[10px] text-neutral-500 dark:text-neutral-400">
@@ -810,6 +831,8 @@ function OAuthAppModal({ provider, label, sandbox, onClose }: { provider: string
 function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () => void }) {
   const conn = info.connection!;
   const envLabel = conn.sandbox ? "sandbox" : "production";
+  // Same modal serves Paddle and Stripe (both use the plan→price-id mapping).
+  const providerLabel = PROVIDER_LABELS[info.provider] ?? "billing provider";
   const initial = Object.entries(conn.paddlePlans ?? {}).map(([name, ids]) => ({
     name,
     monthly: ids.monthly ?? "",
@@ -855,7 +878,7 @@ function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () =
         }));
         if (prefill && suggestedRows.length > 0) {
           setRows(suggestedRows);
-          setCatalogNote(`Pre-filled ${suggestedRows.length} plan(s) from your Paddle ${envLabel} catalog — review and Save.`);
+          setCatalogNote(`Pre-filled ${suggestedRows.length} plan(s) from your ${providerLabel} ${envLabel} catalog — review and Save.`);
         } else if (suggestedRows.length === 0) {
           setCatalogNote("No recurring prices found in this Paddle environment.");
         }
@@ -919,15 +942,15 @@ function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () =
     "w-full rounded-md border border-neutral-300 px-2 py-1 text-xs dark:border-neutral-700 dark:bg-neutral-800";
   return (
     <Modal
-      title={unconfigured ? "Finish setup — map your plans" : "Paddle plans"}
-      subtitle={`Map your ${envLabel} plans to their Paddle price ids. The AI uses these for upgrade/downgrade — your own Paddle, your own customers.`}
+      title={unconfigured ? "Finish setup — map your plans" : `${providerLabel} plans`}
+      subtitle={`Map your ${envLabel} plans to their ${providerLabel} price ids. The AI uses these for upgrade/downgrade — your own ${providerLabel}, your own customers.`}
       onClose={onClose}
     >
       <div className="space-y-2">
         {unconfigured && (
           <div className="rounded-md bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
             Until your plans are mapped, the assistant can’t upgrade or downgrade
-            subscriptions{loadingCatalog ? " — loading your Paddle plans…" : ". We’ve pulled your Paddle plans below — review and Save."}
+            subscriptions{loadingCatalog ? ` — loading your ${providerLabel} plans…` : `. We’ve pulled your ${providerLabel} plans below — review and Save.`}
           </div>
         )}
         {/* Real price ids from the operator's Paddle, so each input autocompletes to an
@@ -947,8 +970,8 @@ function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () =
         {rows.map((r, i) => (
           <div key={i} className="grid grid-cols-[1fr_1fr_1fr] gap-1.5">
             <input className={fieldCls} value={r.name} onChange={(e) => setRow(i, { name: e.target.value })} placeholder="pro" />
-            <input list={listId} className={fieldCls} value={r.monthly} onChange={(e) => setRow(i, { monthly: e.target.value })} placeholder="pri_..." />
-            <input list={listId} className={fieldCls} value={r.yearly} onChange={(e) => setRow(i, { yearly: e.target.value })} placeholder="pri_..." />
+            <input list={listId} className={fieldCls} value={r.monthly} onChange={(e) => setRow(i, { monthly: e.target.value })} placeholder={info.provider === "stripe" ? "price_…" : "pri_…"} />
+            <input list={listId} className={fieldCls} value={r.yearly} onChange={(e) => setRow(i, { yearly: e.target.value })} placeholder={info.provider === "stripe" ? "price_…" : "pri_…"} />
           </div>
         ))}
         <div className="flex items-center gap-3">
@@ -965,7 +988,7 @@ function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () =
             disabled={loadingCatalog}
             className="text-[11px] text-neutral-500 hover:underline disabled:opacity-50"
           >
-            {loadingCatalog ? "Loading…" : "Load from Paddle"}
+            {loadingCatalog ? "Loading…" : `Load from ${providerLabel}`}
           </button>
         </div>
         {catalogNote && <p className="text-[11px] text-neutral-500 dark:text-neutral-400">{catalogNote}</p>}
@@ -1078,12 +1101,32 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
   const [apiKey, setApiKey] = useState("");
   const [showKeyForm, setShowKeyForm] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [nameDraft, setNameDraft] = useState(info.connection?.name ?? "");
-  const [descDraft, setDescDraft] = useState(info.connection?.description ?? "");
+  // For a webhook, connection name and tool display name are one value — seed from the
+  // tool's display name (what "Edit webhook" shows); the server keeps both in sync.
+  const [nameDraft, setNameDraft] = useState(
+    (info.provider === "webhook" ? info.connection?.toolDefs?.[0]?.displayName : undefined) ||
+      info.connection?.name ||
+      "",
+  );
+  // For a custom webhook the connection description and the tool description are the SAME
+  // thing (one tool per webhook), so seed the rename field from the tool's description —
+  // the value the "Edit webhook" modal also shows — and the server keeps both in sync.
+  const [descDraft, setDescDraft] = useState(
+    (info.provider === "webhook" ? info.connection?.toolDefs?.[0]?.description : undefined) ||
+      info.connection?.description ||
+      defaultToolDescription(info.connection?.toolDefs?.[0]?.key),
+  );
   const [savingMeta, setSavingMeta] = useState(false);
   const label = PROVIDER_LABELS[info.provider] ?? info.provider;
-  const isOAuth = ["calendly", "stripe", "linear", "jira"].includes(info.provider);
+  // Stripe connects with a plain secret key (sk_test_/sk_live_ or a restricted key) — the
+  // common case is an operator wiring their OWN Stripe, where full Connect OAuth is
+  // unnecessary friction. It stays OAuth-capable server-side, but the dashboard uses the
+  // simple API-key form for it (like Paddle/Cal.com).
+  const isOAuth = ["calendly", "linear", "jira"].includes(info.provider);
   const isPaddle = info.provider === "paddle";
+  // Both Paddle and Stripe expose the subscription tool set and use the same plan→price-id
+  // mapping ("Configure plans"), so the plan-config affordances apply to both.
+  const isBilling = isPaddle || info.provider === "stripe";
 
   const [metaError, setMetaError] = useState<string | null>(null);
   async function saveMeta() {
@@ -1114,12 +1157,12 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
   const [showWebhookEdit, setShowWebhookEdit] = useState(false);
   const [showOAuthApp, setShowOAuthApp] = useState(false);
   const [showPaddlePlans, setShowPaddlePlans] = useState(false);
-  // A Paddle connection with no plan→price-id mapping can't perform upgrade/downgrade —
+  // A Paddle/Stripe connection with no plan→price-id mapping can't perform upgrade/downgrade —
   // surface it and auto-open the setup right after connecting.
   const paddlePlansUnconfigured =
-    isPaddle && info.connection ? Object.keys(info.connection.paddlePlans ?? {}).length === 0 : false;
+    isBilling && info.connection ? Object.keys(info.connection.paddlePlans ?? {}).length === 0 : false;
   useEffect(() => {
-    if (!isPaddle || !info.connection) return;
+    if (!isBilling || !info.connection) return;
     try {
       const flag = sessionStorage.getItem("paddle-setup-plans");
       if (flag && flag === String(info.connection._id)) {
@@ -1130,7 +1173,7 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
       /* sessionStorage unavailable — the warning badge still prompts setup */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPaddle, info.connection?._id]);
+  }, [isBilling, info.connection?._id]);
   // Client-side echoes of what was just saved in the multi-save modals, so that
   // reopening a modal shows the new values instead of the stale server props (the
   // rows remount on reopen). Keyed by toolDef id.
@@ -1297,10 +1340,19 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
     const envLabel = sandbox ? "Sandbox" : "Production";
     // OAuth providers must have the operator's own app configured for THIS environment.
     const oauthNeedsApp = isOAuth && !info.oauthAppConfigured?.[sandbox ? "sandbox" : "production"];
+    // OAuth app credentials (client id/secret) are saved, but the connection isn't live —
+    // either it errored during authorization or was never completed. The operator may need
+    // to FIX wrong credentials, so offer an "Edit credentials" affordance (not just retry).
+    const oauthConfiguredNotConnected = isOAuth && !oauthNeedsApp;
+    const oauthFailed = oauthConfiguredNotConnected && info.connection?.status === "error";
     return (
       <div className="rounded-md border border-dashed border-neutral-300 px-3 py-3 text-center dark:border-neutral-700">
         <p className="text-[11px] text-neutral-500 dark:text-neutral-400">
-          {oauthNeedsApp ? `Set up your ${label} ${envLabel} OAuth app to connect.` : `${envLabel} isn’t connected yet.`}
+          {oauthNeedsApp
+            ? `Set up your ${label} ${envLabel} OAuth app to connect.`
+            : oauthFailed
+              ? `Couldn't connect with the saved credentials. Retry, or edit your Client ID / Secret.`
+              : `${envLabel} isn’t connected yet.`}
         </p>
         <button
           onClick={oauthNeedsApp ? () => setShowOAuthApp(true) : connectSelectedEnv}
@@ -1322,6 +1374,17 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
             `Add ${sandbox ? "sandbox" : "production"} key`
           )}
         </button>
+        {oauthConfiguredNotConnected && (
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() => setShowOAuthApp(true)}
+              className="text-[11px] text-neutral-500 underline hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
+            >
+              Edit credentials
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -1378,10 +1441,11 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
         setConnecting(false);
         return;
       }
-      // For Paddle, flag the just-connected connection so the plan-mapping step opens
-      // automatically after reload — mapping their existing plans during connect is what
-      // prevents the "no plans are configured" failure on the first upgrade/downgrade.
-      if (info.provider === "paddle") {
+      // For a billing provider (Paddle/Stripe), flag the just-connected connection so the
+      // plan-mapping step opens automatically after reload — mapping their existing plans
+      // during connect is what prevents the "no plans configured" failure on the first
+      // upgrade/downgrade.
+      if (isBilling) {
         try {
           const data = (await res.json().catch(() => ({}))) as { connection?: { _id?: string } };
           if (data.connection?._id) sessionStorage.setItem("paddle-setup-plans", String(data.connection._id));
@@ -1632,7 +1696,7 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
           />
           <input
             className="rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-            placeholder="Description — when should the AI use this?"
+            placeholder={defaultToolDescription(wh.toolKey) || "Description — when should the AI use this?"}
             value={wh.toolDescription}
             onChange={(e) => setWh({ ...wh, toolDescription: e.target.value })}
           />
@@ -1701,7 +1765,15 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
           )}
           <input
             className="w-full min-w-0 rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-            placeholder={info.provider === "calcom" ? "cal_live_xxxx…" : "API key"}
+            placeholder={
+              info.provider === "calcom"
+                ? "cal_live_xxxx…"
+                : info.provider === "stripe"
+                  ? "sk_test_… (or a restricted key)"
+                  : info.provider === "paddle"
+                    ? "Paddle API key"
+                    : "API key"
+            }
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             required
@@ -1757,7 +1829,7 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
                 OAuth app
               </button>
             )}
-            {isPaddle && (
+            {isBilling && (
               <button
                 onClick={() => setShowPaddlePlans(true)}
                 className={
@@ -1820,7 +1892,7 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
               </label>
               <textarea
                 className="mt-0.5 min-h-[48px] w-full rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800"
-                placeholder="e.g. Use when the customer wants to talk to sales"
+                placeholder={defaultToolDescription(info.connection?.toolDefs?.[0]?.key) || "Describe when the AI should use this connection"}
                 value={descDraft}
                 onChange={(e) => setDescDraft(e.target.value)}
               />

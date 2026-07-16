@@ -43,6 +43,48 @@ function activeCredsBlob(conn: ConnCredsShape): Parameters<typeof decrypt>[0] | 
   return (slot ?? conn.encryptedCredentials) as Parameters<typeof decrypt>[0] | undefined;
 }
 
+// A broad, routing-friendly default description for a webhook tool, derived from its
+// snake_case key, used when the operator doesn't supply one. The description is AI-facing
+// (it drives tool SELECTION), and deliberately broad — narrow phrasing ("Looks up the
+// customer's order.") made the model skip the tool for slightly different wording, so a
+// tool like `shipment_details` gets "Handles any shipment details related customer
+// queries." Mirrors the dashboard's client-side helper.
+function webhookToolDefaultDescription(key: string): string {
+  const words = String(key ?? "").replace(/[_-]+/g, " ").trim().toLowerCase();
+  if (!words) return "";
+  return `Handles any ${words} related customer queries.`;
+}
+
+// Guardrail defaults seeded when a tool definition is FIRST created. Subscription-CHANGE
+// tools start with email-OTP identity verification ON — a self-asserted contact email
+// alone isn't proof of account ownership. Operators can turn it off per tool in the
+// Guardrails editor (stored as an explicit false, which the dispatcher honours).
+const OTP_DEFAULT_ON_KEYS = new Set([
+  "upgrade_subscription", "downgrade_subscription", "cancel_subscription", "issue_refund", "refund_payment",
+]);
+function seededGuardrails(key: string): Record<string, unknown> {
+  return OTP_DEFAULT_ON_KEYS.has(key) ? { guardrails: { requireIdentityVerification: true } } : {};
+}
+
+// A catalog price row (provider-agnostic) used to pre-fill the plan→price-id mapping.
+type CatalogPrice = { priceId: string; name: string; interval: string; productId: string; productName: string };
+
+// Group recurring prices into a suggested plan→price-id map, keyed by the product name
+// (falling back to the price name minus a trailing "monthly"/"yearly"). Shared by the
+// Paddle and Stripe catalog endpoints.
+function suggestPlanPrices(prices: CatalogPrice[]): Record<string, { monthly?: string; yearly?: string }> {
+  const suggested: Record<string, { monthly?: string; yearly?: string }> = {};
+  for (const p of prices) {
+    if (p.interval === "one_time") continue;
+    const base = (p.productName || p.name.replace(/\b(monthly|yearly|annual|month|year)\b/gi, "")).trim().toLowerCase();
+    if (!base) continue;
+    const entry = (suggested[base] ??= {});
+    if (p.interval === "year") entry.yearly ??= p.priceId;
+    else entry.monthly ??= p.priceId;
+  }
+  return suggested;
+}
+
 // A real JSON Schema is an object with `type:"object"` and a `properties` map.
 function isJsonObjectSchema(v: unknown): v is { type: "object"; properties: Record<string, unknown> } {
   return (
@@ -164,11 +206,11 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     }
   };
 
-  // The operator's own Paddle plan → price-id mapping for the active env (non-secret;
+  // The operator's own Paddle/Stripe plan → price-id mapping for the active env (non-secret;
   // powers the "Configure plans" form). The api key in the same blob is never returned.
   const paddlePlansOf = (conn: (typeof connections)[number]): Record<string, { monthly?: string; yearly?: string }> | undefined => {
     const blob = activeCredsBlob(conn);
-    if (conn.provider !== "paddle" || !blob) return undefined;
+    if ((conn.provider !== "paddle" && conn.provider !== "stripe") || !blob) return undefined;
     try {
       const creds = JSON.parse(
         decrypt(blob),
@@ -180,8 +222,8 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
   };
 
   // For Paddle/Stripe connections, surface the inbound-webhook callback URL the
-  // operator registers in their provider dashboard, and whether a signing secret is
-  // stored (the secret itself is never returned).
+  // operator registers in their provider dashboard, and whether a per-connection signing
+  // secret is stored (the secret itself is never returned).
   const webhookReceiverOf = (conn: (typeof connections)[number]): { callbackUrl: string; hasWebhookSecret: boolean } | undefined => {
     if (conn.provider !== "paddle" && conn.provider !== "stripe") return undefined;
     let hasWebhookSecret = false;
@@ -434,7 +476,7 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
           organizationId: orgId,
           key: String(toolKey),
           displayName: String(toolName ?? toolKey),
-          description: String(toolDescription ?? `Custom webhook tool: ${toolKey}`),
+          description: String(toolDescription ?? "").trim() || webhookToolDefaultDescription(String(toolKey)),
           jsonSchema: schema,
           isActive: true,
           enabledAgentIds: inheritedAgentIds,
@@ -525,6 +567,8 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
               organizationId: orgId,
               ...t,
               enabledAgentIds: [],
+              // Subscription-change tools are seeded with OTP verification ON.
+              ...seededGuardrails(t.key),
             },
           },
           { upsert: true },
@@ -702,6 +746,8 @@ router.get("/:provider/callback", async (req: Request, res: Response) => {
             organizationId: orgId,
             ...t,
             enabledAgentIds: [],
+            // Subscription-change tools are seeded with OTP verification ON.
+            ...seededGuardrails(t.key),
           },
         },
         { upsert: true },
@@ -721,7 +767,7 @@ router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, async (req
   const {
     maxAmount, maxDaysSincePurchase, requireIdentityVerification, allowedContactEmails,
     businessHoursStart, businessHoursEnd, businessDays, businessHoursTz,
-    requireNamedAttendee, requireBillingOwner,
+    requireNamedAttendee,
   } = req.body as Record<string, unknown>;
 
   const guardrails: Record<string, unknown> = {};
@@ -743,7 +789,8 @@ router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, async (req
   }
   if (typeof businessHoursTz === "string" && businessHoursTz.trim()) guardrails.businessHoursTz = businessHoursTz.trim();
   guardrails.requireNamedAttendee = Boolean(requireNamedAttendee);
-  guardrails.requireBillingOwner = Boolean(requireBillingOwner);
+  // requireBillingOwner is no longer accepted from the client — it's enforced in code
+  // (see guardrails.ts ALWAYS_BILLING_OWNER) for subscription/refund tools.
 
   const result = await ToolDefinition.updateOne(
     { _id: req.params.toolDefId, organizationId: orgId },
@@ -879,6 +926,25 @@ router.patch("/:connectionId", requireAuth, requireOrg, async (req: Request, res
       { connectionId: req.params.connectionId },
       { $set: { enabledAgentIds } },
     );
+  }
+
+  // For a custom webhook, the connection name/description ARE the tool's display name and
+  // AI-facing description (one tool per webhook). Sync them onto the ToolDefinition so
+  // "Rename" and "Edit webhook" stay a single value — and so a rename that improves the
+  // description also improves the routing signal the model uses.
+  if (name !== undefined || description !== undefined) {
+    const conn = await Connection.findOne({ _id: req.params.connectionId, organizationId: orgId })
+      .select("provider")
+      .lean();
+    if ((conn as { provider?: string } | null)?.provider === "webhook") {
+      const toolSync: Record<string, unknown> = {};
+      if (name !== undefined) toolSync.displayName = String(name).slice(0, 100);
+      if (description !== undefined) toolSync.description = String(description).slice(0, 500);
+      await ToolDefinition.updateMany(
+        { connectionId: req.params.connectionId, organizationId: orgId },
+        { $set: toolSync },
+      );
+    }
   }
 
   res.json({ ok: true });
@@ -1026,27 +1092,26 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
     return;
   }
 
-  // Read the existing active credentials so we can preserve the stored auth value
-  // (a secret the client never sees) and the input schema when not being changed.
+  // Read the existing ACTIVE-environment credentials so we can preserve the stored auth
+  // value (a secret the client never sees) and the input schema when not being changed.
+  // (Reads the env slot, not the `encryptedCredentials` mirror — the mirror can hold the
+  // OTHER environment's endpoint after an env switch.)
   let existing: { url?: string; method?: string; authHeader?: string; authValue?: string; inputSchema?: unknown } = {};
   try {
-    const parsed = JSON.parse(
-      decrypt(conn.encryptedCredentials as Parameters<typeof decrypt>[0]),
-    ) as { extra?: typeof existing };
+    const parsed = JSON.parse(decrypt(activeCredsBlob(conn)!)) as { extra?: typeof existing };
     existing = parsed.extra ?? {};
   } catch {
     /* start from empty if the current blob can't be read */
   }
 
-  // Only accept a genuine JSON Schema; otherwise keep the existing one (mirrors the
-  // guard in the connect route so a pasted sample response can't break the tool).
-  const looksLikeSchema =
-    inputSchema && typeof inputSchema === "object" &&
-    (inputSchema as { type?: unknown }).type === "object" &&
-    typeof (inputSchema as { properties?: unknown }).properties === "object";
-  const schema = looksLikeSchema
+  // Same schema handling as the CONNECT route: a genuine JSON Schema passes through, a
+  // pasted SAMPLE payload gets a schema inferred from it (so the inline form still
+  // renders), and anything unusable keeps the existing schema.
+  const schema = isJsonObjectSchema(inputSchema)
     ? inputSchema
-    : existing.inputSchema ?? { type: "object", properties: {}, required: [] };
+    : inputSchema && typeof inputSchema === "object" && !Array.isArray(inputSchema) && Object.keys(inputSchema).length > 0
+      ? inferSchemaFromSample(inputSchema as Record<string, unknown>)
+      : existing.inputSchema ?? { type: "object", properties: {}, required: [] };
 
   const credentials = {
     extra: {
@@ -1062,17 +1127,24 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
   const isSandbox = Boolean(conn.sandbox);
   const encrypted = encrypt(JSON.stringify(credentials));
   const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
-  await Connection.updateOne(
-    { _id: conn._id },
-    { $set: { [slot]: encrypted, encryptedCredentials: encrypted } },
-  );
+  const connSet: Record<string, unknown> = { [slot]: encrypted, encryptedCredentials: encrypted };
 
   // Keep the tool definition in sync: the input schema drives the tool the AI sees,
   // and name/description are how the AI decides when to call it. The webhook's tool
   // def is the (single) one attached to this connection.
   const toolSet: Record<string, unknown> = { jsonSchema: schema };
-  if (typeof toolName === "string" && toolName.trim()) toolSet.displayName = toolName.trim().slice(0, 100);
-  if (typeof toolDescription === "string" && toolDescription.trim()) toolSet.description = toolDescription.trim().slice(0, 500);
+  if (typeof toolName === "string" && toolName.trim()) {
+    const nm = toolName.trim().slice(0, 100);
+    toolSet.displayName = nm;
+    // Mirror onto the connection name so "Rename" and "Edit webhook" show one value.
+    connSet.name = nm;
+  }
+  if (typeof toolDescription === "string" && toolDescription.trim()) {
+    const desc = toolDescription.trim().slice(0, 500);
+    toolSet.description = desc;
+    connSet.description = desc;
+  }
+  await Connection.updateOne({ _id: conn._id }, { $set: connSet });
   await ToolDefinition.updateMany(
     { connectionId: conn._id, organizationId: req.orgId },
     { $set: toolSet },
@@ -1089,73 +1161,88 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
 // environment's encrypted credential blob; also updates the plan tools' targetPlan enum
 // so the AI offers the operator's actual plan names.
 // ---- GET /integrations/:connectionId/paddle-catalog ---- read-only list of the
-// operator's OWN Paddle products/prices for the active environment, plus a suggested
-// plan→price-id mapping (grouped by product, monthly/yearly). The "Configure plans"
-// step pre-fills from this so operators map their EXISTING plans instead of hand-typing
-// price ids — which is what prevents the "no plans configured" failure. Price/product
-// ids are integration config, not secrets (they appear in client-side checkout).
+// operator's OWN Paddle/Stripe products/prices for the active environment, plus a suggested
+// plan→price-id mapping (grouped by product, monthly/yearly). The "Configure plans" step
+// pre-fills from this so operators map their EXISTING plans instead of hand-typing price
+// ids — which is what prevents the "no plans configured" failure. Price/product ids are
+// integration config, not secrets (they appear in client-side checkout). The path keeps its
+// legacy `paddle-catalog` name but serves BOTH billing providers.
 router.get("/:connectionId/paddle-catalog", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const conn = await Connection.findOne({
     _id: req.params.connectionId,
     organizationId: req.orgId,
-    provider: "paddle",
+    provider: { $in: ["paddle", "stripe"] },
   }).lean();
   if (!conn) {
-    res.status(404).json({ error: "Paddle connection not found." });
+    res.status(404).json({ error: "Billing connection not found." });
     return;
   }
-  let apiKey = "";
+  let key = "";
   try {
-    apiKey = (JSON.parse(decrypt(activeCredsBlob(conn)!)) as { apiKey?: string }).apiKey ?? "";
+    const creds = JSON.parse(decrypt(activeCredsBlob(conn)!)) as { apiKey?: string; accessToken?: string };
+    key = creds.apiKey ?? creds.accessToken ?? "";
   } catch {
     /* fall through to the no-key error below */
   }
-  if (!apiKey) {
+  if (!key) {
     res.status(400).json({ error: "This connection's active environment has no API key." });
     return;
   }
-  const baseUrl = conn.sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
-  const headers = { Authorization: `Bearer ${apiKey}` };
+  const label = conn.provider === "stripe" ? "Stripe" : "Paddle";
   try {
-    const [pricesRes, productsRes] = await Promise.all([
-      fetch(`${baseUrl}/prices?per_page=100&status=active`, { headers }),
-      fetch(`${baseUrl}/products?per_page=100&status=active`, { headers }),
-    ]);
-    if (!pricesRes.ok) {
-      res.status(502).json({ error: `Paddle returned HTTP ${pricesRes.status} listing prices.` });
-      return;
+    let prices: CatalogPrice[];
+    if (conn.provider === "stripe") {
+      // Stripe: one call to /prices with the product expanded gives name + interval.
+      const headers = { Authorization: `Basic ${Buffer.from(`${key}:`).toString("base64")}` };
+      const pricesRes = await fetch("https://api.stripe.com/v1/prices?limit=100&active=true&expand[]=data.product", { headers });
+      if (!pricesRes.ok) {
+        res.status(502).json({ error: `Stripe returned HTTP ${pricesRes.status} listing prices.` });
+        return;
+      }
+      const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
+      prices = (pricesJson.data ?? []).map((p) => {
+        const interval = (p.recurring as { interval?: string } | null | undefined)?.interval;
+        const product = p.product as { id?: string; name?: string } | string | undefined;
+        const productObj = product && typeof product === "object" ? product : undefined;
+        return {
+          priceId: String(p.id ?? ""),
+          name: String(p.nickname ?? productObj?.name ?? ""),
+          interval: interval === "year" ? "year" : interval === "month" ? "month" : "one_time",
+          productId: productObj?.id ?? (typeof product === "string" ? product : ""),
+          productName: productObj?.name ?? "",
+        };
+      });
+    } else {
+      // Paddle: prices + products (two calls; price carries product_id + billing_cycle).
+      const baseUrl = conn.sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
+      const headers = { Authorization: `Bearer ${key}` };
+      const [pricesRes, productsRes] = await Promise.all([
+        fetch(`${baseUrl}/prices?per_page=100&status=active`, { headers }),
+        fetch(`${baseUrl}/products?per_page=100&status=active`, { headers }),
+      ]);
+      if (!pricesRes.ok) {
+        res.status(502).json({ error: `Paddle returned HTTP ${pricesRes.status} listing prices.` });
+        return;
+      }
+      const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
+      const productsJson = (await productsRes.json().catch(() => ({}))) as { data?: Array<{ id?: string; name?: string }> };
+      const productName = new Map<string, string>();
+      for (const p of productsJson.data ?? []) if (p.id) productName.set(p.id, p.name ?? "");
+      prices = (pricesJson.data ?? []).map((p) => {
+        const cycle = (p.billing_cycle as { interval?: string } | null | undefined)?.interval;
+        const productId = String(p.product_id ?? "");
+        return {
+          priceId: String(p.id ?? ""),
+          name: String(p.name ?? ""),
+          interval: cycle === "year" ? "year" : cycle === "month" ? "month" : "one_time",
+          productId,
+          productName: productName.get(productId) ?? "",
+        };
+      });
     }
-    const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
-    const productsJson = (await productsRes.json().catch(() => ({}))) as { data?: Array<{ id?: string; name?: string }> };
-    const productName = new Map<string, string>();
-    for (const p of productsJson.data ?? []) if (p.id) productName.set(p.id, p.name ?? "");
-
-    const prices = (pricesJson.data ?? []).map((p) => {
-      const cycle = (p.billing_cycle as { interval?: string } | null | undefined)?.interval;
-      const productId = String(p.product_id ?? "");
-      return {
-        priceId: String(p.id ?? ""),
-        name: String(p.name ?? ""),
-        interval: cycle === "year" ? "year" : cycle === "month" ? "month" : "one_time",
-        productId,
-        productName: productName.get(productId) ?? "",
-      };
-    });
-
-    // Suggested mapping: group recurring prices by their product's name (falling back to
-    // the price name minus a trailing "monthly"/"yearly"), one price id per interval.
-    const suggested: Record<string, { monthly?: string; yearly?: string }> = {};
-    for (const p of prices) {
-      if (p.interval === "one_time") continue;
-      const base = (p.productName || p.name.replace(/\b(monthly|yearly|annual|month|year)\b/gi, "")).trim().toLowerCase();
-      if (!base) continue;
-      const entry = (suggested[base] ??= {});
-      if (p.interval === "year") entry.yearly ??= p.priceId;
-      else entry.monthly ??= p.priceId;
-    }
-    res.json({ prices, suggested });
+    res.json({ prices, suggested: suggestPlanPrices(prices) });
   } catch (err) {
-    res.status(502).json({ error: `Couldn't reach Paddle: ${(err as Error).message}` });
+    res.status(502).json({ error: `Couldn't reach ${label}: ${(err as Error).message}` });
   }
 });
 
@@ -1163,10 +1250,10 @@ router.put("/:connectionId/paddle-plans", requireAuth, requireOrg, async (req: R
   const conn = await Connection.findOne({
     _id: req.params.connectionId,
     organizationId: req.orgId,
-    provider: "paddle",
+    provider: { $in: ["paddle", "stripe"] },
   });
   if (!conn) {
-    res.status(404).json({ error: "Paddle connection not found." });
+    res.status(404).json({ error: "Billing connection not found." });
     return;
   }
   const raw = (req.body as { planPrices?: Record<string, { monthly?: string; yearly?: string }> }).planPrices;
@@ -1347,6 +1434,9 @@ async function loadReceiverConnection(
       apiKey,
       planPrices: extra.planPrices,
     },
+    // Per-connection signing secret, configured by the operator in the integrations page.
+    // (Platform-wide env secrets like PADDLE_WEBHOOK_SECRET are ONLY for the platform's own
+    // billing webhook — operator integration callbacks are always per-connection.)
     webhookSecret: extra.webhookSecret,
   };
 }

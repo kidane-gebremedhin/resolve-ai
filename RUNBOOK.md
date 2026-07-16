@@ -97,8 +97,15 @@ Stop with `pnpm dev:infra:stop`. Wipe volumes with `pnpm dev:infra:reset`.
 ## 5. Initialize the database
 
 ```bash
-pnpm db:migrate   # sync Mongoose indexes on all models
+pnpm db:migrate   # syncs Mongoose indexes AND applies any unapplied data migrations
 ```
+
+`db:migrate` is the single migration command. It (1) `syncIndexes()` on every model
+(idempotent) and (2) runs each data migration in `apps/api/src/migrations/` not yet
+recorded in the `schemamigrations` ledger, in order, recording each after it succeeds —
+so re-running only applies what's new. **Run it on every deploy.** To add a migration:
+drop a module in `apps/api/src/migrations/` (`NNN-name.ts` exporting a `Migration`) and
+append it to `src/migrations/index.ts` — no new package script.
 
 The database starts empty — there is no demo seed data. Create your first
 account through the dashboard sign-up flow (or `POST /auth/register` on the API),

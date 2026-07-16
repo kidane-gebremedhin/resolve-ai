@@ -62,6 +62,10 @@ export function requireWidgetSession(
       req.contactSessionId = session._id.toString();
       req.orgId = session.organizationId.toString();
       req.websiteId = session.websiteId.toString();
+      // Expose the raw token so the OTP verify route can match it against the
+      // in-memory OTP store (keyed by this exact token). Without this, req.sessionToken
+      // was undefined and verifyOtp() always failed → every OTP code was rejected.
+      req.sessionToken = token;
       next();
     })
     .catch((err) => {

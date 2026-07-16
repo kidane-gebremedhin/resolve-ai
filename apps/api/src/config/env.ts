@@ -67,6 +67,18 @@ export const env = {
   webhookTimeoutMs: Number(optional("WEBHOOK_TIMEOUT_MS", "10000")),
   // OTP expiry for identity-verification step in high-stakes tool calls (seconds).
   otpExpirySeconds: Number(optional("OTP_EXPIRY_SECONDS", "600")),
+  // SMTP fallback. The mailer prefers the admin panel's stored SMTP
+  // (PlatformSetting.smtp), but falls back to these env vars when it isn't
+  // configured — so credentials placed in .env send mail out of the box.
+  // SMTP_SECURE forces TLS-on-connect (port 465); otherwise STARTTLS is used.
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: Number(optional("SMTP_PORT", "587")),
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    secure: process.env.SMTP_SECURE === "true",
+    from: process.env.SMTP_FROM,
+  },
   // Widget rate limiting (per contact session, in-memory + optional Redis).
   widgetRateLimit: {
     max: Number(optional("WIDGET_RATE_LIMIT_MAX", "30")),

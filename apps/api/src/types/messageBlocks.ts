@@ -2,7 +2,8 @@ export type MessageBlock =
   | CardBlock
   | CarouselBlock
   | FormBlock
-  | LinkPreviewBlock;
+  | LinkPreviewBlock
+  | OtpBlock;
 
 export interface CardBlock {
   type: "card";
@@ -63,4 +64,16 @@ export interface LinkPreviewBlock {
   imageUrl?: string;
   siteName?: string;
   favicon?: string;
+}
+
+// Inline identity-verification challenge. Emitted when a high-stakes tool (e.g. a
+// subscription change) needs email-OTP verification. The widget collects the 6-digit
+// code, submits it to /widget/verify-otp, and on success re-runs `toolKey` with `args`
+// (the original tool call) — which now passes the OTP gate.
+export interface OtpBlock {
+  type: "otp";
+  otpToken: string;
+  toolKey: string;
+  args: Record<string, unknown>;
+  message?: string;
 }

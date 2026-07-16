@@ -549,6 +549,12 @@ export async function generateAiReply(
   customerMessage: string,
   io: IoServer | null,
   currentAttachments?: CurrentAttachment[],
+  // Set when an inline-form / OTP submission ALREADY executed a tool (in widget.routes):
+  // present THAT result and skip the agentic tool loop entirely. Without this, the loop
+  // re-ran over the full history and the model wandered to an unrelated earlier request
+  // (e.g. answered an old "tell me about my laptop" instead of confirming the booking the
+  // customer just submitted), and the result's own rich card was never attached.
+  presentToolResult?: { toolKey: string; result: unknown },
 ): Promise<void> {
   // Guaranteed reply: start from a safe fallback so that even a catastrophic
   // failure below still persists + emits *something* to the customer. This is
@@ -619,6 +625,9 @@ export async function generateAiReply(
     // the key ONCE (duplicate function names would 400 the whole tools array) and the
     // dispatcher tries the primary first, falling back to the next on a hard error.
     const connectionChainByKey = new Map<string, string[]>();
+    // The PRIMARY def's description per key — the same description the offered function
+    // carries; used for the (deduped) prompt-layer tool list.
+    const primaryDescByKey = new Map<string, string>();
     // The operator's configured primary→fallback order per key (connection ids).
     const priorityByKey = new Map<string, string[]>();
     for (const p of (agent.toolPriority ?? []) as { key?: string; connectionIds?: unknown[] }[]) {
@@ -644,7 +653,30 @@ export async function generateAiReply(
         return new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
       });
       const primary = sorted[0]!; // the tool the AI sees (its description/schema)
-      integrationSchemaByKey.set(key, primary.jsonSchema);
+      // When several connections share this key, the model sees ONE schema — but for
+      // plan-change tools each billing provider carries its OWN `targetPlan` enum (its
+      // configured plan names). Offer the UNION of the chain's enums so the model can
+      // request any plan ANY connected provider offers; a call that lands on the wrong
+      // provider throws "Unknown plan …" (a hard error) and falls back down the chain.
+      let offeredSchema: unknown = primary.jsonSchema;
+      if (sorted.length > 1) {
+        const enums = sorted
+          .map((d) => (d.jsonSchema as { properties?: { targetPlan?: { enum?: unknown[] } } } | undefined)
+            ?.properties?.targetPlan?.enum)
+          .filter((e): e is unknown[] => Array.isArray(e) && e.length > 0);
+        if (enums.length > 1) {
+          const union = [...new Set(enums.flat().map(String))];
+          const merged = JSON.parse(JSON.stringify(primary.jsonSchema)) as {
+            properties?: { targetPlan?: { enum?: string[] } };
+          };
+          if (merged?.properties?.targetPlan) {
+            merged.properties.targetPlan.enum = union;
+            offeredSchema = merged;
+          }
+        }
+      }
+      integrationSchemaByKey.set(key, offeredSchema);
+      primaryDescByKey.set(key, primary.description as string);
       integrationGuardrailsByKey.set(key, primary.guardrails as { requireNamedAttendee?: boolean } | undefined);
       if ((primary.connectionId as { provider?: string } | null)?.provider === "webhook") {
         webhookToolKeys.add(key);
@@ -655,7 +687,7 @@ export async function generateAiReply(
         function: {
           name: key,
           description: primary.description,
-          parameters: safeToolParameters(primary.jsonSchema),
+          parameters: safeToolParameters(offeredSchema),
         },
       });
     }
@@ -679,13 +711,22 @@ export async function generateAiReply(
       timeZone: (contactSession as { metadata?: { timeZone?: string } } | null)?.metadata?.timeZone || undefined,
     };
 
+    // Prompt-layer tool list, deduped by key: several connections can expose the same
+    // tool key (Paddle + Stripe subscription tools) but the model is offered ONE function
+    // per key — listing it twice with two descriptions just adds contradictory noise.
+    // Use the PRIMARY's description (the same one the offered function carries).
+    const promptTools: { key: string; description?: string }[] = [...defsByKey.keys()].map((key) => ({
+      key,
+      description: primaryDescByKey.get(key),
+    }));
+
     const systemPrompt = buildSystemPrompt({
       agent,
       organization,
       conversation,
       controls,
-      activeToolKeys: integrationToolDefs.map((td) => td.key),
-      integrationTools: integrationToolDefs.map((td) => ({ key: td.key, description: td.description })),
+      activeToolKeys: [...defsByKey.keys()],
+      integrationTools: promptTools,
       contact,
     });
 
@@ -747,10 +788,19 @@ export async function generateAiReply(
     // agents; the env var (`AI_TEMPERATURE`) is the only sanctioned default.
     const temperature = agent.temperature ?? env.ai.temperature;
 
+    // Present-only mode: a form/OTP submission already ran the tool. Attach its rich card
+    // (booking confirmation, subscription card, …) and SKIP the tool loop, so the model
+    // can only present this result — it can't call another tool or resurface an earlier,
+    // unrelated request from the history.
+    if (presentToolResult) {
+      const blocks = resultToBlocks(presentToolResult.toolKey, presentToolResult.result);
+      if (blocks) accumulatedBlocks.push(...blocks);
+    }
+
     // Tool-calling loop: let the model search KB / signal escalate-resolve.
     // A failure inside the loop must not abort the whole reply — we break out
     // and still attempt a final answer, so the customer always gets a response.
-    for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+    for (let turn = 0; turn < MAX_TOOL_TURNS && !presentToolResult; turn++) {
       let loopResult: LlmCallResult;
       try {
         loopResult = await callLlm({
@@ -939,10 +989,19 @@ export async function generateAiReply(
               contactSessionId: conversation.contactSessionId,
             };
             const chain = connectionChainByKey.get(String(call.name)) ?? [];
+            // A lookup that SUCCEEDS but reports a definite not-found (the adapters'
+            // `{ found: false }` convention — e.g. get_subscription) is a SOFT miss: when
+            // several connections expose this tool (e.g. Stripe primary + Paddle fallback),
+            // the record may live in the OTHER provider — keep walking the chain before
+            // concluding "no records". If every connection misses, the last found:false
+            // result stands (a truthful definite answer).
+            const softMiss = (d: Awaited<ReturnType<typeof dispatchToolCall>>) =>
+              d.ok && (d.result as { found?: boolean } | null)?.found === false;
             let dispatch = await dispatchToolCall(call.name, call.arguments, dispatchCtx, chain[0] || undefined);
             for (let i = 1; i < chain.length; i++) {
-              if (dispatch.ok || dispatch.status !== "error") break;
-              logger.info("[ai] tool primary failed, trying fallback", { tool: call.name, attempt: i });
+              const hardError = !dispatch.ok && dispatch.status === "error";
+              if (!hardError && !softMiss(dispatch)) break; // success or intentional stop (guardrail/OTP/rate-limit)
+              logger.info("[ai] tool primary missed/failed, trying fallback", { tool: call.name, attempt: i });
               dispatch = await dispatchToolCall(call.name, call.arguments, dispatchCtx, chain[i]);
             }
             if (dispatch.ok) {
@@ -957,7 +1016,27 @@ export async function generateAiReply(
             } else if (dispatch.status === "guardrail_blocked") {
               result = JSON.stringify({ blocked: true, reason: dispatch.reason });
             } else if (dispatch.status === "otp_pending") {
-              result = JSON.stringify({ otpRequired: true, message: "Identity verification required. Please check your email for a 6-digit code and submit it to continue." });
+              // Surface an inline OTP challenge: render a code-entry block carrying the
+              // otpToken + this tool's args, so the widget can verify the code and then
+              // re-run the exact tool. Without a block the customer has no way to submit
+              // the code and the action would stall — so OTP must ship WITH its UI.
+              let otpToken = "";
+              try {
+                otpToken = (JSON.parse(dispatch.reason) as { otpToken?: string }).otpToken ?? "";
+              } catch { /* reason wasn't JSON — leave blank */ }
+              if (otpToken) {
+                accumulatedBlocks.push({
+                  type: "otp",
+                  otpToken,
+                  toolKey: call.name,
+                  args: JSON.parse(JSON.stringify(call.arguments)) as Record<string, unknown>,
+                  message: "Enter the 6-digit code we emailed you to confirm it's you.",
+                });
+              }
+              result = JSON.stringify({
+                otpRequired: true,
+                note: "A verification code was emailed to the customer and an inline code-entry form is now shown. STOP and wait for them to enter it — do NOT call the tool again or claim the action is done. Briefly tell them to check their email for the code.",
+              });
             } else if (dispatch.status === "error") {
               result = JSON.stringify({ error: dispatch.error });
             } else {
@@ -1007,8 +1086,9 @@ export async function generateAiReply(
       ...messages,
       {
         role: "system" as const,
-        content:
-          "Now write your final reply to the customer. Be concise and helpful. Do NOT include JSON. Use markdown when it improves clarity — bullet lists for multi-step answers or lists of items, **bold** for key terms — plain prose otherwise.",
+        content: presentToolResult
+          ? `The customer just submitted a form that completed the "${presentToolResult.toolKey}" action — its result is in the last message. Write a short confirmation presenting ONLY that result (e.g. confirm the booking date/time, or the plan change). Do NOT bring up, answer, or reference any earlier or unrelated request from the conversation. Do NOT include JSON. Use markdown sparingly.`
+          : "Now write your final reply to the customer. Be concise and helpful. Do NOT include JSON. Use markdown when it improves clarity — bullet lists for multi-step answers or lists of items, **bold** for key terms — plain prose otherwise.",
       },
     ];
     const metaMessages: ChatMessage[] = [
