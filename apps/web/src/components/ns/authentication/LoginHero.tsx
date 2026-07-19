@@ -44,7 +44,7 @@ const LoginHero = () => {
     <section className="lg:pt-[180px] pt-[120px] lg:pb-[100px] pb-[70px]">
       <div className="main-container">
         <RevealAnimation delay={0.1}>
-          <div className="max-w-[400px] mx-auto bg-background-1 dark:bg-background-6 rounded-[20px] py-14 px-8">
+          <div className="max-w-[480px] mx-auto bg-background-1 dark:bg-background-6 rounded-[20px] py-14 px-8">
             <form className="mb-6" onSubmit={onSubmit}>
               <fieldset className="space-y-2 mb-4">
                 <label htmlFor="email" className="block text-tagline-2 font-medium text-foreground select-none">
@@ -76,6 +76,7 @@ const LoginHero = () => {
                   />
                   <button
                     type="button"
+                    tabIndex={-1}
                     onClick={() => setShowPassword((s) => !s)}
                     className="absolute inset-y-0 right-3 my-auto flex h-fit items-center text-foreground/60 hover:text-foreground"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}
@@ -98,7 +99,7 @@ const LoginHero = () => {
                   </label>
                 </div>
                 <div>
-                  <a href="#" className="text-tagline-2 text-foreground font-medium underline">Forgot password?</a>
+                  <a href="/forgot-password" className="text-tagline-2 text-foreground font-medium underline">Forgot password?</a>
                 </div>
               </div>
               <div className="mt-8">
@@ -112,9 +113,9 @@ const LoginHero = () => {
               </div>
             </form>
             <div>
-              <p className="text-center text-tagline-2 text-foreground font-normal flex items-center justify-center gap-1">
-                Not registered yet?
-                <a href="/register" className="text-tagline-1 font-medium footer-link-v2">Create an Account</a>
+              <p className="text-center text-tagline-2 text-foreground font-normal flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1">
+                <span className="whitespace-nowrap">Not registered yet?</span>
+                <a href="/register" className="whitespace-nowrap text-tagline-1 font-medium footer-link-v2">Create an Account</a>
               </p>
               <div className="py-8 text-center">
                 <p className="text-tagline-2 font-normal text-foreground">Or</p>

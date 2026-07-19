@@ -22,8 +22,9 @@ export function getStorage(): StorageAdapter {
     logger.info("[storage] Using MinIO adapter");
     cached = new MinioAdapter();
   } else {
-    logger.info("[storage] Using local-disk adapter (MinIO env not configured)");
-    cached = new DiskAdapter();
+    const localPath = process.env.STORAGE_LOCAL_PATH;
+    logger.info("[storage] Using local-disk adapter", { path: localPath ?? "uploads/ (default)" });
+    cached = new DiskAdapter(localPath);
   }
   return cached;
 }

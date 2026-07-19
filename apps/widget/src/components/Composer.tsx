@@ -11,6 +11,7 @@ import type { WidgetAttachment } from "../lib/api-client";
 import {
   DocumentIcon,
   FaceSmileIcon,
+  MicrophoneIcon,
   PaperAirplaneIcon,
   PaperClipIcon,
   XMarkIcon,
@@ -41,6 +42,8 @@ type PendingAttachment = {
 export function Composer({
   onSend,
   onAttach,
+  onVoiceMessage,
+  onTyping,
   primaryColor,
   disabled = false,
   placeholder = "Type a message…",
@@ -49,6 +52,11 @@ export function Composer({
   /** Optional — when provided the paperclip button is rendered. Uploads the file
    *  and returns its metadata; the composer queues it as a preview until send. */
   onAttach?: (file: File) => Promise<WidgetAttachment>;
+  /** Optional — when provided the mic button is rendered. Receives a Blob and
+   *  sends it to the voice-message endpoint. */
+  onVoiceMessage?: (blob: Blob) => Promise<void>;
+  /** Called on every keystroke so the parent can emit customer:typing. */
+  onTyping?: () => void;
   primaryColor: string;
   disabled?: boolean;
   placeholder?: string;
@@ -58,6 +66,9 @@ export function Composer({
   const [uploading, setUploading] = useState(false);
   const [pending, setPending] = useState<PendingAttachment[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   // emoji-mart data is fetched on first open and cached for the session.
   const [emojiData, setEmojiData] = useState<unknown>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -125,6 +136,45 @@ export function Composer({
       if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
       return prev.filter((_, i) => i !== index);
     });
+  }
+
+  async function startRecording() {
+    if (!onVoiceMessage || recording || busy) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        audioChunksRef.current = [];
+        setRecording(false);
+        setSending(true);
+        try {
+          await onVoiceMessage(blob);
+        } finally {
+          setSending(false);
+        }
+      };
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setRecording(true);
+    } catch {
+      // Mic permission denied or MediaRecorder unavailable — silently ignore.
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorderRef.current && recording) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
   }
 
   async function toggleEmoji() {
@@ -246,7 +296,7 @@ export function Composer({
       <button
         type="button"
         onClick={() => void toggleEmoji()}
-        disabled={busy}
+        disabled={busy || recording}
         aria-label="Insert emoji"
         aria-expanded={showEmoji}
         className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-800 ${showEmoji ? "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100" : "text-neutral-500 dark:text-neutral-400"}`}
@@ -254,12 +304,33 @@ export function Composer({
         <FaceSmileIcon className="h-[18px] w-[18px]" />
       </button>
 
+      {onVoiceMessage ? (
+        <button
+          type="button"
+          onMouseDown={() => void startRecording()}
+          onMouseUp={stopRecording}
+          onMouseLeave={stopRecording}
+          onTouchStart={() => void startRecording()}
+          onTouchEnd={stopRecording}
+          disabled={busy && !recording}
+          aria-label={recording ? "Recording… release to send" : "Hold to record voice message"}
+          className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-50 ${
+            recording
+              ? "animate-pulse bg-red-500 text-white"
+              : "text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+          }`}
+        >
+          <MicrophoneIcon className="h-[18px] w-[18px]" />
+        </button>
+      ) : null}
+
       <textarea
         ref={textareaRef}
         value={value}
         onChange={(e) => {
           setValue(e.target.value);
           autoResize(e.currentTarget);
+          onTyping?.();
         }}
         onKeyDown={handleKeyDown}
         rows={1}

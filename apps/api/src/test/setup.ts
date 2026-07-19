@@ -11,6 +11,9 @@
 process.env.NODE_ENV = "test";
 process.env.MONGODB_URI ??= "mongodb://placeholder-replaced-in-beforeAll/test";
 process.env.JWT_SECRET ??= "test-secret-32-chars-long-xxxxxx";
+// AES-256 key (32 bytes / 64 hex) so the credentials vault (encrypt/decrypt) works
+// in tests that exercise integration connections.
+process.env.CREDENTIALS_ENCRYPTION_KEY ??= "0".repeat(64);
 process.env.JWT_ACCESS_EXPIRY ??= "15m";
 process.env.JWT_REFRESH_EXPIRY ??= "7d";
 process.env.SESSION_TOKEN_EXPIRY_HOURS ??= "1"; // 1 hour — we assert TTL is in the future + < 2h

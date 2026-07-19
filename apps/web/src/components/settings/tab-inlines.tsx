@@ -6,7 +6,7 @@
 // owns its own tab-state and we want to drive tabs from the new
 // `SettingsShell`. Each tab keeps the same behaviour as before.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Check,
@@ -45,6 +45,8 @@ export type Org = {
     pagination?: {
       pageSize?: number;
     };
+    piiRedaction?: boolean;
+    dataRegion?: string;
     [key: string]: unknown;
   };
 };
@@ -126,6 +128,13 @@ export function AgentInline({ initialAgent }: { initialAgent: Agent | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [agentDefaults, setAgentDefaults] = useState<{ temperature: number; confidenceThreshold: number } | null>(null);
+
+  useEffect(() => {
+    clientApi.get<{ temperature: number; confidenceThreshold: number; model: string }>("/agents/defaults")
+      .then((d) => setAgentDefaults({ temperature: d.temperature, confidenceThreshold: d.confidenceThreshold }))
+      .catch(() => null);
+  }, []);
 
   if (!agent) {
     return (
@@ -222,7 +231,7 @@ export function AgentInline({ initialAgent }: { initialAgent: Agent | null }) {
         <div className="space-y-5">
           <SliderRow
             label="Confidence threshold"
-            value={agent.confidenceThreshold ?? 0.7}
+            value={agent.confidenceThreshold ?? agentDefaults?.confidenceThreshold ?? 0.7}
             min={0}
             max={1}
             step={0.05}
@@ -231,9 +240,9 @@ export function AgentInline({ initialAgent }: { initialAgent: Agent | null }) {
           />
           <SliderRow
             label="Temperature"
-            value={agent.temperature ?? 0.7}
+            value={agent.temperature ?? agentDefaults?.temperature ?? 0.7}
             min={0}
-            max={1}
+            max={2}
             step={0.1}
             format={(v) => v.toFixed(1)}
             onChange={(v) => update("temperature", v)}

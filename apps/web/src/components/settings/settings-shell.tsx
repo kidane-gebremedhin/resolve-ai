@@ -7,14 +7,12 @@
 // behaviour. Security / API / Audit are the new tabs added in this work.
 
 import { useState } from "react";
-import { Bot, Building2, ClipboardList, Code2, Globe, ShieldCheck, Users } from "lucide-react";
+import { Building2, ClipboardList, Code2, ShieldCheck, Users } from "lucide-react";
 import { TwoFactor } from "./two-factor";
 import { ApiKeys, type ApiKeyRow } from "./api-keys";
 import { AuditLog, type AuditItem } from "./audit-log";
 import { GeneralInline } from "./general";
 import {
-  AgentInline,
-  WidgetInline,
   TeamInline,
   ApiInfoInline,
   type Agent,
@@ -22,10 +20,10 @@ import {
   type Org,
 } from "./tab-inlines";
 
+// AI Agent and Web widget live on their own dedicated pages (/app/ai and
+// /app/widget) — they were removed from Settings to avoid duplicate surfaces.
 const TABS = [
   { id: "general", label: "General", icon: Building2 },
-  { id: "agent", label: "AI Agent", icon: Bot },
-  { id: "widget", label: "Web widget", icon: Globe },
   { id: "team", label: "Team", icon: Users },
   { id: "security", label: "Security", icon: ShieldCheck },
   { id: "api", label: "API", icon: Code2 },
@@ -61,7 +59,7 @@ export function SettingsShell({
     <div className="container-page py-8">
       <h1 className="font-display text-2xl font-semibold tracking-tight">Settings</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Configure your AI agent, widget, team, security, and integrations.
+        Manage your organization, team, security, and API access.
       </p>
 
       <div className="mt-8 grid gap-8 md:grid-cols-[200px_1fr]">
@@ -84,8 +82,6 @@ export function SettingsShell({
 
         <div className="space-y-6">
           {tab === "general" && <GeneralInline org={org} />}
-          {tab === "agent" && <AgentInline initialAgent={initialAgent} />}
-          {tab === "widget" && <WidgetInline />}
           {tab === "team" && <TeamInline initialMembers={initialMembers} />}
           {tab === "security" && <TwoFactor initialEnabled={initialTotpEnabled} />}
           {tab === "api" && (

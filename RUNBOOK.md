@@ -97,8 +97,15 @@ Stop with `pnpm dev:infra:stop`. Wipe volumes with `pnpm dev:infra:reset`.
 ## 5. Initialize the database
 
 ```bash
-pnpm db:migrate   # sync Mongoose indexes on all models
+pnpm db:migrate   # syncs Mongoose indexes AND applies any unapplied data migrations
 ```
+
+`db:migrate` is the single migration command. It (1) `syncIndexes()` on every model
+(idempotent) and (2) runs each data migration in `apps/api/src/migrations/` not yet
+recorded in the `schemamigrations` ledger, in order, recording each after it succeeds —
+so re-running only applies what's new. **Run it on every deploy.** To add a migration:
+drop a module in `apps/api/src/migrations/` (`NNN-name.ts` exporting a `Migration`) and
+append it to `src/migrations/index.ts` — no new package script.
 
 The database starts empty — there is no demo seed data. Create your first
 account through the dashboard sign-up flow (or `POST /auth/register` on the API),
@@ -462,6 +469,28 @@ Restart the API. The checkout overlay will now fire real sandbox events end-to-e
 1. Use `mcp__paddle__create_product` + `mcp__paddle__create_price` (or the Paddle dashboard) in both sandbox and production.
 2. Update `.env` (sandbox IDs) and `.env.prod` (production IDs) — both server-side (`PADDLE_PRODUCT_*` / `PADDLE_PRICE_*`) and client-side (`NEXT_PUBLIC_PADDLE_PRODUCT_*` / `NEXT_PUBLIC_PADDLE_PRICE_*`).
 3. Update `apps/api/src/config/plans.ts` with the new plan key and limits.
+
+### 13.5 Operator integration webhooks (their OWN customers' subscriptions)
+
+This is **separate** from platform billing above. When an operator connects **their
+own** Paddle/Stripe (Integrations → Paddle/Stripe) so the widget AI can manage *their
+customers'* subscriptions, they can register a per-connection callback so out-of-band
+plan changes stay in sync:
+
+- Callback URL (shown in Integrations → Paddle → **Configure plans** → "Subscription
+  webhook"): `<API_BASE_URL>/api/v1/integrations/paddle/webhook/<connectionId>` (or
+  `.../stripe/webhook/<connectionId>`).
+- The operator pastes the provider's **signing secret** there; it's stored on the
+  connection and verifies every incoming event's HMAC signature. **No env var** — the
+  secret is per-connection, not the platform-wide `PADDLE_WEBHOOK_SECRET`.
+- Verified `subscription.*` / `customer.subscription.*` events update an
+  `ExternalSubscription` snapshot (see `services/integrations/webhookReceiver.ts`), so
+  the assistant reflects changes the customer/operator made outside the chat and can
+  still answer "what plan am I on?" during a provider API outage.
+- **Plan price ids are per-environment.** Configure them for the environment the
+  connection is actually serving (sandbox vs production). If upgrade/downgrade reports
+  "no plans are configured for this environment", the plans were set on the other env's
+  slot — re-enter them while the connection is on the target environment.
 
 ## 14. Where to go next
 

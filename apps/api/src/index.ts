@@ -1,4 +1,6 @@
 import "express-async-errors";
+import net from "node:net";
+import dns from "node:dns";
 import { createServer } from "node:http";
 import express from "express";
 import cors from "cors";
@@ -12,6 +14,19 @@ import routes from "./routes/index.js";
 import { errorHandler } from "./middleware/error-handler.middleware.js";
 import { attachSocketServer } from "./socket/index.js";
 import { startJobs } from "./jobs/index.js";
+
+// Network hardening: on hosts with broken/absent IPv6 routing, Node's
+// Happy-Eyeballs (`autoSelectFamily`, default-on since Node 20) stalls when it
+// races an unreachable IPv6 address rather than falling back to IPv4 — causing
+// "fetch failed" (ETIMEDOUT) on dual-stack APIs (Google OAuth token exchange,
+// Google APIs, etc.) even though IPv4-only hosts and curl work. Prefer IPv4 and
+// disable the racing so outbound integration/auth calls connect reliably.
+try {
+  dns.setDefaultResultOrder("ipv4first");
+  net.setDefaultAutoSelectFamily(false);
+} catch {
+  /* older/newer Node without these APIs — best effort */
+}
 
 async function main() {
   await connectDb();
@@ -30,7 +45,19 @@ async function main() {
   // Everything else (dashboard/admin, cookie-authed) uses the configured
   // allowlist with credentials.
   app.use(cors({ origin: env.corsOrigins, credentials: true }));
-  app.use(express.json({ limit: "1mb" }));
+  // Capture the raw request body alongside JSON parsing so webhook handlers can
+  // verify provider HMAC signatures (Paddle/Stripe sign the exact bytes). Stashing
+  // it here — rather than mounting a separate raw parser per route — keeps the
+  // global json parser as the single body reader (a second parser would see an
+  // already-consumed stream and yield an empty buffer).
+  app.use(
+    express.json({
+      limit: "1mb",
+      verify: (req, _res, buf) => {
+        (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+      },
+    }),
+  );
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
 
   app.get("/health", async (_req, res) => {

@@ -5,6 +5,8 @@ const websiteSchema = new Schema(
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true },
     name: { type: String, required: true },
     domain: { type: String, required: true, lowercase: true, trim: true },
+    // Operator-authored note about the website (shown in the dashboard list).
+    description: { type: String },
     allowedOrigins: { type: [String], required: true, default: [] },
     isActive: { type: Boolean, required: true, default: true },
   },

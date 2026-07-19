@@ -21,7 +21,9 @@ export class DiskAdapter implements StorageAdapter {
   private readonly root: string;
 
   constructor(root?: string) {
-    this.root = root ?? path.resolve(process.cwd(), "uploads");
+    // Always resolve to absolute so the path-traversal guard (which uses
+    // path.resolve) and path.join produce comparable strings.
+    this.root = path.resolve(root ?? path.join(process.cwd(), "uploads"));
   }
 
   private resolveKey(key: string): { filePath: string; metaPath: string } {

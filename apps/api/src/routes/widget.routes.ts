@@ -11,6 +11,9 @@ import {
   Section,
   Conversation,
   Message,
+  MessageFeedback,
+  ConversationRating,
+  ProactiveTrigger,
 } from "../models/index.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireWidgetSession } from "../middleware/widget-auth.middleware.js";
@@ -19,6 +22,9 @@ import { enforceBudgetLimit } from "../middleware/budget-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { generateAiReply } from "../services/ai/agent.service.js";
+import { widgetRateLimit } from "../middleware/widgetRateLimit.js";
+import { dispatchToolCall } from "../services/integrations/dispatcher.js";
+import Ajv from "ajv";
 import {
   attachmentUpload,
   isAllowedAttachmentMime,
@@ -204,6 +210,11 @@ function widgetInitPayload(
     },
     settings: ctx.settings,
     sections: ctx.sections,
+    // Global feature flags for the widget UI. Voice input is OFF unless the
+    // operator explicitly enables it via ALLOW_WIDGET_VOICE_INPUT=true.
+    features: {
+      voiceInput: process.env.ALLOW_WIDGET_VOICE_INPUT === "true",
+    },
   };
 }
 
@@ -252,6 +263,36 @@ router.get(
       theme: settings?.theme ?? "auto",
       launcherIcon: null,
     });
+  }),
+);
+
+// ---------- GET /widget/triggers ----------
+// Public, unauthenticated, side-effect-free. Returns active proactive triggers
+// for an agent so the embed loader can evaluate conditions client-side.
+// Cache-Control: public, max-age=60 so the trigger list is reloaded at most
+// once per minute across all visitors (the embed caches the result per page load).
+const triggersQuerySchema = z.object({
+  agentId: z.string().regex(/^[0-9a-fA-F]{24}$/, "agentId must be a 24-char hex id"),
+});
+
+router.get(
+  "/triggers",
+  asyncHandler(async (req: Request, res: Response) => {
+    const parsed = triggersQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ValidationError("agentId must be a 24-char hex id.");
+    }
+    const agent = await Agent.findOne({ _id: parsed.data.agentId, isActive: true }).select("_id organizationId");
+    if (!agent) throw new NotFoundError("No active agent for this id.");
+    const triggers = await ProactiveTrigger.find({
+      agentId: agent._id,
+      organizationId: agent.organizationId,
+      isActive: true,
+    })
+      .select("_id conditions conditionLogic message delayMs cooldownMs maxFires")
+      .lean();
+    res.setHeader("Cache-Control", "public, max-age=60");
+    res.json({ triggers });
   }),
 );
 
@@ -417,6 +458,9 @@ router.get(
       },
       settings,
       sections,
+      features: {
+        voiceInput: process.env.ALLOW_WIDGET_VOICE_INPUT === "true",
+      },
     });
   }),
 );
@@ -543,13 +587,25 @@ router.get(
     const items = page.reverse(); // return chronological (oldest -> newest)
     const nextCursor = hasMore ? String(page[0]?._id ?? "") : null;
 
-    res.json({ items, nextCursor });
+    res.json({ items, nextCursor, conversationStatus: conversation.status });
   }),
 );
 
 // ---------- POST /widget/conversations/:id/messages ----------
 // Customer posts a message. We persist immediately, kick off the AI reply in the background,
 // and return the user's message. The assistant reply arrives via Socket.io.
+// coerceTypes so inline-form submissions (all values arrive as strings from the
+// widget's text inputs) validate against numeric/boolean tool schema fields — and
+// are coerced in place to the right JS types before dispatch (e.g. a webhook's
+// `quantity: number` or `expedited: boolean`). Without this, a form for a webhook
+// with non-string fields fails validation and surfaces "Submission failed".
+//
+// strict:false so a tool schema using a standard `format` (e.g. book_meeting's
+// `startTime` is `format: "date-time"`) doesn't make ajv THROW at compile time
+// ("unknown format ... ignored") — we don't register ajv-formats, and an
+// unhandled throw here 500s the submit and shows the customer "Submission failed".
+const ajv = new Ajv({ coerceTypes: true, strict: false });
+
 const sendMessageSchema = z.object({
   content: z.string().min(1).max(8000),
   attachments: z
@@ -564,11 +620,15 @@ const sendMessageSchema = z.object({
       }),
     )
     .optional(),
+  // Inline form submission — bypasses the AI tool loop
+  formPayload: z.record(z.string(), z.unknown()).optional(),
+  toolKey: z.string().optional(),
 });
 
 router.post(
   "/conversations/:id/messages",
   requireWidgetSession,
+  widgetRateLimit,
   enforceMessageQuota,
   enforceBudgetLimit,
   validateBody(sendMessageSchema),
@@ -615,10 +675,215 @@ router.post(
       io.to(`conversation:${conversation._id.toString()}`).emit("message:new", payload);
     }
 
+    // When an inline-form submission executes a tool below, we pass its result to
+    // generateAiReply so the reply PRESENTS that result (with its rich card) and skips
+    // the agentic loop — otherwise the model can wander to an unrelated earlier request.
+    let presentToolResult: { toolKey: string; result: unknown } | undefined;
+
+    // Inline form submission: validate payload against tool schema, execute the
+    // tool ONCE here (with the customer's submitted values), and rewrite the
+    // message so the AI presents THIS result instead of re-calling the tool with
+    // guessed values (important for non-idempotent tools like booking/refund).
+    if (req.body.toolKey && req.body.formPayload && conversation.status === "active") {
+      const { ToolDefinition, Agent } = await import("../models/index.js");
+      const toolKey = req.body.toolKey as string;
+      const formPayload = req.body.formPayload as Record<string, unknown>;
+      const toolDef = await ToolDefinition.findOne({
+        organizationId: req.orgId,
+        key: toolKey,
+        isActive: true,
+      }).lean();
+      if (toolDef?.jsonSchema) {
+        // Validate field TYPES only — not `required`. The inline form intentionally
+        // collects just the fields the customer must supply; other required inputs
+        // (email, eventTypeId/startTime carried as hidden values, org id) are either
+        // merged client-side or authoritatively injected by the dispatcher. Enforcing
+        // the full `required` list here rejected valid submissions with a generic
+        // "Submission failed. Please try again." The dispatcher, guardrails and the
+        // provider adapter still enforce real completeness downstream.
+        const schema = { ...(toolDef.jsonSchema as Record<string, unknown>) };
+        delete (schema as { required?: unknown }).required;
+        // Also drop per-property `enum`s: several connections can share this tool key
+        // (Paddle + Stripe both expose upgrade/downgrade), and THIS def is an arbitrary
+        // match — its plan-name enum would wrongly reject a value the connection that
+        // actually executes (via the chain below) accepts. Validate TYPES only; the
+        // adapters authoritatively validate values ("Unknown plan …") and a hard error
+        // falls through the chain.
+        const props = (schema as { properties?: Record<string, unknown> }).properties;
+        if (props && typeof props === "object") {
+          const loosened: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(props)) {
+            if (v && typeof v === "object" && "enum" in (v as Record<string, unknown>)) {
+              const { enum: _enum, ...rest } = v as Record<string, unknown>;
+              loosened[k] = rest;
+            } else {
+              loosened[k] = v;
+            }
+          }
+          (schema as { properties?: Record<string, unknown> }).properties = loosened;
+        }
+        const validate = ajv.compile(schema);
+        if (!validate(formPayload)) {
+          throw new ValidationError("Form payload failed schema validation.");
+        }
+      }
+      // Same primary→fallback chain the AI tool loop uses. Without it, a form/OTP
+      // submission dispatched to whichever connection the dispatcher picked first —
+      // e.g. Stripe when the customer's subscription lives in Paddle — and its
+      // "no customer found" error surfaced as "the action couldn't be completed",
+      // even though the fallback provider would have succeeded.
+      const dispatchCtx = {
+        organizationId: req.orgId!,
+        agentId: conversation.agentId?.toString() ?? "",
+        conversationId: conversation._id,
+        contactSessionId: req.contactSessionId!,
+      };
+      const agentDoc = conversation.agentId
+        ? await Agent.findById(conversation.agentId).select("toolPriority").lean()
+        : null;
+      const order = (
+        ((agentDoc as { toolPriority?: { key?: string; connectionIds?: unknown[] }[] } | null)?.toolPriority ?? [])
+          .find((p) => p.key === toolKey)?.connectionIds ?? []
+      ).map((c) => String(c));
+      const chainDefs = await ToolDefinition.find({
+        organizationId: req.orgId,
+        key: toolKey,
+        isActive: true,
+        ...(conversation.agentId ? { enabledAgentIds: conversation.agentId } : {}),
+      })
+        .select("connectionId createdAt")
+        .lean();
+      const rank = (id: string) => {
+        const i = order.indexOf(id);
+        return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+      };
+      const chain = chainDefs
+        .filter((d) => d.connectionId)
+        .sort(
+          (a, b) =>
+            rank(String(a.connectionId)) - rank(String(b.connectionId)) ||
+            new Date((a as { createdAt?: Date }).createdAt ?? 0).getTime() -
+              new Date((b as { createdAt?: Date }).createdAt ?? 0).getTime(),
+        )
+        .map((d) => String(d.connectionId));
+      let dispatch = await dispatchToolCall(toolKey, formPayload, dispatchCtx, chain[0] || undefined).catch(() => null);
+      for (let i = 1; i < chain.length; i++) {
+        const hardError = dispatch !== null && !dispatch.ok && dispatch.status === "error";
+        const softMiss = dispatch?.ok === true && (dispatch.result as { found?: boolean } | null)?.found === false;
+        if (dispatch !== null && !hardError && !softMiss) break; // success or intentional stop
+        dispatch = await dispatchToolCall(toolKey, formPayload, dispatchCtx, chain[i]).catch(() => null);
+      }
+      // Identity gate hit on a FORM submission (e.g. an OTP-guarded custom webhook or a
+      // subscription form). The AI tool loop renders the code-entry block itself, but a
+      // form submission bypasses that loop — without this branch the code email went out
+      // while the widget showed NO way to enter it (and typing the digits in chat did
+      // nothing). Persist a deterministic AI message carrying the OTP block — with this
+      // exact toolKey + payload so the post-verify re-run executes the same submission —
+      // and skip the LLM reply for this turn.
+      if (dispatch && !dispatch.ok && dispatch.status === "otp_pending") {
+        let otpToken = "";
+        try {
+          otpToken = (JSON.parse(dispatch.reason) as { otpToken?: string }).otpToken ?? "";
+        } catch {
+          /* reason wasn't JSON — fall through to the generic handling below */
+        }
+        if (otpToken) {
+          const otpText = "For your security, we just emailed you a 6-digit verification code. Enter it below to continue.";
+          const aiMessage = await Message.create({
+            conversationId: conversation._id,
+            organizationId: conversation.organizationId,
+            role: "ai",
+            senderType: "ai",
+            content: otpText,
+            confidence: 1,
+            blocks: [
+              {
+                type: "otp",
+                otpToken,
+                toolKey,
+                args: formPayload,
+                message: "Enter the 6-digit code we emailed you to confirm it's you.",
+              },
+            ],
+          });
+          conversation.lastMessageAt = (aiMessage.createdAt as Date | undefined) ?? new Date();
+          conversation.lastMessagePreview = otpText.slice(0, 140);
+          conversation.messageCount = (conversation.messageCount ?? 0) + 1;
+          await conversation.save();
+          if (io) {
+            const otpPayload = {
+              conversationId: conversation._id.toString(),
+              messageId: aiMessage._id.toString(),
+            };
+            io.to(`org:${conversation.organizationId.toString()}`).emit("message:new", otpPayload);
+            io.to(`conversation:${conversation._id.toString()}`).emit("message:new", otpPayload);
+            io.to(`contact:${conversation.contactSessionId.toString()}`).emit("message:new", otpPayload);
+          }
+          res.status(201).json({ message });
+          return;
+        }
+      }
+      if (dispatch?.ok === false && dispatch.status === "error") {
+        throw new ValidationError("Form submission failed: " + dispatch.error);
+      }
+      // Human-readable summary for the operator inbox + an automated note carrying
+      // the result so the AI acknowledges it and does NOT run the tool again.
+      const human = Object.entries(formPayload)
+        .map(([k, v]) => `${k}: ${String(v)}`)
+        .join(", ");
+      const resultStr = dispatch?.ok
+        ? JSON.stringify(dispatch.result).slice(0, 600)
+        : dispatch?.blocked
+          ? `blocked (${dispatch.reason})`
+          : "no result";
+      const rewritten =
+        `Submitted the ${toolDef?.displayName ?? toolKey} form — ${human}.\n\n` +
+        `[Automated: the ${toolKey} tool already ran with these exact values. Result: ${resultStr}. ` +
+        `Present this result to the customer conversationally; do NOT call ${toolKey} again.]`;
+      message.content = rewritten;
+      await message.save();
+      conversation.lastMessagePreview = `Submitted ${toolDef?.displayName ?? toolKey}`;
+      await conversation.save();
+      // Present-only mode for the reply: only when the tool actually returned a result
+      // (a guardrail block / no-result still goes through the normal reply path).
+      if (dispatch?.ok) presentToolResult = { toolKey, result: dispatch.result };
+    }
+
+    // Abuse detection — check message content against configured patterns.
+    // On match: escalate the conversation, flag the session, skip AI reply.
+    const content = req.body.content as string;
+    const isAbusive = env.abusePatterns.length > 0 && env.abusePatterns.some((re) => re.test(content));
+    if (isAbusive && conversation.status === "active") {
+      await Promise.all([
+        Conversation.updateOne(
+          { _id: conversation._id },
+          { status: "escalated", escalatedAt: new Date() },
+        ),
+        ContactSession.updateOne(
+          { _id: req.contactSessionId },
+          { abuseSuspected: true },
+        ),
+      ]);
+      if (io) {
+        io.to(`org:${conversation.organizationId.toString()}`).emit("conversation:updated", {
+          conversationId: conversation._id.toString(),
+          status: "escalated",
+        });
+      }
+      res.status(201).json({ message });
+      return;
+    }
+
     // Fire-and-forget the AI reply (only while active). It emits its own
     // message:new for the AI message once persisted.
     if (conversation.status === "active" && io) {
-      generateAiReply(conversation, req.body.content as string, io).catch((err) => {
+      generateAiReply(
+        conversation,
+        content,
+        io,
+        req.body.attachments as import("../services/ai/agent.service.js").CurrentAttachment[] | undefined,
+        presentToolResult,
+      ).catch((err) => {
         logger.error("[widget] AI reply failed", {
           conversationId: conversation._id.toString(),
           err: (err as Error).message,
@@ -694,6 +959,263 @@ router.get(
   requireWidgetSession,
   asyncHandler(async (req: Request, res: Response) => {
     await streamStoredAttachment(res, String(req.orgId), req.params.hash);
+  }),
+);
+
+// ---------- POST /widget/messages/:messageId/feedback ----------
+// Upsert a thumbs-up/down rating for a single AI message.
+const feedbackSchema = z.object({
+  rating: z.enum(["up", "down"]),
+  reason: z.string().max(500).optional(),
+});
+
+router.post(
+  "/messages/:messageId/feedback",
+  requireWidgetSession,
+  validateBody(feedbackSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const messageId = String(req.params.messageId);
+    if (!/^[0-9a-fA-F]{24}$/.test(messageId)) throw new ValidationError("Invalid messageId.");
+
+    // Confirm the message belongs to a conversation owned by this session's org.
+    const message = await Message.findOne({ _id: messageId, organizationId: req.orgId }).lean();
+    if (!message) throw new NotFoundError("Message not found.");
+
+    const session = await ContactSession.findOne({ _id: req.contactSessionId }).lean();
+    if (!session) throw new NotFoundError("Session not found.");
+
+    await MessageFeedback.findOneAndUpdate(
+      { messageId },
+      {
+        messageId,
+        conversationId: message.conversationId,
+        organizationId: req.orgId,
+        rating: req.body.rating as "up" | "down",
+        reason: req.body.reason ?? undefined,
+        contactSessionId: req.contactSessionId,
+      },
+      { upsert: true, new: true },
+    );
+
+    res.status(201).json({ ok: true });
+  }),
+);
+
+// ---------- POST /widget/conversations/:id/csat ----------
+// Record a CSAT star rating after resolution.
+const csatSchema = z.object({
+  stars: z.number().int().min(1).max(5),
+  comment: z.string().max(1000).optional(),
+});
+
+router.post(
+  "/conversations/:id/csat",
+  requireWidgetSession,
+  validateBody(csatSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!conversation) throw new NotFoundError("Conversation not found.");
+    if (conversation.status !== "resolved") {
+      throw new ValidationError("CSAT can only be submitted for resolved conversations.");
+    }
+
+    await ConversationRating.findOneAndUpdate(
+      { conversationId: conversation._id },
+      {
+        conversationId: conversation._id,
+        organizationId: req.orgId,
+        stars: req.body.stars as number,
+        comment: req.body.comment ?? undefined,
+        resolvedBy: conversation.resolvedBy ?? "ai",
+      },
+      { upsert: true, new: true },
+    );
+
+    res.status(201).json({ ok: true });
+  }),
+);
+
+// ---------- POST /widget/conversations/:id/proactive ----------
+// Triggered by the embed when a ProactiveTrigger fires. Creates the AI's
+// opening message directly (no customer turn) and emits it via socket so the
+// widget renders it. Also enforces server-side cooldown via ContactSession
+// metadata so multi-device / multi-tab users don't get duplicate fires.
+router.post(
+  "/conversations/:id/proactive",
+  requireWidgetSession,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { triggerId, seedMessage } = req.body as { triggerId?: string; seedMessage?: string };
+    if (!triggerId || !seedMessage) {
+      res.status(400).json({ error: "triggerId and seedMessage are required." });
+      return;
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!conversation) throw new NotFoundError("Conversation not found.");
+
+    // Server-side cooldown: read ContactSession.metadata.proactiveFires[triggerId].
+    const session = await ContactSession.findById(req.contactSessionId).select("metadata");
+    const trigger = await ProactiveTrigger.findById(triggerId).select("cooldownMs").lean();
+    if (session && trigger) {
+      const fires: Record<string, number> = (session.metadata as Record<string, unknown>)?.proactiveFires as Record<string, number> ?? {};
+      const lastFire = fires[triggerId];
+      if (lastFire && Date.now() - lastFire < (trigger.cooldownMs ?? 86_400_000)) {
+        res.status(429).json({ error: "Cooldown active." });
+        return;
+      }
+      // Record the fire time.
+      await ContactSession.updateOne(
+        { _id: req.contactSessionId },
+        { $set: { [`metadata.proactiveFires.${triggerId}`]: Date.now() } },
+      );
+    }
+
+    // Save the proactive greeting as an AI message.
+    const { getIoServer } = await import("../socket/index.js");
+    const io = getIoServer();
+    const message = await Message.create({
+      conversationId: conversation._id,
+      organizationId: req.orgId,
+      role: "ai",
+      senderType: "ai",
+      content: seedMessage,
+    });
+    if (io) {
+      const msgPayload = {
+        conversationId: conversation._id.toString(),
+        messageId: message._id.toString(),
+        message: {
+          _id: message._id.toString(),
+          conversationId: conversation._id.toString(),
+          role: "ai",
+          content: seedMessage,
+          createdAt: (message.createdAt as Date).toISOString(),
+        },
+      };
+      io.to(`org:${req.orgId}`).emit("message:new", msgPayload);
+      // Also deliver to the widget's own socket room so the message appears inline.
+      io.to(`contact:${conversation.contactSessionId.toString()}`).emit("message:new", msgPayload);
+    }
+    res.status(201).json({ ok: true });
+  }),
+);
+
+// ---------- POST /widget/conversations/:id/voice-message ----------
+// Accept a WebM/Opus audio blob from the browser mic, transcribe it via
+// Whisper, save the transcription as a customer message, and fire-and-forget
+// the AI reply. Returns { messageId, transcription } immediately.
+router.post(
+  "/conversations/:id/voice-message",
+  requireWidgetSession,
+  attachmentUpload.single("audio"),
+  asyncHandler(async (req: Request, res: Response) => {
+    if (!req.file) {
+      res.status(400).json({ error: "No audio file — use field name 'audio' (multipart/form-data)." });
+      return;
+    }
+
+    const conversation = await Conversation.findOne({
+      _id: req.params.id,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!conversation) throw new NotFoundError("Conversation not found.");
+    if (conversation.status !== "active") {
+      res.status(400).json({ error: "Conversation is not active." });
+      return;
+    }
+
+    // Transcribe the uploaded audio via STT service.
+    const { transcribe } = await import("../services/voice/stt.service.js");
+    let transcription: string;
+    try {
+      transcription = await transcribe(req.file.buffer, req.file.mimetype);
+    } catch (err) {
+      logger.error("[widget] STT transcription failed", { err: (err as Error).message });
+      res.status(502).json({ error: "Transcription failed — check STT_API_KEY configuration." });
+      return;
+    }
+
+    if (!transcription.trim()) {
+      res.status(400).json({ error: "No speech detected in audio." });
+      return;
+    }
+
+    // Persist transcription as a customer message.
+    const message = await Message.create({
+      conversationId: conversation._id,
+      organizationId: req.orgId,
+      role: "customer",
+      senderType: "contact",
+      senderId: conversation.contactSessionId,
+      content: transcription,
+    });
+
+    conversation.lastMessageAt = message.createdAt as Date;
+    conversation.lastMessagePreview = transcription.slice(0, 140);
+    conversation.messageCount = (conversation.messageCount ?? 0) + 1;
+    await conversation.save();
+
+    const io = (req.app.get("io") ?? null) as Parameters<typeof generateAiReply>[2] | null;
+    if (io) {
+      const payload = {
+        conversationId: conversation._id.toString(),
+        messageId: message._id.toString(),
+      };
+      io.to(`org:${conversation.organizationId.toString()}`).emit("message:new", payload);
+      io.to(`conversation:${conversation._id.toString()}`).emit("message:new", payload);
+    }
+
+    // Fire-and-forget the AI text reply (customers hear it via streaming SSE
+    // exactly as with typed messages).
+    if (io) {
+      generateAiReply(conversation, transcription, io).catch((err) => {
+        logger.error("[widget] voice-message AI reply failed", {
+          conversationId: conversation._id.toString(),
+          err: (err as Error).message,
+        });
+      });
+    }
+
+    res.status(201).json({ messageId: message._id.toString(), transcription });
+  }),
+);
+
+// ---------- POST /widget/verify-otp ----------
+// Customer submits the 6-digit OTP to complete identity verification before
+// a high-stakes integration tool call proceeds.
+router.post(
+  "/verify-otp",
+  requireWidgetSession,
+  asyncHandler(async (req: Request, res: Response) => {
+    const { token: otpToken, otp } = req.body as { token?: string; otp?: string };
+    if (!otpToken || !otp) {
+      res.status(400).json({ error: "token and otp are required." });
+      return;
+    }
+
+    const sessionToken = req.sessionToken;
+    if (!sessionToken) {
+      res.status(401).json({ error: "Missing widget session." });
+      return;
+    }
+    const { verifyOtp } = await import("../services/integrations/otpService.js");
+    const ok = await verifyOtp(sessionToken, String(otpToken), String(otp));
+
+    if (!ok) {
+      res.status(400).json({ error: "Invalid or expired verification code." });
+      return;
+    }
+
+    res.json({ ok: true });
   }),
 );
 

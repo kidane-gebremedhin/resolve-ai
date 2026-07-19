@@ -13,6 +13,8 @@ const contactSessionSchema = new Schema(
     userAgent: { type: String },
     expiresAt: { type: Date, required: true },
     lastActiveAt: { type: Date, required: true, default: () => new Date() },
+    identityVerifiedUntil: { type: Date },
+    abuseSuspected: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

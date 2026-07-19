@@ -29,6 +29,16 @@
 
 type Position = "bottom-right" | "bottom-left" | "centered";
 
+interface ProactiveTrigger {
+  _id: string;
+  conditions: Array<{ type: string; params: Record<string, unknown> }>;
+  conditionLogic: "AND" | "OR";
+  message: string;
+  delayMs: number;
+  cooldownMs: number;
+  maxFires: number;
+}
+
 interface HostConfig {
   type: "csb:host-config";
   url: string;
@@ -48,6 +58,7 @@ interface IncomingMessage {
 const STYLE_ID = "csb-widget-style";
 const IFRAME_ID = "csb-widget-iframe";
 const LAUNCHER_ID = "csb-widget-launcher";
+const BADGE_ID = "csb-unread-badge";
 
 // Launcher icons. Heroicons (https://heroicons.com) paths inlined so the embed
 // bundle stays dependency-free. Open icon = `chat-bubble-bottom-center-text`
@@ -57,6 +68,87 @@ const CHAT_ICON_SVG =
 const CLOSE_ICON_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 18 18 6M6 6l12 12"/></svg>';
 
+// ---- Proactive notification sound -----------------------------------------
+// A proactive message auto-opens the widget WITHOUT any interaction inside the
+// iframe, so the iframe's own AudioContext is still suspended and its beep is
+// muted by the browser autoplay policy. The embed runs in the HOST page, which
+// usually already has user activation (the visitor has been browsing/clicking),
+// so we play the beep here instead — that's what lets it sound on auto-open.
+// The context is primed on the first gesture anywhere on the host page.
+let embedAudioCtx: AudioContext | null = null;
+// Set when a proactive beep was requested while audio was still locked (no user
+// gesture yet). The browser forbids sound until the visitor's first real
+// click/tap/keypress; we fire the queued beep the very instant that happens —
+// the earliest moment sound is physically allowed. (Synthetic clicks can't help:
+// browsers only accept `isTrusted` gestures for the autoplay unlock.)
+let pendingProactiveBeep = false;
+function emitBeepTones(ctx: AudioContext): void {
+  const now = ctx.currentTime;
+  const tone = (freq: number, at: number) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, at);
+    gain.gain.setValueAtTime(0, at);
+    gain.gain.linearRampToValueAtTime(0.05, at + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.08);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(at);
+    osc.stop(at + 0.1);
+  };
+  tone(880, now);
+  tone(1320, now + 0.09);
+}
+function flushPendingBeep(): void {
+  if (pendingProactiveBeep && embedAudioCtx && embedAudioCtx.state === "running") {
+    pendingProactiveBeep = false;
+    try {
+      emitBeepTones(embedAudioCtx);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+function primeEmbedAudio(): void {
+  const Ctor =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctor) return;
+  const unlock = () => {
+    try {
+      if (!embedAudioCtx) embedAudioCtx = new Ctor();
+      if (embedAudioCtx.state === "suspended") {
+        void embedAudioCtx.resume().then(flushPendingBeep).catch(() => undefined);
+      } else {
+        flushPendingBeep();
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+  // Create eagerly (may start suspended) + resume on first gesture.
+  unlock();
+  const opts = { capture: true, passive: true } as const;
+  for (const ev of ["pointerdown", "touchstart", "keydown", "scroll"]) {
+    window.addEventListener(ev, unlock, opts);
+  }
+}
+function playProactiveBeep(): void {
+  try {
+    if (!embedAudioCtx) return;
+    if (embedAudioCtx.state === "running") {
+      emitBeepTones(embedAudioCtx);
+      return;
+    }
+    // Audio still locked — queue it and try to resume (works only once a real
+    // gesture has happened). flushPendingBeep() fires it the moment that occurs.
+    pendingProactiveBeep = true;
+    void embedAudioCtx.resume().then(flushPendingBeep).catch(() => undefined);
+  } catch {
+    /* audio is best-effort */
+  }
+}
+
 (async function bootstrap(): Promise<void> {
   const currentScript = (document.currentScript as HTMLScriptElement | null) ?? null;
   if (!currentScript) {
@@ -64,16 +156,30 @@ const CLOSE_ICON_SVG =
     return;
   }
 
+  // Prime the host-page audio context so a proactive beep can sound on auto-open.
+  primeEmbedAudio();
+
   const ds = currentScript.dataset;
-  // Widget origin: explicit data-widget-url wins, else the build-time
-  // VITE_WIDGET_URL. No host is hardcoded; if neither is set we abort below.
+  // Config can arrive two ways:
+  //  1. `window.ChataxisConfig = { apiBase, websiteId, agentId, domain, widgetUrl }`
+  //     — the copy-paste snippet the dashboard generates (Websites → Embed).
+  //  2. `data-*` attributes on the <script> tag — the legacy/manual form.
+  // data-* wins when present; otherwise fall back to ChataxisConfig. We read the
+  // global (not just currentScript) because the snippet injects widget.js async,
+  // so `document.currentScript` is the injected tag with no attributes on it.
+  const cfg =
+    ((window as unknown as { ChataxisConfig?: Record<string, string | undefined> }).ChataxisConfig) ?? {};
+
+  // Widget origin: explicit data-widget-url / ChataxisConfig.widgetUrl wins, else
+  // the build-time VITE_WIDGET_URL. No host is hardcoded; if none set we abort.
   const widgetUrl =
     ds.widgetUrl ??
+    cfg.widgetUrl ??
     (typeof import.meta !== "undefined" && import.meta.env?.VITE_WIDGET_URL) ??
     "";
-  const agentKey = ds.agent ?? ds.agentId ?? "";
+  const agentKey = ds.agent ?? ds.agentId ?? cfg.agentId ?? cfg.agent ?? "";
   if (!agentKey) {
-    console.warn("[csb-widget] missing data-agent / data-agent-id; aborting.");
+    console.warn("[csb-widget] missing agentId (data-agent / data-agent-id / ChataxisConfig.agentId); aborting.");
     return;
   }
   if (!widgetUrl) {
@@ -93,6 +199,7 @@ const CLOSE_ICON_SVG =
   // then build-time env, then fall back to the widget origin (and warn).
   const apiUrl =
     ds.apiUrl ??
+    cfg.apiBase ??
     (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) ??
     "";
   let apiOrigin: string;
@@ -107,7 +214,10 @@ const CLOSE_ICON_SVG =
 
   // Fetch saved appearance by agentId so launcher styling reflects the operator's
   // studio settings WITHOUT re-copying the snippet. data-* attributes still win.
-  const fetched = await fetchAppearance(apiOrigin, agentKey);
+  const [fetched, triggers] = await Promise.all([
+    fetchAppearance(apiOrigin, agentKey),
+    fetchTriggers(apiOrigin, agentKey),
+  ]);
 
   const position = normalizePosition(ds.position ?? fetched?.position);
   const primaryColor = ds.primaryColor ?? fetched?.primaryColor ?? "";
@@ -122,8 +232,12 @@ const CLOSE_ICON_SVG =
   params.set("agentId", agentKey);
   if (theme) params.set("theme", theme);
   if (primaryColor) params.set("primaryColor", primaryColor);
+  // Domain is only a fallback resolver (the widget resolves by agentId first).
+  // Prefer the operator-configured website domain from ChataxisConfig; otherwise
+  // use the embedding page's hostname.
   try {
-    params.set("domain", window.location.hostname);
+    const domain = cfg.domain ?? window.location.hostname;
+    if (domain) params.set("domain", domain);
   } catch {
     /* sandboxed contexts: ignore */
   }
@@ -133,9 +247,72 @@ const CLOSE_ICON_SVG =
   if (primaryColor) launcher.style.background = primaryColor;
   document.body.appendChild(launcher);
 
+  // Inject unread badge into launcher (absolute-positioned at top-right).
+  // The launcher is position:fixed so its children can be position:absolute.
+  const badge = document.createElement("div");
+  badge.id = BADGE_ID;
+  badge.setAttribute("aria-live", "polite");
+  badge.setAttribute("aria-label", "Unread messages");
+  Object.assign(badge.style, {
+    position: "absolute",
+    top: "-5px",
+    right: "-5px",
+    minWidth: "18px",
+    height: "18px",
+    borderRadius: "9999px",
+    background: "#ef4444",
+    color: "#fff",
+    fontSize: "10px",
+    fontWeight: "700",
+    display: "none",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "0 4px",
+    pointerEvents: "none",
+    lineHeight: "1",
+    boxSizing: "border-box",
+  });
+  launcher.style.overflow = "visible";
+  launcher.appendChild(badge);
+
+  let unreadCount = 0;
+
+  function showBadge(count: number): void {
+    unreadCount = count;
+    badge.textContent = String(count > 99 ? "99+" : count);
+    badge.style.display = "flex";
+  }
+
+  function hideBadge(): void {
+    unreadCount = 0;
+    badge.style.display = "none";
+  }
+
   let iframe: HTMLIFrameElement | null = null;
   let initialised = false;
   let isOpen = false;
+  // Once the visitor has opened the widget (manually or via a proactive nudge),
+  // we stop firing further proactive triggers — re-popping the widget after the
+  // visitor has already engaged is intrusive.
+  let hasOpenedOnce = false;
+  let pendingProactivePayload: { triggerId: string; message: string } | null = null;
+
+  // Hide the panel WITHOUT `display:none`. A display:none iframe has its event loop
+  // (and its Socket.io connection) suspended/throttled by the browser, so live
+  // messages that arrive while the widget is collapsed are never received — the
+  // unread badge then only appears after a page reload (which re-fetches). Keeping
+  // the iframe rendered but `visibility:hidden` + non-interactive keeps the socket
+  // alive so unread counting works live while collapsed.
+  function hidePanel(el: HTMLIFrameElement): void {
+    el.style.display = "block";
+    el.style.visibility = "hidden";
+    el.style.pointerEvents = "none";
+  }
+  function showPanel(el: HTMLIFrameElement): void {
+    el.style.display = "block";
+    el.style.visibility = "visible";
+    el.style.pointerEvents = "auto";
+  }
 
   function ensureIframe(): HTMLIFrameElement {
     if (iframe) return iframe;
@@ -146,6 +323,9 @@ const CLOSE_ICON_SVG =
     iframe.setAttribute("allow", "clipboard-write; microphone; autoplay");
     iframe.setAttribute("aria-label", "Customer support chat");
     iframe.dataset.position = position;
+    // Start hidden (but alive) so the widget can boot, keep its socket open, and
+    // post live unread counts without showing the panel.
+    hidePanel(iframe);
     document.body.appendChild(iframe);
     return iframe;
   }
@@ -162,8 +342,12 @@ const CLOSE_ICON_SVG =
 
   function openWidget(): void {
     const el = ensureIframe();
-    el.style.display = "block";
+    showPanel(el);
+    hasOpenedOnce = true;
     setLauncherOpenState(true);
+    hideBadge();
+    // Notify the widget it's now visible so it can reset its unread counter.
+    el.contentWindow?.postMessage({ type: "csb:widget-opened" }, widgetOrigin);
     // On phones the panel is fullscreen and the widget shows its own top-right
     // ✕ (posts csb:close); hide the floating launcher while open so there isn't
     // a redundant close control. On desktop the launcher stays (toggles to ✕).
@@ -171,7 +355,13 @@ const CLOSE_ICON_SVG =
   }
 
   function closeWidget(): void {
-    if (iframe) iframe.style.display = "none";
+    if (iframe) {
+      // Notify the widget it's now hidden FIRST (while it's still fully alive) so it
+      // reliably flips to "collapsed" and starts accumulating unread, THEN visually
+      // hide the (still-running) panel.
+      iframe.contentWindow?.postMessage({ type: "csb:widget-closed" }, widgetOrigin);
+      hidePanel(iframe);
+    }
     setLauncherOpenState(false);
     // Restore the launcher (CSS controls its real display) so it's tappable to
     // reopen — needed after it was hidden while open on a phone.
@@ -192,6 +382,14 @@ const CLOSE_ICON_SVG =
       case "csb:ready": {
         initialised = true;
         sendHostConfig();
+        // Re-deliver any proactive trigger that fired before the widget was ready
+        if (pendingProactivePayload && iframe?.contentWindow) {
+          iframe.contentWindow.postMessage(
+            { type: "csb:proactive", ...pendingProactivePayload },
+            widgetOrigin,
+          );
+          pendingProactivePayload = null;
+        }
         break;
       }
       case "csb:request-config": {
@@ -219,6 +417,15 @@ const CLOSE_ICON_SVG =
       }
       case "csb:open": {
         openWidget();
+        break;
+      }
+      case "csb:unread": {
+        // Widget reports how many messages arrived while hidden.
+        const count = typeof (data as Record<string, unknown>).count === "number"
+          ? (data as Record<string, unknown>).count as number
+          : 0;
+        if (count === 0) hideBadge();
+        else if (!isOpen) showBadge(count);
         break;
       }
       default:
@@ -270,6 +477,19 @@ const CLOSE_ICON_SVG =
     }
   });
   mo.observe(document.body, { childList: true });
+
+  // Eagerly create and boot the iframe (hidden) so the widget can report the
+  // initial unread count on page load without waiting for the user to open it.
+  ensureIframe();
+
+  // Set up proactive triggers after the embed is fully initialised.
+  if (triggers.length > 0) {
+    setupTriggers(triggers, agentKey, widgetOrigin, () => {
+      if (!isOpen) openWidget();
+      // Suppress further proactive triggers once the widget is open OR has been
+      // opened/engaged at any point this session.
+    }, () => isOpen || hasOpenedOnce, (payload) => { pendingProactivePayload = payload; });
+  }
 })();
 
 function normalizePosition(raw: string | undefined): Position {
@@ -306,6 +526,175 @@ async function fetchAppearance(apiOrigin: string, agentKey: string): Promise<App
     return (await res.json()) as Appearance;
   } catch {
     return null;
+  }
+}
+
+async function fetchTriggers(apiOrigin: string, agentKey: string): Promise<ProactiveTrigger[]> {
+  try {
+    const url = `${apiOrigin}/api/v1/widget/triggers?agentId=${encodeURIComponent(agentKey)}`;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2500);
+    const res = await fetch(url, { signal: ctrl.signal, credentials: "omit" });
+    clearTimeout(timer);
+    if (!res.ok) return [];
+    const data = (await res.json()) as { triggers?: ProactiveTrigger[] };
+    return data.triggers ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function evalCondition(
+  condition: ProactiveTrigger["conditions"][number],
+  startTime: number,
+): boolean {
+  const params = condition.params ?? {};
+  switch (condition.type) {
+    case "time_on_page": {
+      const ms = typeof params.ms === "number" ? params.ms : Number(params.seconds ?? 0) * 1000;
+      return Date.now() - startTime >= ms;
+    }
+    case "scroll_depth": {
+      const pct = typeof params.percent === "number" ? params.percent : 50;
+      const el = document.documentElement;
+      const scrolled = ((el.scrollTop + el.clientHeight) / el.scrollHeight) * 100;
+      return scrolled >= pct;
+    }
+    case "exit_intent": {
+      // Evaluated via mouseleave; condition always passes when the listener fires.
+      return true;
+    }
+    case "url_match": {
+      const pattern = typeof params.pattern === "string" ? params.pattern : "";
+      try {
+        return new RegExp(pattern).test(window.location.href);
+      } catch {
+        return window.location.href.includes(pattern);
+      }
+    }
+    case "element_hover": {
+      // Evaluated via mouseover on the selector; condition always passes when fired.
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+function cooldownKey(triggerId: string): string {
+  return `csb:trigger:${triggerId}`;
+}
+
+function isOnCooldown(trigger: ProactiveTrigger): boolean {
+  try {
+    const stored = localStorage.getItem(cooldownKey(trigger._id));
+    if (!stored) return false;
+    return Date.now() - Number(stored) < trigger.cooldownMs;
+  } catch {
+    return false;
+  }
+}
+
+function markFired(trigger: ProactiveTrigger): void {
+  try {
+    localStorage.setItem(cooldownKey(trigger._id), String(Date.now()));
+  } catch {
+    // Private browsing / storage quota — best effort.
+  }
+}
+
+function setupTriggers(
+  triggers: ProactiveTrigger[],
+  _agentKey: string,
+  widgetOrigin: string,
+  openFn: () => void,
+  isOpenFn: () => boolean,
+  onProactiveFire?: (payload: { triggerId: string; message: string }) => void,
+): void {
+  const startTime = Date.now();
+  const fired = new Set<string>();
+
+  function fireTrigger(trigger: ProactiveTrigger): void {
+    if (fired.has(trigger._id)) return;
+    if (isOnCooldown(trigger)) return;
+    // Don't interrupt an already-open widget session.
+    if (isOpenFn()) return;
+    fired.add(trigger._id);
+    markFired(trigger);
+    // openFn opens the widget; the suppression guard (isOpenFn) prevents this
+    // from re-firing once the visitor has already opened/engaged the widget.
+    openFn();
+    // Beep from the host page (has user activation) so it's audible on auto-open.
+    playProactiveBeep();
+    const payload = { triggerId: trigger._id, message: trigger.message };
+    // Buffer so csb:ready can re-deliver if the iframe isn't loaded yet.
+    onProactiveFire?.(payload);
+    // Notify the widget iframe to show the proactive message.
+    const el = document.getElementById(IFRAME_ID) as HTMLIFrameElement | null;
+    el?.contentWindow?.postMessage(
+      { type: "csb:proactive", ...payload },
+      widgetOrigin,
+    );
+  }
+
+  function checkAndFire(trigger: ProactiveTrigger): void {
+    if (fired.has(trigger._id) || isOnCooldown(trigger)) return;
+    const results = trigger.conditions.map((c) => evalCondition(c, startTime));
+    const passes =
+      trigger.conditionLogic === "OR"
+        ? results.some(Boolean)
+        : results.every(Boolean);
+    if (passes) {
+      if (trigger.delayMs > 0) {
+        setTimeout(() => fireTrigger(trigger), trigger.delayMs);
+      } else {
+        fireTrigger(trigger);
+      }
+    }
+  }
+
+  for (const trigger of triggers) {
+    // time_on_page: set a timer for the threshold.
+    const timeCondition = trigger.conditions.find((c) => c.type === "time_on_page");
+    if (timeCondition) {
+      const ms =
+        typeof timeCondition.params.ms === "number"
+          ? timeCondition.params.ms
+          : Number(timeCondition.params.seconds ?? 0) * 1000;
+      if (ms > 0) {
+        setTimeout(() => checkAndFire(trigger), ms);
+      }
+    }
+
+    // scroll_depth: check on scroll.
+    if (trigger.conditions.some((c) => c.type === "scroll_depth")) {
+      window.addEventListener("scroll", () => checkAndFire(trigger), { passive: true });
+    }
+
+    // exit_intent: mouseleave on document element.
+    if (trigger.conditions.some((c) => c.type === "exit_intent")) {
+      document.documentElement.addEventListener("mouseleave", (e) => {
+        if ((e as MouseEvent).clientY <= 0) checkAndFire(trigger);
+      });
+    }
+
+    // url_match: evaluate immediately (page already loaded).
+    if (trigger.conditions.some((c) => c.type === "url_match")) {
+      checkAndFire(trigger);
+    }
+
+    // element_hover: attach mouseover to the selector.
+    const hoverCondition = trigger.conditions.find((c) => c.type === "element_hover");
+    if (hoverCondition) {
+      const selector = typeof hoverCondition.params.selector === "string"
+        ? hoverCondition.params.selector
+        : "";
+      if (selector) {
+        document.addEventListener("mouseover", (e) => {
+          if ((e.target as Element)?.closest(selector)) checkAndFire(trigger);
+        });
+      }
+    }
   }
 }
 

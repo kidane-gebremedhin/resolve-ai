@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import mongoose from "mongoose";
 import { Organization, User, Membership } from "../models/index.js";
@@ -127,6 +128,42 @@ export async function loginWithCredentials(email: string, password: string) {
     membership?.organizationId?.toString(),
     membership?.role as "owner" | "admin" | "agent" | "viewer" | undefined,
   );
+}
+
+// ---- Password reset -------------------------------------------------------
+// Request a reset: mint a random token, store only its SHA-256 hash + a short
+// expiry, and email the user a link. Returns the RAW token to the caller (the
+// route) only so tests can drive the flow; the route itself emails it, never
+// returns it. Always resolves silently for unknown emails / OAuth-only accounts —
+// we must NOT reveal whether an email is registered (account enumeration).
+const RESET_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function hashResetToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+export async function requestPasswordReset(email: string): Promise<{ token: string; user: { email: string; name: string } } | null> {
+  const user = await User.findOne({ email: email.toLowerCase().trim() });
+  // Only credentials users can reset a password (Google users have no passwordHash).
+  if (!user || user.provider !== "credentials") return null;
+  const token = crypto.randomBytes(32).toString("hex");
+  user.passwordResetTokenHash = hashResetToken(token);
+  user.passwordResetExpires = new Date(Date.now() + RESET_TTL_MS);
+  await user.save();
+  return { token, user: { email: user.email, name: user.name } };
+}
+
+export async function resetPassword(token: string, newPassword: string): Promise<void> {
+  if (!token || typeof token !== "string") throw new UnauthorizedError("Invalid or expired reset link.");
+  const user = await User.findOne({
+    passwordResetTokenHash: hashResetToken(token),
+    passwordResetExpires: { $gt: new Date() },
+  });
+  if (!user) throw new UnauthorizedError("This reset link is invalid or has expired.");
+  user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_COST);
+  user.passwordResetTokenHash = undefined;
+  user.passwordResetExpires = undefined;
+  await user.save();
 }
 
 function issueTokens(

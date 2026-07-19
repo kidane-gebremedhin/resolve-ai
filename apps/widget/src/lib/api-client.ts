@@ -46,6 +46,11 @@ export type WidgetSection = {
   order?: number;
 };
 
+export type WidgetFeatures = {
+  /** Whether the mic / voice-input button is shown (ALLOW_WIDGET_VOICE_INPUT). */
+  voiceInput?: boolean;
+};
+
 export type InitResponse = {
   sessionId: string;
   sessionToken: string;
@@ -53,6 +58,7 @@ export type InitResponse = {
   agent: WidgetAgent;
   settings: WidgetSettings;
   sections: WidgetSection[];
+  features?: WidgetFeatures;
   /** ISO country resolved from the visitor's IP (offline geo). Defaults the phone field. */
   countryCode?: string;
 };
@@ -61,6 +67,7 @@ export type SettingsResponse = {
   agent: WidgetAgent;
   settings: WidgetSettings;
   sections: WidgetSection[];
+  features?: WidgetFeatures;
 };
 
 export type ConversationStatus = "active" | "escalated" | "resolved" | "expired";
@@ -86,6 +93,18 @@ export type WidgetAttachment = {
   extractedText?: string;
 };
 
+export type MessageSource = {
+  sourceId: string;
+  sourceTitle: string;
+  url?: string;
+  score: number;
+};
+
+// Structured UI blocks rendered alongside or instead of prose content.
+// Mirror of apps/api/src/types/messageBlocks.ts — kept as `unknown[]` here
+// so the widget doesn't import server types directly.
+export type MessageBlock = Record<string, unknown> & { type: string };
+
 export type WidgetMessage = {
   _id: string;
   conversationId: string;
@@ -93,11 +112,43 @@ export type WidgetMessage = {
   content: string;
   createdAt: string;
   attachments?: WidgetAttachment[];
+  sources?: MessageSource[];
+  quickReplies?: string[];
+  blocks?: MessageBlock[];
 };
+
+export type FeedbackRating = "up" | "down";
+
+export function submitFeedback(
+  sessionToken: string,
+  messageId: string,
+  rating: FeedbackRating,
+  reason?: string,
+): Promise<void> {
+  return request<void>(`/widget/messages/${encodeURIComponent(messageId)}/feedback`, {
+    method: "POST",
+    body: { rating, reason },
+    sessionToken,
+  });
+}
+
+export function submitCsat(
+  sessionToken: string,
+  conversationId: string,
+  stars: 1 | 2 | 3 | 4 | 5,
+  comment?: string,
+): Promise<void> {
+  return request<void>(`/widget/conversations/${encodeURIComponent(conversationId)}/csat`, {
+    method: "POST",
+    body: { stars, comment },
+    sessionToken,
+  });
+}
 
 export type MessagesPage = {
   items: WidgetMessage[];
   nextCursor: string | null;
+  conversationStatus?: ConversationStatus;
 };
 
 export type ContactSessionView = {

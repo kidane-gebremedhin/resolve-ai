@@ -113,7 +113,7 @@ const SignupHero = () => {
     <section className="lg:pt-[180px] pt-[120px] lg:pb-[100px] pb-[70px]">
       <div className="main-container">
         <RevealAnimation delay={0.1}>
-          <div className="max-w-[400px] mx-auto bg-background-1 dark:bg-background-6 rounded-[20px] py-14 px-8">
+          <div className="max-w-[480px] mx-auto bg-background-1 dark:bg-background-6 rounded-[20px] py-14 px-8">
             <form onSubmit={onSubmit}>
               <fieldset className="space-y-2 mb-4">
                 <label htmlFor="organization" className="block text-tagline-2 font-medium text-foreground select-none">
@@ -158,6 +158,7 @@ const SignupHero = () => {
                   />
                   <button
                     type="button"
+                    tabIndex={-1}
                     onClick={() => setShowPassword((s) => !s)}
                     className="absolute inset-y-0 right-3 my-auto flex h-fit items-center text-foreground/60 hover:text-foreground"
                     aria-label={showPassword ? 'Hide password' : 'Show password'}

@@ -39,8 +39,27 @@ export type CrawlStatus = {
   data?: CrawlPage[];
 };
 
+// Firecrawl returns each page's URL under `metadata.sourceURL` (falling back to
+// `metadata.url`/`metadata.ogUrl`), NOT a top-level `url`. Without this mapping
+// every chunk's page URL is undefined and citations collapse to the site's base
+// URL instead of the exact page (e.g. `/pricing`).
+type RawCrawlPage = {
+  markdown?: string;
+  url?: string;
+  metadata?: { sourceURL?: string; url?: string; ogUrl?: string };
+};
+type RawCrawlStatus = { status: CrawlStatus["status"]; data?: RawCrawlPage[] };
+
+function pageUrl(p: RawCrawlPage): string {
+  return p.metadata?.sourceURL ?? p.metadata?.url ?? p.metadata?.ogUrl ?? p.url ?? "";
+}
+
 export async function getCrawlStatus(id: string): Promise<CrawlStatus> {
-  return fc<CrawlStatus>(`/crawl/${id}`);
+  const raw = await fc<RawCrawlStatus>(`/crawl/${id}`);
+  return {
+    status: raw.status,
+    data: raw.data?.map((p) => ({ url: pageUrl(p), markdown: p.markdown ?? "" })),
+  };
 }
 
 /**
@@ -64,9 +83,12 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
   const source = await KnowledgeSource.findById(sourceId);
   if (!source) throw new Error(`KB source not found: ${sourceId}`);
 
-  // Concatenate page markdown with a clear separator so chunking respects boundaries.
-  const text = pages
-    .filter((p) => p.markdown?.trim().length > 0)
+  // Chunk each page SEPARATELY so every chunk keeps the exact page URL it came
+  // from — this is what powers per-page citations in the widget (not just the
+  // site's base URL). We still persist a concatenated extractedText for display
+  // and re-ingest dedup.
+  const validPages = pages.filter((p) => p.markdown?.trim().length > 0);
+  const text = validPages
     .map((p) => `# ${p.url}\n\n${p.markdown}`)
     .join("\n\n---\n\n");
 
@@ -74,8 +96,28 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
   source.contentHash = hashContent(text || `${source._id.toString()}:${pages.length}`);
   await source.save();
 
-  const chunks = chunkText(text);
-  if (chunks.length === 0) {
+  // Flatten per-page chunks into a single indexed list, carrying each chunk's
+  // originating page URL alongside its text.
+  const taggedChunks: { index: number; text: string; url: string }[] = [];
+  let globalIdx = 0;
+  for (const page of validPages) {
+    for (const c of chunkText(page.markdown)) {
+      taggedChunks.push({ index: globalIdx++, text: c.text, url: page.url });
+    }
+  }
+
+  if (taggedChunks.length === 0) {
+    // A re-crawl that now yields no text must drop the previous run's vectors,
+    // else stale content keeps surfacing in RAG.
+    const prev = source.pineconeIds ?? [];
+    if (prev.length > 0) {
+      try {
+        await getPineconeIndex().deleteMany(prev);
+      } catch (err) {
+        logger.warn("[kb] crawl empty-result cleanup failed", { sourceId, err: (err as Error).message });
+      }
+    }
+    source.pineconeIds = [];
     source.embeddingStatus = "synced";
     source.chunkCount = 0;
     source.lastSyncedAt = new Date();
@@ -86,13 +128,14 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
     return;
   }
 
-  const vectors = await embed(chunks.map((c) => c.text));
+  const vectors = await embed(taggedChunks.map((c) => c.text));
   const pinecone = getPineconeIndex();
-  const ids = chunks.map((c) => `${source._id.toString()}:${c.index}`);
+  const previousIds = source.pineconeIds ?? [];
+  const ids = taggedChunks.map((c) => `${source._id.toString()}:${c.index}`);
   // NOTE: per __specs/04-pinecone-firecrawl.md upsert into namespace=orgId
   // once the parallel pinecone.ts rewrite exposes `.namespace(orgId)`.
   await pinecone.upsert(
-    chunks.map((c, i) => ({
+    taggedChunks.map((c, i) => ({
       id: ids[i]!,
       values: vectors[i]!,
       metadata: {
@@ -103,6 +146,8 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
         agentId: source.agentId.toString(),
         sourceId: source._id.toString(),
         chunkIndex: c.index,
+        // Exact page URL this chunk came from — surfaced as the citation link.
+        url: c.url,
         // Store the full chunk (capped at 8000) like the text/file path, not a
         // 500-char preview — retrieval returns this text to the model verbatim.
         text: c.text.slice(0, 8000),
@@ -110,14 +155,28 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
     })),
   );
 
+  // Re-crawl cleanup: per-page chunking can yield a different chunk count than a
+  // previous run, so drop any vectors from the old run the new set no longer
+  // covers — otherwise stale chunks (with old text/URLs) linger and pollute
+  // citations. Upsert first, then delete, so a failure never leaves zero vectors.
+  const newIdSet = new Set(ids);
+  const staleIds = previousIds.filter((id) => !newIdSet.has(id));
+  if (staleIds.length > 0) {
+    try {
+      await pinecone.deleteMany(staleIds);
+    } catch (err) {
+      logger.warn("[kb] crawl stale-vector cleanup failed", { sourceId, err: (err as Error).message });
+    }
+  }
+
   source.pineconeIds = ids;
-  source.chunkCount = chunks.length;
+  source.chunkCount = taggedChunks.length;
   source.embeddingStatus = "synced";
   source.lastSyncedAt = new Date();
   source.embeddingError = undefined;
   await source.save();
   emitKnowledgeUpdate(source);
-  logger.info("[kb] crawl ingested", { sourceId, pages: pages.length, chunks: chunks.length });
+  logger.info("[kb] crawl ingested", { sourceId, pages: pages.length, chunks: taggedChunks.length });
 }
 
 /**

@@ -1,6 +1,7 @@
 @AGENTS.md
 
 ### Always ask clarifying questions when unclear before implemention
+### Humanize AI ressponses
 
 ### Unless explicitly stated, always use the current project directory as a base file path
 
@@ -11,3 +12,5 @@
 ### When creating new environment variable, make sure it is added to .env.example
 
 ### Do not git commit 
+
+### Verify each new feature is working as expected and fix any issues found using devtools mcp, you may skip blocked ones that need human input. Write results into QA_TEST_RESULTS_[1-BASED INDEX NUMBER].md file.

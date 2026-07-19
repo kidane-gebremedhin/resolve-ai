@@ -162,11 +162,6 @@ ${nextAttrLines}
   );
 }`;
 
-  // Config values baked into the snippet, shown so developers can see exactly
-  // what the Widget Studio settings resolved to. Excludes the agent ID (it has
-  // its own card above).
-  const configChips = present.filter((def) => def.key !== "agentId");
-
   return (
     <div className="container-page py-8">
       <div>
@@ -178,46 +173,15 @@ ${nextAttrLines}
         </p>
       </div>
 
-      <div className="mt-6 grid gap-4 md:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Agent ID</div>
-          <div className="mt-1 truncate font-mono text-sm">{config.agentId}</div>
-          {config.agentId === "YOUR_AGENT_ID" && (
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Create an agent under <span className="font-medium">AI agent</span> to replace this placeholder.
-            </p>
-          )}
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Embed URL</div>
-          <div className="mt-1 truncate font-mono text-sm">{config.embedUrl}</div>
+      <div className="mt-6 rounded-xl border border-border bg-card p-4">
+        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Agent ID</div>
+        <div className="mt-1 truncate font-mono text-sm">{config.agentId}</div>
+        {config.agentId === "YOUR_AGENT_ID" && (
           <p className="mt-2 text-[11px] text-muted-foreground">
-            Configured via <code className="font-mono">EMBED_BASE_URL</code>.
+            Create an agent under <span className="font-medium">AI agent</span> to replace this placeholder.
           </p>
-        </div>
+        )}
       </div>
-
-      {configChips.length > 0 && (
-        <div className="mt-4 rounded-xl border border-border bg-card p-4">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            Bundled widget configuration
-          </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {configChips.map((def) => (
-              <span
-                key={def.attr}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 font-mono text-[11px]"
-              >
-                <span className="text-muted-foreground">{def.attr}</span>
-                <span className="text-foreground">{String(config[def.key])}</span>
-              </span>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            Change these in <span className="font-medium">Widget</span> and the snippet updates automatically.
-          </p>
-        </div>
-      )}
 
       <Tabs defaultValue="html" className="mt-8">
         <TabsList>

@@ -9,6 +9,9 @@ declare global {
       };
       orgId?: string;
       contactSessionId?: string;
+      // The raw widget session token (set by requireWidgetSession). Used to key the
+      // in-memory OTP store, which stores/verifies by this exact token.
+      sessionToken?: string;
       websiteId?: string;
     }
   }

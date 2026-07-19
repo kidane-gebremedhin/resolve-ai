@@ -24,6 +24,27 @@ function getCtx(): AudioContext | null {
   }
 }
 
+// Browsers keep an AudioContext suspended until the document sees a user gesture,
+// so a proactive message that appears before the visitor interacts stays silent.
+// primeAudio() creates the context and registers one-time gesture listeners that
+// resume it on the FIRST interaction anywhere in the widget (opening it, clicking
+// a suggested question, typing) — so every notification after that first touch,
+// including proactive ones, actually beeps. (The very first sound before any
+// interaction remains blocked by the browser; nothing can bypass that.)
+let primed = false;
+export function primeAudio(): void {
+  if (typeof window === "undefined" || primed) return;
+  primed = true;
+  const unlock = () => {
+    const audio = getCtx();
+    if (audio && audio.state === "suspended") void audio.resume().catch(() => undefined);
+  };
+  const opts = { capture: true, passive: true } as const;
+  for (const ev of ["pointerdown", "touchstart", "keydown"]) {
+    window.addEventListener(ev, unlock, opts);
+  }
+}
+
 export function isAudioEnabled(): boolean {
   if (typeof window === "undefined") return true;
   try {

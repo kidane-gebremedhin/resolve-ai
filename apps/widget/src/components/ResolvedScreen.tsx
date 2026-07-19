@@ -8,6 +8,7 @@
 import type { WidgetAgent, WidgetMessage } from "../lib/api-client";
 import { WidgetHeader } from "./WidgetHeader";
 import { MessageList } from "./MessageList";
+import { CSATCard } from "./CSATCard";
 
 export function ResolvedScreen({
   agent,
@@ -15,12 +16,16 @@ export function ResolvedScreen({
   messages,
   onStartNew,
   busy,
+  conversationId,
+  sessionToken,
 }: {
   agent: WidgetAgent | null;
   primaryColor: string;
   messages: WidgetMessage[];
   onStartNew: () => void;
   busy: boolean;
+  conversationId?: string | null;
+  sessionToken?: string;
 }) {
   return (
     <div className="flex h-full w-full flex-col bg-white dark:bg-neutral-900">
@@ -34,6 +39,9 @@ export function ResolvedScreen({
         help.
       </div>
       <MessageList messages={messages} primaryColor={primaryColor} />
+      {conversationId && sessionToken ? (
+        <CSATCard conversationId={conversationId} sessionToken={sessionToken} />
+      ) : null}
       <footer className="border-t border-neutral-100 p-3 dark:border-neutral-800">
         <button
           type="button"

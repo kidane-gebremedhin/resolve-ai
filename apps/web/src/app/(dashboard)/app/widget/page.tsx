@@ -4,7 +4,7 @@
 
 import { api, ApiError } from "@/lib/api";
 import { WIDGET_URL } from "@/lib/app-urls";
-import { getActiveWebsiteId } from "@/lib/website-scope";
+import { getEffectiveWebsiteId } from "@/lib/website-scope";
 import {
   WidgetStudio,
   type Agent,
@@ -30,8 +30,7 @@ async function safeGet<T>(path: string): Promise<T | null> {
 }
 
 export default async function WidgetStudioPage() {
-  const websiteId = await getActiveWebsiteId();
-  const widgetUrl = WIDGET_URL;
+  const websiteId = await getEffectiveWebsiteId();
 
   if (!websiteId) {
     return (
@@ -47,6 +46,10 @@ export default async function WidgetStudioPage() {
 
   const agents = await safeGet<Agent[]>(`/agents?websiteId=${websiteId}`);
   const agent = agents?.[0] ?? null;
+  // The preview iframe must resolve by agentId — loading the bare widget URL
+  // makes it fall back to a placeholder domain and 404 ("No active widget for
+  // this domain"). Pass the agent id so it loads that agent's live config.
+  const widgetUrl = agent ? `${WIDGET_URL}/?agentId=${agent._id}` : WIDGET_URL;
   const [settings, agentDefaults] = await Promise.all([
     agent ? safeGet<WidgetSettings>(`/widget-settings/${agent._id}`) : Promise.resolve(null),
     safeGet<AgentDefaults>("/agents/defaults"),

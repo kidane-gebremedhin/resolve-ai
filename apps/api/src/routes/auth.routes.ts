@@ -10,7 +10,12 @@ import {
   loginWithCredentials,
   registerUser,
   ensureMembershipForUser,
+  requestPasswordReset,
+  resetPassword,
 } from "../services/auth.service.js";
+import { sendMail } from "../services/mailer.service.js";
+import { env } from "../config/env.js";
+import { logger } from "../config/logger.js";
 import { logAuditFromReq } from "../services/audit.service.js";
 import { verifyRefreshToken, signAccessToken, signRefreshToken } from "../utils/jwt.js";
 import { User, Membership } from "../models/index.js";
@@ -40,6 +45,41 @@ router.post("/register", validateBody(registerSchema), async (req: Request, res:
 router.post("/login", validateBody(loginSchema), async (req: Request, res: Response) => {
   const result = await loginWithCredentials(req.body.email, req.body.password);
   res.json(result);
+});
+
+// ---- Password reset -------------------------------------------------------
+const forgotSchema = z.object({ email: z.string().email() });
+const resetSchema = z.object({ token: z.string().min(1), password: z.string().min(8).max(200) });
+
+// Always returns 200 with the same message whether or not the email exists — never
+// reveal which addresses are registered (account enumeration). When it does match a
+// credentials account we email a one-hour reset link.
+router.post("/forgot-password", validateBody(forgotSchema), async (req: Request, res: Response) => {
+  const result = await requestPasswordReset(req.body.email);
+  if (result) {
+    const link = `${env.webBaseUrl}/reset-password?token=${result.token}`;
+    try {
+      await sendMail({
+        to: result.user.email,
+        subject: "Reset your password",
+        html:
+          `<p>Hi ${result.user.name || "there"},</p>` +
+          `<p>We received a request to reset your password. Click the link below to choose a new one — it expires in 1 hour.</p>` +
+          `<p><a href="${link}">Reset your password</a></p>` +
+          `<p>If you didn't request this, you can safely ignore this email.</p>`,
+      });
+    } catch (err) {
+      // Don't leak send failures to the client (still return the generic message),
+      // but log so the operator can see SMTP problems.
+      logger.error("[auth] password reset email failed", { err: (err as Error).message });
+    }
+  }
+  res.json({ ok: true, message: "If an account exists for that email, a reset link has been sent." });
+});
+
+router.post("/reset-password", validateBody(resetSchema), async (req: Request, res: Response) => {
+  await resetPassword(req.body.token, req.body.password);
+  res.json({ ok: true, message: "Your password has been reset. You can now log in." });
 });
 
 router.post("/refresh", async (req: Request, res: Response) => {

@@ -52,6 +52,7 @@ export type Message = {
   originalContent?: string;
   readByOperator?: boolean;
   attachments?: Attachment[];
+  toolCalls?: { name: string; args?: unknown; result?: unknown }[];
   createdAt: string;
 };
 

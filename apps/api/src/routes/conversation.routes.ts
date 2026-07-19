@@ -1,11 +1,12 @@
 import { Router, type Request, type Response } from "express";
 import type { Server as IoServer } from "socket.io";
 import { z } from "zod";
-import { Conversation, Message, ContactSession } from "../models/index.js";
+import { Conversation, Message, ContactSession, ToolCallLog } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
 import { generateSuggestions } from "../services/ai/suggestions.service.js";
+import { getStorage } from "../config/storage.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
@@ -173,6 +174,96 @@ router.get("/:id/suggestions", async (req: Request, res: Response) => {
     organizationId: req.orgId!,
   });
   res.json({ suggestions });
+});
+
+// ---------- GET /:id/audit-trail ----------
+// Returns all tool call logs for a conversation (PII already masked in argsMasked).
+router.get("/:id/audit-trail", async (req: Request, res: Response) => {
+  const conversation = await Conversation.findOne({
+    _id: req.params.id,
+    organizationId: req.orgId,
+  });
+  if (!conversation) throw new NotFoundError("Conversation not found.");
+
+  const logs = await ToolCallLog.find({ conversationId: conversation._id })
+    .sort({ createdAt: 1 })
+    .lean();
+
+  res.json({ logs });
+});
+
+// ---------- POST /:id/export ----------
+// Exports the conversation transcript as CSV or JSON. When S3/MinIO is
+// configured the file is stored and a pre-signed URL returned. Otherwise the
+// file is streamed inline as a download.
+const exportSchema = z.object({
+  format: z.enum(["csv", "json"]).default("json"),
+});
+
+router.post("/:id/export", validateBody(exportSchema), async (req: Request, res: Response) => {
+  const conversation = await Conversation.findOne({
+    _id: req.params.id,
+    organizationId: req.orgId,
+  });
+  if (!conversation) throw new NotFoundError("Conversation not found.");
+
+  const format = (req.body as { format: "csv" | "json" }).format ?? "json";
+  const messages = await Message.find({ conversationId: conversation._id })
+    .sort({ createdAt: 1 })
+    .lean();
+
+  const ext = format === "csv" ? "csv" : "json";
+  const mime = format === "csv" ? "text/csv" : "application/json";
+
+  let content: string;
+  if (format === "csv") {
+    const rows = messages.map((m) => {
+      const ts = new Date(m.createdAt as Date).toISOString();
+      const role = m.role;
+      const text = String(m.content ?? "").replace(/"/g, '""');
+      return `"${ts}","${role}","${text}"`;
+    });
+    content = ["timestamp,role,content", ...rows].join("\n");
+  } else {
+    content = JSON.stringify(
+      messages.map((m) => ({
+        timestamp: m.createdAt,
+        role: m.role,
+        content: m.content,
+      })),
+      null,
+      2,
+    );
+  }
+
+  const buf = Buffer.from(content, "utf-8");
+  const key = `exports/${req.orgId}/${conversation._id.toString()}/${Date.now()}.${ext}`;
+
+  try {
+    const storage = getStorage();
+    await storage.putObject({
+      key,
+      buffer: buf,
+      contentType: mime,
+      metadata: { organizationId: req.orgId! },
+    });
+    const url = await storage.presignGetUrl?.(key, 3600);
+    if (url) {
+      res.json({ url, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+      return;
+    }
+  } catch {
+    // Storage unavailable or presign not supported — fall through to inline.
+  }
+
+  // Inline download fallback (local disk adapter).
+  res.setHeader("Content-Type", mime);
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="transcript-${conversation._id.toString()}.${ext}"`,
+  );
+  res.setHeader("Content-Length", String(buf.length));
+  res.send(buf);
 });
 
 export default router;

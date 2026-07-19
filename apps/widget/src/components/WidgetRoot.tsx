@@ -40,7 +40,7 @@ import {
   writeSession,
 } from "../lib/session";
 import { useWidgetMachine } from "../lib/state-machine";
-import { playNotification } from "../lib/audio";
+import { playNotification, primeAudio } from "../lib/audio";
 import { BootScreen } from "./BootScreen";
 import { ErrorScreen } from "./ErrorScreen";
 import { PreChatScreen } from "./PreChatScreen";
@@ -88,6 +88,12 @@ export function WidgetRoot({
   // re-render the widget. The resolved `dark` class drives all dark: variants.
   const themeSetting = state.context.settings?.theme ?? themeProp ?? "light";
   const [systemDark, setSystemDark] = useState(false);
+  // Register audio-unlock listeners on mount so the first interaction with the
+  // widget primes the AudioContext — lets later (incl. proactive) messages beep.
+  useEffect(() => {
+    primeAudio();
+  }, []);
+
   useEffect(() => {
     if (themeSetting !== "auto" || typeof window === "undefined") return;
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -114,6 +120,9 @@ export function WidgetRoot({
   // when that's missing (localhost, resumed sessions), filled by a client-side
   // lookup. State (not a ref) so the contact overlay re-renders once it lands.
   const [country, setCountry] = useState<string | null>(null);
+  // Voice input is OFF unless the operator enables ALLOW_WIDGET_VOICE_INPUT; the
+  // flag arrives with the init/settings payload (features.voiceInput).
+  const [voiceInputEnabled, setVoiceInputEnabled] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const [busy, setBusy] = useState(false);
   // True when the widget is rendered fullscreen (phones). Self-detected below
@@ -128,6 +137,27 @@ export function WidgetRoot({
   useEffect(() => {
     conversationIdRef.current = state.context.conversationId;
   }, [state.context.conversationId]);
+
+  // ---- Proactive trigger buffer ----------------------------------------
+  // csb:proactive can arrive before the session token is ready (widget just
+  // opened and is still booting). We buffer it and fire after bootstrap.
+  const pendingProactiveRef = useRef<{ triggerId: string; message: string } | null>(null);
+
+  // ---- Operator typing indicator (separate from AI typing) -----------
+  // Shows when the operator dashboard emits operator:typing for this conversation.
+  const [operatorTyping, setOperatorTyping] = useState(false);
+  const operatorTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ---- Unread badge ---------------------------------------------------
+  // Tracks messages that arrived while the widget is hidden. Posted to parent.
+  const [isWidgetVisible, setIsWidgetVisible] = useState(false);
+  // Ref mirrors state so socket handlers (which close over the initial value)
+  // always read the current visibility without re-binding on every render.
+  const isWidgetVisibleRef = useRef(false);
+  const unreadCountRef = useRef(0);
+  // Message ids already counted toward the current unread total — so a duplicated
+  // `message:new` for the same reply doesn't double-count the badge.
+  const countedUnreadIdsRef = useRef<Set<string>>(new Set());
 
   // ---- AI typing indicator --------------------------------------------
   // Local UI state: shown between a customer send and the AI's reply landing.
@@ -277,16 +307,30 @@ export function WidgetRoot({
           resumedEmail = existing.email;
           resumedConversationId = existing.conversationId;
           bootstrap = await getSettings(token);
+          setVoiceInputEnabled(bootstrap.features?.voiceInput === true);
         } else {
           // Mint a new session.
           const fresh = await initWidget({
             domain,
             agentId,
-            metadata: websiteId ? { websiteId } : undefined,
+            metadata: {
+              ...(websiteId ? { websiteId } : {}),
+              // The visitor's IANA timezone (e.g. "America/New_York") so bookings
+              // are made in their local time and slot/confirmation dates display
+              // in their zone rather than UTC.
+              timeZone: (() => {
+                try {
+                  return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+                } catch {
+                  return undefined;
+                }
+              })(),
+            },
           });
           token = fresh.sessionToken;
           sessionId = fresh.sessionId;
           if (fresh.countryCode) setCountry(fresh.countryCode);
+          setVoiceInputEnabled(fresh.features?.voiceInput === true);
           writeSession({
             id: fresh.sessionId,
             token: fresh.sessionToken,
@@ -311,11 +355,7 @@ export function WidgetRoot({
           try {
             const page = await listMessages(token, resumedConversationId);
             messages = page.items;
-            // We don't have a dedicated GET /conversations/:id endpoint, so we
-            // assume "active" on resume. If the conversation was resolved on
-            // the server side we'll learn about it via the socket
-            // `conversation:updated` event after we connect.
-            conversationStatus = "active";
+            conversationStatus = page.conversationStatus ?? "active";
           } catch {
             // Stale conversationId — clear it and fall back to sections/pre_chat.
             resumedConversationId = undefined;
@@ -330,7 +370,9 @@ export function WidgetRoot({
         //   visible until the visitor sends their first message.
         let next: "pre_chat" | "chat_active" | "escalated" | "resolved";
         if (resumedConversationId) {
-          next = "chat_active";
+          if (conversationStatus === "resolved") next = "resolved";
+          else if (conversationStatus === "escalated") next = "escalated";
+          else next = "chat_active";
         } else {
           next = "pre_chat";
         }
@@ -367,6 +409,28 @@ export function WidgetRoot({
           contact: resumedEmail ? { email: resumedEmail } : undefined,
           showContactPrompt: Boolean(needsContactOnResume),
         });
+
+        // Post initial unread count to the embed so the launcher badge shows
+        // on page load. Count non-customer messages newer than the last time
+        // the user opened the widget.
+        if (messages && messages.length > 0) {
+          const sess = readSession();
+          const lastSeen = sess?.lastSeenAt ? new Date(sess.lastSeenAt).getTime() : 0;
+          const initialUnread = messages.filter(
+            (m) => m.role !== "customer" && new Date(m.createdAt).getTime() > lastSeen,
+          ).length;
+          // Seed the running counter with the initial unread so a subsequent live
+          // message increments from it (was starting from 0, which made the badge
+          // jump backwards, e.g. 3 → 1, on the next incoming message).
+          unreadCountRef.current = initialUnread;
+          if (initialUnread > 0) {
+            try {
+              window.parent?.postMessage({ type: "csb:unread", count: initialUnread }, "*");
+            } catch {
+              /* not embedded */
+            }
+          }
+        }
       } catch (e) {
         if (cancelled) return;
         // eslint-disable-next-line no-console
@@ -447,7 +511,69 @@ export function WidgetRoot({
         }
         if (message.role !== "customer") {
           playNotification();
+          // Use the ref (not state) — the socket handler closes over the
+          // initial render and would always see isWidgetVisible = false.
+          // Dedupe by message id: a single AI reply can emit `message:new` more
+          // than once (streaming placeholder + finalize, or an id-only event
+          // followed by a re-list), which would otherwise inflate the badge.
+          const mid = String(message._id ?? "");
+          if (!isWidgetVisibleRef.current && (!mid || !countedUnreadIdsRef.current.has(mid))) {
+            if (mid) countedUnreadIdsRef.current.add(mid);
+            // Arrived while the widget is closed/collapsed → it's unread. Count it
+            // and tell the embed to show the launcher badge.
+            unreadCountRef.current += 1;
+            try {
+              window.parent?.postMessage(
+                { type: "csb:unread", count: unreadCountRef.current },
+                "*",
+              );
+            } catch {
+              /* not embedded */
+            }
+          } else if (isWidgetVisibleRef.current) {
+            // Seen while the widget is open — mark it seen NOW so a page reload
+            // doesn't recount it as unread. Previously `lastSeenAt` was only bumped
+            // on open/close, so messages read in an open session were counted again
+            // on the next load (the "counting all available messages" bug).
+            updateSession({ lastSeenAt: new Date().toISOString() });
+          }
         }
+      },
+    );
+
+    socket.on(
+      "operator:typing",
+      (payload: { conversationId: string; isTyping: boolean }) => {
+        if (payload.conversationId !== conversationIdRef.current) return;
+        if (operatorTypingTimerRef.current) {
+          clearTimeout(operatorTypingTimerRef.current);
+          operatorTypingTimerRef.current = null;
+        }
+        if (payload.isTyping) {
+          setOperatorTyping(true);
+          // Auto-clear after 5s in case the stop event is missed.
+          operatorTypingTimerRef.current = setTimeout(() => setOperatorTyping(false), 5_000);
+        } else {
+          setOperatorTyping(false);
+        }
+      },
+    );
+
+    socket.on(
+      "message:delta",
+      (payload: { conversationId: string; messageId: string; delta: string }) => {
+        if (payload.conversationId !== conversationIdRef.current) return;
+        send({ type: "MESSAGE_DELTA", messageId: payload.messageId, delta: payload.delta });
+      },
+    );
+
+    socket.on(
+      "message:done",
+      (payload: { conversationId: string; messageId: string; content: string }) => {
+        if (payload.conversationId !== conversationIdRef.current) return;
+        send({ type: "MESSAGE_DONE", messageId: payload.messageId, content: payload.content });
+        // message:new will still arrive after message:done and add the full WidgetMessage
+        // via AI_REPLIED (including sources, quickReplies). No additional work needed here.
       },
     );
 
@@ -468,9 +594,11 @@ export function WidgetRoot({
     return () => {
       socket.disconnect();
       socketRef.current = null;
+      if (operatorTypingTimerRef.current) clearTimeout(operatorTypingTimerRef.current);
     };
     // We intentionally bind once per token. sessionTokenRef.current is read
     // inside the effect, so we trigger by re-checking on every BOOTSTRAPPED.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.context.agent, send]);
 
   // ---- Session refresh -------------------------------------------------
@@ -531,6 +659,67 @@ export function WidgetRoot({
     },
     [send, startAiTyping],
   );
+
+  // ---- Customer typing emit -------------------------------------------
+  // Debounced: emit isTyping:true on keypress, isTyping:false after 2s silence.
+  const customerTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCustomerTyping = useCallback(() => {
+    const socket = socketRef.current;
+    const convId = conversationIdRef.current;
+    if (!socket || !convId) return;
+    socket.emit("customer:typing", { conversationId: convId, isTyping: true });
+    if (customerTypingTimerRef.current) clearTimeout(customerTypingTimerRef.current);
+    customerTypingTimerRef.current = setTimeout(() => {
+      socket.emit("customer:typing", { conversationId: convId, isTyping: false });
+    }, 2_000);
+  }, []);
+
+  // ---- Proactive trigger helper ----------------------------------------
+  // Posts the trigger to the API, then reloads messages and dispatches
+  // AI_REPLIED so the proactive message becomes the first thing the visitor sees.
+  const fireProactive = useCallback(
+    async (token: string, triggerId: string, message: string) => {
+      try {
+        const conversationId = await ensureConversation();
+        await fetch(`${API_URL}/widget/conversations/${conversationId}/proactive`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-session-token": token,
+          },
+          body: JSON.stringify({ triggerId, seedMessage: message }),
+        });
+        // Reload messages and dispatch AI_REPLIED so the proactive message
+        // is shown immediately (the socket event may race with the iframe opener).
+        const page = await listMessages(token, conversationId);
+        const aiMessages = page.items.filter((m) => m.role === "ai");
+        if (aiMessages.length > 0) {
+          // Dispatch for each AI message so the state machine renders them all.
+          for (const msg of aiMessages) {
+            send({ type: "AI_REPLIED", message: msg });
+          }
+          // Proactive messages arrive via this reload path (not the socket
+          // handler), so play the notification beep here too — same as a normal
+          // incoming AI/operator message.
+          playNotification();
+        }
+      } catch {
+        // Non-critical — best effort.
+      }
+    },
+    [ensureConversation, send],
+  );
+
+  // After bootstrap completes, check if a proactive trigger was buffered
+  // while the widget was still booting.
+  useEffect(() => {
+    if (state.context.isInitializing) return;
+    const pending = pendingProactiveRef.current;
+    const token = sessionTokenRef.current;
+    if (!pending || !token) return;
+    pendingProactiveRef.current = null;
+    void fireProactive(token, pending.triggerId, pending.message);
+  }, [state.context.isInitializing, fireProactive]);
 
   // ---- Screen handlers -------------------------------------------------
 
@@ -595,6 +784,26 @@ export function WidgetRoot({
     [state.context.conversationId, ensureConversation],
   );
 
+  const handleVoiceMessage = useCallback(
+    async (blob: Blob) => {
+      const token = sessionTokenRef.current;
+      if (!token) return;
+      const conversationId =
+        state.context.conversationId ?? (await ensureConversation());
+      const form = new FormData();
+      form.append("audio", blob, "audio.webm");
+      await fetch(
+        `${API_URL}/widget/conversations/${conversationId}/voice-message`,
+        {
+          method: "POST",
+          headers: { "x-session-token": token },
+          body: form,
+        },
+      );
+    },
+    [state.context.conversationId, ensureConversation],
+  );
+
   const handleContactSave = useCallback(
     async (args: { email?: string; phone?: string }) => {
       const token = sessionTokenRef.current;
@@ -621,6 +830,55 @@ export function WidgetRoot({
     socketRef.current = null;
     send({ type: "RETRY" });
   }, [send]);
+
+  // ---- Proactive triggers + visibility from embed ----------------------
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; triggerId?: string; message?: string } | null;
+      if (!data || typeof data.type !== "string") return;
+
+      if (data.type === "csb:widget-opened") {
+        setIsWidgetVisible(true);
+        isWidgetVisibleRef.current = true;
+        unreadCountRef.current = 0;
+        countedUnreadIdsRef.current.clear();
+        updateSession({ lastSeenAt: new Date().toISOString() });
+        // Tell the embed to clear its badge immediately.
+        try {
+          window.parent?.postMessage({ type: "csb:unread", count: 0 }, "*");
+        } catch { /* not embedded */ }
+        return;
+      }
+      if (data.type === "csb:widget-closed") {
+        setIsWidgetVisible(false);
+        isWidgetVisibleRef.current = false;
+        // Reset so subsequent messages start counting from 0, not from
+        // whatever the ref accumulated while the widget was open.
+        unreadCountRef.current = 0;
+        countedUnreadIdsRef.current.clear();
+        // Mark everything seen up to now. lastSeenAt is otherwise only bumped on
+        // open, so messages that arrived WHILE the widget was open (and were
+        // therefore already seen) would be re-counted as unread on the next page
+        // load. Bumping it on close keeps the reload badge correct (0).
+        updateSession({ lastSeenAt: new Date().toISOString() });
+        try {
+          window.parent?.postMessage({ type: "csb:unread", count: 0 }, "*");
+        } catch { /* not embedded */ }
+        return;
+      }
+      if (data.type === "csb:proactive" && data.triggerId && data.message) {
+        const token = sessionTokenRef.current;
+        if (!token) {
+          // Widget is still booting — buffer and fire after bootstrap completes.
+          pendingProactiveRef.current = { triggerId: data.triggerId, message: data.message };
+          return;
+        }
+        void fireProactive(token, data.triggerId, data.message);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [ensureConversation, fireProactive]);
 
   // ---- Render ----------------------------------------------------------
 
@@ -673,9 +931,14 @@ export function WidgetRoot({
             escalated={state.state === "escalated"}
             onSend={handleChatSend}
             onAttach={handleAttach}
+            onVoiceMessage={voiceInputEnabled ? handleVoiceMessage : undefined}
             composerDisabled={state.overlay === "contact_prompt"}
             aiTyping={aiTyping}
+            operatorTyping={operatorTyping}
+            onTyping={handleCustomerTyping}
             sessionToken={sessionTokenRef.current ?? undefined}
+            conversationId={state.context.conversationId ?? undefined}
+            inFlight={state.context.inFlight}
           />
         );
 
@@ -687,6 +950,8 @@ export function WidgetRoot({
             messages={state.context.messages}
             onStartNew={handleStartNew}
             busy={busy}
+            conversationId={state.context.conversationId ?? undefined}
+            sessionToken={sessionTokenRef.current ?? undefined}
           />
         );
 
@@ -703,9 +968,14 @@ export function WidgetRoot({
             escalated={false}
             onSend={handleChatSend}
             onAttach={handleAttach}
+            onVoiceMessage={voiceInputEnabled ? handleVoiceMessage : undefined}
             composerDisabled
             aiTyping={aiTyping}
+            operatorTyping={operatorTyping}
+            onTyping={handleCustomerTyping}
             sessionToken={sessionTokenRef.current ?? undefined}
+            conversationId={state.context.conversationId ?? undefined}
+            inFlight={state.context.inFlight}
           />
         );
 

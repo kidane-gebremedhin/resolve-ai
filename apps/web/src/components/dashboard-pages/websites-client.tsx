@@ -9,12 +9,9 @@ import { useRouter } from "next/navigation";
 import {
   Plus,
   Globe,
-  Copy,
   Trash2,
   ExternalLink,
   Search,
-  Code2,
-  Check,
   Pencil,
   AlertCircle,
 } from "lucide-react";
@@ -32,12 +29,12 @@ import {
   DialogFooter,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
-import { WIDGET_URL } from "@/lib/app-urls";
 
 export type Website = {
   _id: string;
   name: string;
   domain: string;
+  description?: string;
   allowedOrigins: string[];
   isActive: boolean;
   createdAt?: string;
@@ -48,17 +45,15 @@ export type Agent = { _id: string; name: string };
 type DialogState =
   | { kind: "closed" }
   | { kind: "add" }
-  | { kind: "edit"; website: Website }
-  | { kind: "embed"; website: Website };
+  | { kind: "edit"; website: Website };
 
 export function WebsitesClient({
   initialWebsites,
-  agent,
-  apiBaseUrl,
 }: {
   initialWebsites: Website[];
-  agent: Agent | null;
-  apiBaseUrl: string;
+  // Kept for API compatibility with the page; the embed snippet moved to Developers.
+  agent?: Agent | null;
+  apiBaseUrl?: string;
 }) {
   const router = useRouter();
   const [sites, setSites] = useState<Website[]>(initialWebsites);
@@ -109,7 +104,7 @@ export function WebsitesClient({
         <div>
           <h1 className="font-display text-2xl font-semibold tracking-tight">Websites</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Domains where your widget runs. Each entry pins its allowed origins for the embed script.
+            Domains where your widget runs. Register each site so the embed script is allowed to load.
           </p>
         </div>
         <Button
@@ -185,35 +180,14 @@ export function WebsitesClient({
 
               <div className="mt-4">
                 <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                  Allowed origins
+                  Description
                 </div>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {s.allowedOrigins.length === 0 ? (
-                    <span className="text-[11px] italic text-muted-foreground">
-                      (defaults to https://{s.domain})
-                    </span>
-                  ) : (
-                    s.allowedOrigins.map((o) => (
-                      <span
-                        key={o}
-                        className="rounded-full border border-border bg-surface px-2 py-0.5 font-mono text-[10.5px]"
-                      >
-                        {o}
-                      </span>
-                    ))
-                  )}
-                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  {s.description?.trim() ? s.description : <span className="italic">No description</span>}
+                </p>
               </div>
 
               <div className="mt-5 flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  onClick={() => setDialog({ kind: "embed", website: s })}
-                >
-                  <Code2 className="h-3.5 w-3.5" /> Embed
-                </Button>
                 <Button
                   size="sm"
                   variant="outline"
@@ -253,21 +227,13 @@ export function WebsitesClient({
         />
       )}
 
-      {dialog.kind === "embed" && (
-        <EmbedDialog
-          website={dialog.website}
-          agent={agent}
-          apiBaseUrl={apiBaseUrl}
-          onClose={() => setDialog({ kind: "closed" })}
-        />
-      )}
     </div>
   );
 }
 
 type SavePayload =
-  | { mode: "create"; data: { name: string; domain: string; allowedOrigins: string[]; isActive: boolean } }
-  | { mode: "edit"; id: string; data: Partial<Pick<Website, "name" | "domain" | "allowedOrigins" | "isActive">> };
+  | { mode: "create"; data: { name: string; domain: string; description?: string; allowedOrigins: string[]; isActive: boolean } }
+  | { mode: "edit"; id: string; data: Partial<Pick<Website, "name" | "domain" | "description" | "allowedOrigins" | "isActive">> };
 
 function WebsiteFormDialog({
   mode,
@@ -281,37 +247,46 @@ function WebsiteFormDialog({
   onSave: (p: SavePayload) => Promise<void>;
 }) {
   const [domain, setDomain] = useState(initial?.domain ?? "");
-  const [originsText, setOriginsText] = useState(
-    initial?.allowedOrigins.join(", ") ?? "",
-  );
+  const [description, setDescription] = useState(initial?.description ?? "");
   const [isActive, setIsActive] = useState(initial?.isActive ?? true);
   const [busy, setBusy] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
 
   async function submit() {
-    const d = domain.trim().toLowerCase();
+    // Accept what the user typed but strip a scheme/path/www they may have pasted,
+    // then require a clean hostname (labels + a 2+ char TLD, no spaces/specials).
+    const d = domain
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/.*$/, "")
+      .replace(/^www\./, "");
     if (!d) {
       setLocalErr("Domain is required.");
       return;
     }
-    const origins = originsText
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const allowedOrigins = origins.length > 0 ? origins : [`https://${d}`];
+    const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/;
+    if (!DOMAIN_RE.test(d)) {
+      setLocalErr("Enter a valid domain like example.com — no http://, paths, spaces, or special characters.");
+      return;
+    }
+    // Allowed origins are derived from the domain (the widget loads on the registered
+    // site); the operator no longer manages them by hand.
+    const allowedOrigins = [`https://${d}`];
+    const desc = description.trim();
     setBusy(true);
     setLocalErr(null);
     try {
       if (mode === "add") {
         await onSave({
           mode: "create",
-          data: { name: d, domain: d, allowedOrigins, isActive },
+          data: { name: d, domain: d, description: desc, allowedOrigins, isActive },
         });
       } else if (initial) {
         await onSave({
           mode: "edit",
           id: initial._id,
-          data: { name: d, domain: d, allowedOrigins, isActive },
+          data: { name: d, domain: d, description: desc, allowedOrigins, isActive },
         });
       }
     } finally {
@@ -334,18 +309,17 @@ function WebsiteFormDialog({
             <Input
               value={domain}
               onChange={(e) => setDomain(e.target.value)}
+              placeholder="example.com"
             />
           </div>
           <div className="grid gap-1.5">
-            <Label className="text-xs">Allowed origins (comma-separated)</Label>
+            <Label className="text-xs">Description</Label>
             <Textarea
-              value={originsText}
-              onChange={(e) => setOriginsText(e.target.value)}
-              className="min-h-20 font-mono text-xs"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="min-h-20 text-xs"
+              placeholder="What is this website about? (optional)"
             />
-            <p className="text-[11px] text-muted-foreground">
-              Leave blank to default to <code className="font-mono">https://{domain || "<domain>"}</code>.
-            </p>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -368,68 +342,6 @@ function WebsiteFormDialog({
           </Button>
           <Button onClick={submit} disabled={busy}>
             {busy ? "Saving…" : mode === "add" ? "Add website" : "Save changes"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function EmbedDialog({
-  website,
-  agent,
-  apiBaseUrl,
-  onClose,
-}: {
-  website: Website;
-  agent: Agent | null;
-  apiBaseUrl: string;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  const snippet = `<script>
-  (function(w,d){
-    w.ChataxisConfig = {
-      apiBase: "${apiBaseUrl}",
-      websiteId: "${website._id}",${agent ? `\n      agentId: "${agent._id}",` : ""}
-      domain: "${website.domain}"
-    };
-    var s = d.createElement("script");
-    s.src = "${WIDGET_URL}/widget.js";
-    s.async = 1;
-    d.head.appendChild(s);
-  })(window, document);
-</script>`;
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(snippet);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // ignore
-    }
-  }
-
-  return (
-    <Dialog open={true} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Embed snippet · {website.domain}</DialogTitle>
-          <DialogDescription>
-            Drop this into the &lt;head&gt; of {website.domain} to start the widget.
-          </DialogDescription>
-        </DialogHeader>
-        <pre className="overflow-x-auto rounded-md border border-border bg-surface p-4 font-mono text-[11px] leading-relaxed">
-          {snippet}
-        </pre>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            Close
-          </Button>
-          <Button onClick={copy} className="gap-2">
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy snippet"}
           </Button>
         </DialogFooter>
       </DialogContent>

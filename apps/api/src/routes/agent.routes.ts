@@ -5,6 +5,7 @@ import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { ConflictError, NotFoundError } from "../utils/errors.js";
 import { env } from "../config/env.js";
+import { logAuditFromReq } from "../services/audit.service.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
@@ -35,6 +36,16 @@ const agentSchema = z.object({
   model: z.string().optional(),
   temperature: z.number().min(0).max(2).optional(),
   confidenceThreshold: z.number().min(0).max(1).optional(),
+  jiraProjectKey: z.string().max(50).optional(),
+  // Primary→fallback ordering for tool keys exposed by multiple connections.
+  toolPriority: z
+    .array(
+      z.object({
+        key: z.string().min(1),
+        connectionIds: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/)).default([]),
+      }),
+    )
+    .optional(),
   isActive: z.boolean().default(true),
 });
 
@@ -71,12 +82,14 @@ router.patch("/:id", validateBody(agentSchema.partial()), async (req: Request, r
     { new: true },
   );
   if (!agent) throw new NotFoundError("Agent not found.");
+  await logAuditFromReq(req, "agent.updated", String(agent._id), { changes: Object.keys(update) });
   res.json(agent);
 });
 
 router.delete("/:id", async (req: Request, res: Response) => {
   const result = await Agent.findOneAndDelete({ _id: req.params.id, organizationId: req.orgId });
   if (!result) throw new NotFoundError("Agent not found.");
+  await logAuditFromReq(req, "agent.deleted", String(req.params.id));
   res.status(204).send();
 });
 

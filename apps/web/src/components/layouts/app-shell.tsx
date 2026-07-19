@@ -20,6 +20,7 @@ import {
   CreditCard,
   Menu,
   Code2,
+  Plug,
   Share2,
   ChevronsUpDown,
   Check,
@@ -28,6 +29,10 @@ import {
   User,
   CreditCard as Billing,
   HelpCircle,
+  Zap,
+  ClipboardList,
+  MessageSquareHeart,
+  ThumbsDown,
 } from 'lucide-react';
 import { Logo } from '@/components/site/Logo';
 import { Input } from '@csb/ui';
@@ -48,6 +53,9 @@ type NavItem = {
     | '/app'
     | '/app/inbox'
     | '/app/analytics'
+    | '/app/feeds'
+    | '/app/feeds/low-rated'
+    | '/app/activity'
     | '/app/knowledge'
     | '/app/settings'
     | '/app/websites'
@@ -57,7 +65,9 @@ type NavItem = {
     | '/app/usage'
     | '/app/billing'
     | '/app/referrals'
-    | '/app/developers';
+    | '/app/developers'
+    | '/app/integrations'
+    | '/app/triggers';
   label: string;
   icon: typeof LayoutDashboard;
   exact?: boolean;
@@ -76,7 +86,12 @@ const nav: NavItem[] = [
   { href: '/app/widget', label: 'Widget', icon: Paintbrush, group: 'Configure' },
   { href: '/app/knowledge', label: 'Knowledge', icon: BookOpen, group: 'Configure' },
   { href: '/app/developers', label: 'Developers', icon: Code2, group: 'Configure' },
+  { href: '/app/integrations', label: 'Integrations', icon: Plug, group: 'Configure' },
+  { href: '/app/triggers', label: 'Proactive Triggers', icon: Zap, group: 'Configure' },
   { href: '/app/analytics', label: 'Analytics', icon: BarChart3, group: 'Account' },
+  { href: '/app/feeds', label: 'User Feedback', icon: MessageSquareHeart, exact: true, group: 'Account' },
+  { href: '/app/feeds/low-rated', label: 'Low-Rated Answers', icon: ThumbsDown, group: 'Account' },
+  { href: '/app/activity', label: 'Agent activity', icon: ClipboardList, group: 'Account' },
   { href: '/app/usage', label: 'Usage', icon: Gauge, group: 'Account' },
   { href: '/app/billing', label: 'Billing', icon: CreditCard, group: 'Account' },
   { href: '/app/referrals', label: 'Referrals', icon: Share2, group: 'Account' },
@@ -349,19 +364,19 @@ export function AppShell({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border bg-background/85 px-3 backdrop-blur sm:px-5">
+        <header className="sticky top-0 z-30 flex h-14 min-w-0 items-center justify-between gap-2 border-b border-border bg-background/85 px-3 backdrop-blur sm:gap-3 sm:px-5">
           <button
             onClick={() => setMobileOpen(true)}
-            className="grid h-9 w-9 place-items-center rounded-md border border-border bg-background lg:hidden"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-md border border-border bg-background lg:hidden"
             aria-label="Open menu"
           >
             <Menu className="h-4 w-4" />
           </button>
-          <div className="relative w-full max-w-md">
+          <div className="relative min-w-0 flex-1 max-w-md">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Search…" className="h-9 pl-8 text-sm" />
+            <Input placeholder="Search…" className="h-9 w-full pl-8 text-sm" />
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {plan ? (
               <Link
                 href="/app/billing"

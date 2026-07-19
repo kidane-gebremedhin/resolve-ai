@@ -2,6 +2,51 @@
 
 ## Overview
 
+> **Changelog 1 update — widget-driven subscription management.** The agentic
+> Paddle tools (`get_subscription` / `upgrade_subscription` /
+> `downgrade_subscription` / `cancel_subscription` in
+> `services/integrations/providers/paddle.ts`) now let the widget AI manage a
+> customer's plan conversationally. They take the customer **email** (optional —
+> the dispatcher injects the verified ContactSession email) and a human **plan
+> name** rather than raw Paddle IDs. On any API error the AI reports the failure
+> honestly (no fabricated success). Requires the operator's Paddle **API key to have
+> customer + subscription read/write permission**.
+>
+> **Per-operator integration Paddle (Changelog 8).** These tools act on the
+> **operator's own Paddle** (their end-customers' subscriptions on the embedding
+> website) — NOT this platform's billing Paddle. So: the plan⇄price mapping is the
+> **operator's own**, stored per-connection (`credentials.extra.planPrices`, per env —
+> sandbox and live differ) and configured via the card's "Configure plans" +
+> `PUT /integrations/:connectionId/paddle-plans`; it no longer reads the platform's
+> `PADDLE_PRICE_*` env (those are for platform billing, which is unchanged). The
+> subscription is resolved by the **customer's email**; the platform `organizationId`
+> is NOT injected (that tag only exists in the platform's own Paddle). The
+> `upgrade/downgrade` `targetPlan` enum is set to the operator's configured plan names.
+>
+> **Env-slot consistency + downgrade fix (Changelog 5).** `planPrices` are read and
+> written from the connection's **active environment** credential slot — not the
+> `encryptedCredentials` mirror. The prior mirror-based read meant plans configured
+> in sandbox vanished once the connection was switched to production (whose slot had
+> no map), so BOTH upgrade and downgrade failed with "no plans configured" even though
+> the UI (also reading the mirror) still showed the plans — the exact "configuration
+> issue" operators hit. The adapter's error now names the environment to fix. The
+> redundant **"Upgrades only / block-downgrades"** guardrail was **removed** — the AI
+> performs downgrades as a normal self-service action, gated by `requireBillingOwner`.
+> To stop operators from *skipping* the mapping in the first place, the "Configure plans"
+> step is now folded into the connect flow: after connecting Paddle it opens automatically,
+> **pre-filled from the operator's own Paddle catalog** (`GET /:connectionId/paddle-catalog`
+> lists their prices/products and suggests the plan→price-id mapping), and an unconfigured
+> connection shows a persistent "⚠ Configure plans" warning until it's done.
+>
+> **Operator subscription webhook receiver (Changelog 5).** Operators can register a
+> per-connection callback URL (`POST /integrations/paddle/webhook/:connectionId`, and
+> the Stripe equivalent) in their OWN provider dashboard. Events are HMAC-verified
+> against a per-connection signing secret (`credentials.extra.webhookSecret`, set via
+> `PUT /integrations/:connectionId/webhook-secret`) and distilled into an
+> `ExternalSubscription` snapshot so the assistant reflects out-of-band plan changes
+> and can still answer "what plan am I on?" during a provider API outage. This is
+> separate from the platform's own `POST /billing/webhook`.
+
 Backlog item #4: "subscription system should be powered by Paddle.js; define any credentials needed in env vars." **The integration largely exists** ([`07-api-specification.md`](./07-api-specification.md), [`__skills/paddle-billing`](../__skills/paddle-billing/)). This spec closes the gaps that block real checkout and production-readiness. Plan: [`__plans/08-paddle-subscriptions.md`](../__plans/08-paddle-subscriptions.md).
 
 ## Current state
@@ -32,6 +77,31 @@ Backlog item #4: "subscription system should be powered by Paddle.js; define any
 ---
 
 ## Design
+
+### Plan changes preserve the billing cycle (Changelog 15)
+`upgrade_subscription` / `downgrade_subscription` change the plan **tier only** and
+keep the customer's current billing interval — a yearly subscriber upgrading stays
+yearly, never silently flips to monthly. Implementation: `resolveSubscription` reads
+the live item's `price.billing_cycle.interval` (with an env yearly-id fallback) and
+its seat `quantity`; the change picks `priceForPlan(targetPlan, currentInterval)` and
+PATCHes with the preserved quantity. If the target plan has no price at that interval
+the tool fails clearly instead of switching cadence. The result includes
+`billingInterval` so the AI confirms it ("now on Business, billed yearly"). The local
+mirror (`syncSubscriptionFromPaddle`) already derives plan + interval from the price
+id, so the dashboard reflects the same.
+
+### Not-found must be explicit (anti-hallucination)
+`get_subscription` for an email that matches no customer/active subscription returns
+a **structured** `{ found: false, hasSubscription: false, message }` — it does NOT
+throw. A thrown error collapses into the same generic `{ error }` shape as a
+transient failure, and the model (told to hide errors and that the tools always
+work) would fill the gap by inventing a plan ("you're on Enterprise"). The Paddle
+prompt (`prompts.ts`) states that a not-found is a definite answer — say plainly no
+subscription is on file and **never guess a plan**. Mutations
+(`upgrade`/`downgrade`/`cancel`) still throw on no-subscription; only the read tool
+degrades gracefully. Note: the visitor's email is `ContactSession.email` (whatever
+they typed) — it is NOT ownership-verified, so a not-found is the correct, honest
+response for a non-account-holder email.
 
 ### Credentials (G1) — the explicit ask
 Define and document **all** Paddle credentials as env vars (add to [`.env.example`](../.env.example) + the live `apps/api/.env` / `apps/web/.env.local`, per repo env convention and [`13-env-variables.md`](./13-env-variables.md)):

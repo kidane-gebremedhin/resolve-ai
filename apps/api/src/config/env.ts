@@ -37,10 +37,70 @@ export const env = {
     confidenceThreshold: Number(required("AI_CONFIDENCE_THRESHOLD")),
     kbSearchTopK: Number(required("AI_KB_SEARCH_TOP_K")),
     kbSearchMinScore: Number(required("AI_KB_SEARCH_MIN_SCORE")),
+    kbGapScoreThreshold: Number(optional("AI_KB_GAP_SCORE_THRESHOLD", "0.65")),
+    // Vision model for image attachments (defaults to AI_MODEL when unset)
+    visionModel: process.env.AI_VISION_MODEL ?? null,
+    // Max image size (bytes) before resizing for the vision API (default 4 MB)
+    visionMaxImageBytes: Number(optional("AI_VISION_MAX_IMAGE_BYTES", "4194304")),
   },
   // Back-compat alias — older call sites read `env.aiConfidenceThreshold`.
   aiConfidenceThreshold: Number(required("AI_CONFIDENCE_THRESHOLD")),
   // Widget attachment content-extraction caps (read by the upload handler).
   attachmentExtractMaxChars: Number(optional("ATTACHMENT_EXTRACT_MAX_CHARS", "8000")),
   attachmentExtractMaxBytes: Number(optional("ATTACHMENT_EXTRACT_MAX_BYTES", "5242880")),
+  // Integration credential vault — AES-256-GCM. Must be exactly 32 bytes (64 hex chars).
+  credentialsEncryptionKey: (() => {
+    const raw = optional("CREDENTIALS_ENCRYPTION_KEY", "");
+    if (raw.length > 0 && raw.length !== 64) {
+      throw new Error(
+        "CREDENTIALS_ENCRYPTION_KEY must be exactly 32 bytes (64 hex characters). " +
+        "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+      );
+    }
+    return raw;
+  })(),
+  // Base URL of the web dashboard (used by the OAuth callback redirect).
+  // Falls back to localhost for local dev; override in production with the
+  // public dashboard URL via WEB_INTERNAL_URL.
+  webBaseUrl: optional("WEB_INTERNAL_URL", "http://localhost:3000"),
+  // Integration webhook outbound call timeout (ms).
+  webhookTimeoutMs: Number(optional("WEBHOOK_TIMEOUT_MS", "10000")),
+  // OTP expiry for identity-verification step in high-stakes tool calls (seconds).
+  otpExpirySeconds: Number(optional("OTP_EXPIRY_SECONDS", "600")),
+  // SMTP fallback. The mailer prefers the admin panel's stored SMTP
+  // (PlatformSetting.smtp), but falls back to these env vars when it isn't
+  // configured — so credentials placed in .env send mail out of the box.
+  // SMTP_SECURE forces TLS-on-connect (port 465); otherwise STARTTLS is used.
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: Number(optional("SMTP_PORT", "587")),
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    secure: process.env.SMTP_SECURE === "true",
+    from: process.env.SMTP_FROM,
+  },
+  // Widget rate limiting (per contact session, in-memory + optional Redis).
+  widgetRateLimit: {
+    max: Number(optional("WIDGET_RATE_LIMIT_MAX", "30")),
+    windowMs: Number(optional("WIDGET_RATE_LIMIT_WINDOW_MS", "60000")),
+  },
+  // Abuse detection: JSON array of regex pattern strings checked against
+  // incoming widget messages. Default covers common prompt-injection probes.
+  abusePatterns: (() => {
+    const raw = process.env.ABUSE_PATTERNS;
+    if (!raw) {
+      return [
+        /ignore\s+(previous|all)\s+(instructions?|prompts?)/i,
+        /act\s+as\s+(a\s+)?different\s+(ai|model|persona|chatbot)/i,
+        /you\s+are\s+now\s+(DAN|jailbroken|unrestricted)/i,
+        /forget\s+(everything|your\s+instructions|your\s+guidelines)/i,
+      ];
+    }
+    try {
+      const parsed = JSON.parse(raw) as string[];
+      return parsed.map((p) => new RegExp(p, "i"));
+    } catch {
+      return [];
+    }
+  })(),
 };

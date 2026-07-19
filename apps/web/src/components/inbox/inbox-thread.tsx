@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "next-auth/react";
-import { Bot, FileText, Paperclip, Send, Sparkles, Undo2, User2, Wrench, X } from "lucide-react";
+import { Bot, ChevronDown, ChevronRight, Download, FileText, Paperclip, Send, Sparkles, Undo2, User2, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@csb/ui";
 import { clientApi, API_BASE_URL } from "@/lib/api";
 import { getOperatorSocket } from "@/lib/socket";
@@ -93,6 +93,17 @@ function AttachmentList({ attachments }: { attachments: Attachment[] }) {
   );
 }
 
+type AuditLog = {
+  _id: string;
+  toolKey: string;
+  status: "success" | "guardrail_blocked" | "error" | "otp_pending";
+  argsMasked?: Record<string, unknown>;
+  resultSummary?: string;
+  errorMessage?: string;
+  durationMs: number;
+  createdAt: string;
+};
+
 type Props = {
   initialConversation: Conversation;
   initialMessages: Message[];
@@ -138,6 +149,109 @@ function StatusPill({ status }: { status: ConversationStatus }) {
       <span className="h-1.5 w-1.5 rounded-full bg-current" /> {label[status]}
     </span>
   );
+}
+
+// Built-in reasoning tools are conversation plumbing, not operator-facing actions.
+const NOISE_TOOLS = new Set(["search_kb", "escalate_conversation", "resolve_conversation"]);
+
+// Turn a raw tool call into a short human sentence for the inbox strip, e.g.
+// "AI booked a meeting for Mon, Jul 6, 3:00 PM" or "AI created support ticket SUP-12".
+// toolCalls store `result` as a JSON string (see agent.service.ts) and `args` as
+// an object. Normalise both to plain objects for formatting.
+function asObject(v: unknown): Record<string, unknown> {
+  if (v && typeof v === "object") return v as Record<string, unknown>;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+function describeToolCall(call: { name: string; args?: unknown; result?: unknown }): string | null {
+  if (NOISE_TOOLS.has(call.name)) return null;
+  const result = asObject(call.result);
+  const args = asObject(call.args);
+  const fmtTime = (v: unknown): string | null => {
+    if (!v || typeof v !== "string") return null;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime())
+      ? null
+      : d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  switch (call.name) {
+    case "book_meeting": {
+      const when = fmtTime(result.start) ?? fmtTime(args.startTime);
+      return when ? `booked a meeting for ${when}` : "booked a meeting";
+    }
+    case "list_event_types":
+      return "looked up available meeting types";
+    case "list_calendar_slots":
+      return "checked calendar availability";
+    case "create_support_ticket": {
+      const key = result.key ?? result.issueIdentifier ?? result.id;
+      return key ? `created support ticket ${key}` : "created a support ticket";
+    }
+    case "issue_refund": {
+      const amt = args.amount ?? args.refundAmount;
+      return amt ? `issued a refund of $${amt}` : "issued a refund";
+    }
+    case "get_subscription":
+      return "looked up the customer's subscription";
+    case "upgrade_subscription": {
+      const plan = result.plan ?? args.targetPlan ?? args.targetPlanKey;
+      return `upgraded the subscription${plan ? ` to ${plan}` : ""}`;
+    }
+    case "downgrade_subscription": {
+      const plan = result.plan ?? args.targetPlan ?? args.targetPlanKey;
+      return `downgraded the subscription${plan ? ` to ${plan}` : ""}`;
+    }
+    case "cancel_subscription":
+      return "cancelled the subscription";
+    case "lookup_order": {
+      const order = args.orderId ?? args.orderNumber ?? result.orderId;
+      return order ? `looked up order ${order}` : "looked up an order";
+    }
+    default:
+      return `ran ${call.name.replace(/_/g, " ")}`;
+  }
+}
+
+// Inline strip under an AI message summarising any external tool actions it took.
+function ToolCallStrip({ calls }: { calls: { name: string; args?: unknown; result?: unknown }[] }) {
+  const lines = calls
+    .map((c) => ({ text: describeToolCall(c), failed: isFailedResult(c.result) }))
+    .filter((l): l is { text: string; failed: boolean } => Boolean(l.text));
+  if (lines.length === 0) return null;
+  return (
+    <div className="mt-1.5 space-y-1">
+      {lines.map((l, i) => (
+        <div
+          key={i}
+          className={`flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] ${
+            l.failed
+              ? "border-destructive/30 bg-destructive/5 text-destructive"
+              : "border-border bg-muted/40 text-muted-foreground"
+          }`}
+        >
+          <Wrench className="h-3 w-3 shrink-0" />
+          <span>
+            {l.failed ? "AI tried to " : "AI "}
+            {l.text}
+            {l.failed ? " — it didn't go through" : ""}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function isFailedResult(result: unknown): boolean {
+  const r = asObject(result);
+  return Boolean(r.error) || r.ok === false || Boolean(r.blocked) || Boolean(r.otpRequired);
 }
 
 function MessageBubble({ message }: { message: Message }) {
@@ -191,6 +305,9 @@ function MessageBubble({ message }: { message: Message }) {
             <AttachmentList attachments={message.attachments} />
           )}
         </div>
+        {isAi && message.toolCalls && message.toolCalls.length > 0 && (
+          <ToolCallStrip calls={message.toolCalls} />
+        )}
       </div>
     </div>
   );
@@ -214,6 +331,15 @@ export function InboxThread({
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Attachment[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLog[] | null>(null);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [loadingAudit, setLoadingAudit] = useState(false);
+
+  const [customerTyping, setCustomerTyping] = useState(false);
+  const customerTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const socketRef = useRef<ReturnType<typeof getOperatorSocket> | null>(null);
+  const operatorTypingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -267,22 +393,37 @@ export function InboxThread({
       setConversation((prev) => ({ ...prev, assignedOperatorId: payload.operatorId }));
     };
 
+    const handleCustomerTyping = (payload: { conversationId: string; isTyping: boolean }) => {
+      if (payload.conversationId !== conversation._id) return;
+      if (customerTypingTimerRef.current) clearTimeout(customerTypingTimerRef.current);
+      if (payload.isTyping) {
+        setCustomerTyping(true);
+        customerTypingTimerRef.current = setTimeout(() => setCustomerTyping(false), 5_000);
+      } else {
+        setCustomerTyping(false);
+      }
+    };
+
     (async () => {
       const tokenRes = await fetch("/api/session-token", { cache: "no-store" });
       const { accessToken } = (await tokenRes.json()) as { accessToken?: string };
       if (cancelled || !accessToken) return;
       socket = getOperatorSocket(accessToken);
+      socketRef.current = socket;
       socket.on("message:new", handleNew);
       socket.on("conversation:updated", handleUpdated);
       socket.on("conversation:assigned", handleAssigned);
+      socket.on("customer:typing", handleCustomerTyping);
     })();
 
     return () => {
       cancelled = true;
+      socketRef.current = null;
       if (socket) {
         socket.off("message:new", handleNew);
         socket.off("conversation:updated", handleUpdated);
         socket.off("conversation:assigned", handleAssigned);
+        socket.off("customer:typing", handleCustomerTyping);
       }
     };
   }, [conversation._id, refetchAllMessages]);
@@ -400,6 +541,68 @@ export function InboxThread({
     }
   }, [conversation._id, session?.user?.id]);
 
+  const loadAuditTrail = useCallback(async () => {
+    if (loadingAudit) return;
+    setLoadingAudit(true);
+    try {
+      const data = await clientApi.get<{ logs: AuditLog[] }>(
+        `/conversations/${conversation._id}/audit-trail`,
+      );
+      setAuditLogs(data.logs);
+    } catch {
+      setAuditLogs([]);
+    } finally {
+      setLoadingAudit(false);
+    }
+  }, [conversation._id, loadingAudit]);
+
+  const handleAuditToggle = useCallback(() => {
+    const next = !auditOpen;
+    setAuditOpen(next);
+    if (next && auditLogs === null) void loadAuditTrail();
+  }, [auditOpen, auditLogs, loadAuditTrail]);
+
+  const handleExport = useCallback(
+    async (format: "csv" | "json") => {
+      setExporting(true);
+      setError(null);
+      try {
+        const tokenRes = await fetch("/api/session-token", { cache: "no-store" });
+        const { accessToken } = (await tokenRes.json()) as { accessToken?: string };
+        const res = await fetch(
+          `${API_BASE_URL}/conversations/${conversation._id}/export`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+            },
+            body: JSON.stringify({ format }),
+          },
+        );
+        const contentType = res.headers.get("content-type") ?? "";
+        if (contentType.includes("json")) {
+          const data = (await res.json()) as { url?: string };
+          if (data.url) window.open(data.url, "_blank");
+        } else {
+          // Inline binary stream — create a temporary download link.
+          const blob = await res.blob();
+          const ext = format === "csv" ? "csv" : "json";
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = `transcript-${conversation._id}.${ext}`;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }
+      } catch {
+        setError("Export failed. Please try again.");
+      } finally {
+        setExporting(false);
+      }
+    },
+    [conversation._id],
+  );
+
   const updateStatus = useCallback(
     async (status: ConversationStatus) => {
       setUpdatingStatus(true);
@@ -427,7 +630,7 @@ export function InboxThread({
       {/* Main thread column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between gap-2 border-b border-border px-6 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3 sm:px-6">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="truncate font-display text-base font-semibold">
@@ -445,6 +648,34 @@ export function InboxThread({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <div className="relative group">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={exporting}
+                onClick={() => void handleExport("json")}
+                className="gap-1.5"
+              >
+                <Download className="h-3.5 w-3.5" />
+                {exporting ? "Exporting…" : "Export"}
+              </Button>
+              <div className="absolute right-0 top-full z-10 mt-1 hidden min-w-[120px] overflow-hidden rounded-md border border-border bg-card shadow-md group-focus-within:flex group-hover:flex flex-col">
+                <button
+                  type="button"
+                  onClick={() => void handleExport("json")}
+                  className="px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Export as JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExport("csv")}
+                  className="px-3 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Export as CSV
+                </button>
+              </div>
+            </div>
             <Button
               size="sm"
               variant="outline"
@@ -495,6 +726,18 @@ export function InboxThread({
           )}
         </div>
 
+        {/* Customer typing indicator */}
+        {customerTyping && (
+          <div className="mx-6 mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="inline-flex gap-0.5">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:0ms]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:150ms]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-muted-foreground [animation-delay:300ms]" />
+            </span>
+            Customer is typing…
+          </div>
+        )}
+
         {error && (
           <div className="mx-4 mb-2 rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
             {error}
@@ -506,7 +749,16 @@ export function InboxThread({
           <div className="rounded-xl border border-border bg-card">
             <Textarea
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                if (socketRef.current) {
+                  socketRef.current.emit("operator:typing", { conversationId: conversation._id, isTyping: true });
+                  if (operatorTypingTimerRef.current) clearTimeout(operatorTypingTimerRef.current);
+                  operatorTypingTimerRef.current = setTimeout(() => {
+                    socketRef.current?.emit("operator:typing", { conversationId: conversation._id, isTyping: false });
+                  }, 3_000);
+                }
+              }}
               placeholder="Write a reply to the customer…"
               className="min-h-[88px] w-full resize-none rounded-t-xl border-0 bg-transparent p-3 text-sm focus-visible:ring-0"
               rows={4}
@@ -644,6 +896,64 @@ export function InboxThread({
           </Section>
 
           <SuggestionsPanel conversationId={conversation._id} />
+
+          {/* Audit trail — tool calls made by the AI during this conversation */}
+          <div>
+            <button
+              type="button"
+              onClick={handleAuditToggle}
+              className="flex w-full items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+            >
+              {auditOpen ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              Audit trail
+            </button>
+
+            {auditOpen && (
+              <div className="mt-2">
+                {loadingAudit ? (
+                  <div className="py-3 text-center text-xs text-muted-foreground">Loading…</div>
+                ) : auditLogs === null || auditLogs.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-border py-3 text-center text-xs text-muted-foreground">
+                    No tool calls yet.
+                  </div>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {auditLogs.map((log) => (
+                      <li
+                        key={log._id}
+                        className="rounded-md border border-border bg-surface/60 p-2 text-xs"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono font-medium truncate">{log.toolKey}</span>
+                          <span
+                            className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                              log.status === "success"
+                                ? "bg-success/10 text-success"
+                                : log.status === "guardrail_blocked"
+                                  ? "bg-warning/15 text-foreground"
+                                  : "bg-destructive/10 text-destructive"
+                            }`}
+                          >
+                            {log.status.replace("_", " ")}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">
+                          {log.durationMs}ms · {new Date(log.createdAt).toLocaleTimeString()}
+                        </div>
+                        {log.errorMessage && (
+                          <div className="mt-1 text-[10px] text-destructive">{log.errorMessage}</div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </aside>
     </div>

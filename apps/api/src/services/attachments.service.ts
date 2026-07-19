@@ -120,3 +120,26 @@ export async function streamStoredAttachment(
   }
   obj.stream.pipe(res);
 }
+
+// Read a stored attachment into memory. Used by image vision to build base64
+// data URLs without going through the HTTP layer. Returns null when not found or
+// when tenant guard fails.
+export async function getAttachmentBuffer(
+  orgId: string,
+  sha: string,
+): Promise<{ buffer: Buffer; contentType: string } | null> {
+  if (!sha || !/^[a-f0-9]{64}$/i.test(sha)) return null;
+  const obj = await getStorage().getObject(attachmentKey(orgId, sha));
+  if (!obj) return null;
+  const meta = obj.metadata ?? {};
+  const metaOrg = meta.organizationId ?? meta.organizationid;
+  if (!metaOrg || metaOrg !== orgId) return null;
+
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    obj.stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    obj.stream.on("end", resolve);
+    obj.stream.on("error", reject);
+  });
+  return { buffer: Buffer.concat(chunks), contentType: obj.contentType ?? "application/octet-stream" };
+}

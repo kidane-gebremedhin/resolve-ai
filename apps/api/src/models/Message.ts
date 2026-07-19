@@ -43,6 +43,27 @@ const messageSchema = new Schema(
     isEnhanced: { type: Boolean },
     originalContent: { type: String },
     readByOperator: { type: Boolean, default: false },
+    // KB citations surfaced below this AI reply
+    sources: {
+      type: [
+        new Schema(
+          {
+            sourceId: String,
+            sourceTitle: String,
+            url: String,
+            score: Number,
+          },
+          { _id: false },
+        ),
+      ],
+      default: undefined,
+    },
+    // Short suggested follow-up chips (max 3) emitted by the AI
+    quickReplies: { type: [String], default: undefined },
+    // Structured UI blocks (cards, carousels, forms, link previews) rendered by
+    // the widget alongside or instead of plain content. Stored as Mixed for
+    // schema flexibility — block types are validated in app code.
+    blocks: { type: [Schema.Types.Mixed], default: undefined },
   },
   { timestamps: { createdAt: true, updatedAt: false } },
 );

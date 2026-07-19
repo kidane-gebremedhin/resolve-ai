@@ -25,8 +25,16 @@
 | 9 | [`10-conversation-controls.md`](./10-conversation-controls.md) | **Post-v1.** Human-escalation toggle + ask-before-resolve (org settings gate prompt/tools/UI) | Org-configurable conversation behavior | 26 |
 | 10 | [`11-kb-crawl-and-phone.md`](./11-kb-crawl-and-phone.md) | **Post-v1.** Same-domain website crawl + favicon avatar; visitor phone country-code from IP | Scoped crawls + auto avatar; geo-defaulted phone code | 27, 28 |
 | 12 | [`12-usd-usage-tracking.md`](./12-usd-usage-tracking.md) | **Post-v1.** USD cost capture from OpenRouter, per-plan budget caps, 402 enforcement, email alerts at 75%/100%, usage dashboard with cost charts | UsageRecord + BudgetAlert models; budget middleware; admin Budget & Limits UI | — |
+| 13 | [`13-tier1-widget-polish.md`](./13-tier1-widget-polish.md) | **Tier 1.** Streaming SSE tokens · Markdown rendering · KB citations · 👍/👎 feedback · CSAT star picker · Quick-reply chips | Streaming AI replies; react-markdown; Citations component; MessageFeedback + ConversationRating models; QuickReplies component | 29 |
+| 14 | [`14-integration-framework.md`](./14-integration-framework.md) | **Tier 2A.** AES-256-GCM credential vault · OAuth framework · ProviderAdapter interface · Tool dispatcher with guardrails + rate limit + audit log · OTP identity verification · Integrations dashboard tab | Connection + ToolDefinition + ToolCallLog models; crypto.service.ts; dispatcher.ts; assertSafeUrl(); integrations routes; Integrations nav item | 30 |
+| 15 | [`15-agentic-tools.md`](./15-agentic-tools.md) | **Tier 2B.** Cal.com + Calendly booking · Paddle subscription mgmt · Stripe refunds · Linear + Jira ticket creation · Knowledge-gap logging | 6 provider adapters; KnowledgeGap model; analytics knowledge-gap card | 31 |
+| 16 | [`16-rich-messages.md`](./16-rich-messages.md) | **Tier 3.** Message blocks system · Card + carousel · Inline forms · Image vision · OG link previews | MessageBlock union type; blocks field on Message; BlockRenderer component tree; resultToBlocks() in dispatcher; OG preview service | 32 |
+| 17 ✅ | [`17-proactive-lifecycle.md`](./17-proactive-lifecycle.md) | **Tier 4.** Typing indicators (bidirectional) · Proactive trigger rules · Launcher unread badge · Triggers management UI | Operator/customer typing socket events; ProactiveTrigger model; embed trigger evaluation; csb:unread badge | 33 |
+| 18 ✅ | [`18-trust-compliance-voice.md`](./18-trust-compliance-voice.md) | **Tiers 5–6.** PII redaction · Audit trail UI · Transcript export · Data residency stub · Widget rate limiting + abuse detection · Browser-mic voice · Twilio phone bridge | piiMask extensions; widgetRateLimit middleware; ToolCallLog audit UI; S3 transcript export; stt.service + tts.service; voice routes; Twilio WebSocket handler | 34 |
 
-> **Post-v1 phases (5–10)** are independent enhancement tracks from the product backlog, not strictly sequential like Phases 0–4. Phase 8 (affiliate) benefits from Phase 7 (plan catalog) landing first.
+> **Post-v1 phases (5–12)** are independent enhancement tracks from the product backlog, not strictly sequential like Phases 0–4. Phase 8 (affiliate) benefits from Phase 7 (plan catalog) landing first.
+>
+> **Tier phases (13–18)** are the ROADMAP.md feature tiers. They are ordered: 13 → 14 → 15 (spine required before tools); 13 → 16 (Markdown renderer needed for block fallback); 17 is independent after 13; 18 requires 14 for piiMask.ts reuse. Tiers 5–6 (Phase 18) are post-launch hardening.
 
 ## Skill ↔ phase invocation map
 
@@ -105,11 +113,33 @@ Every phase must satisfy these before moving on:
 | `mongo-mcp` confirms data integrity | n/a | ✅ | ✅ | ✅ | ✅ |
 | `chrome-devtools-mcp` finds zero console errors on touched pages | n/a | n/a | ✅ | ✅ | ✅ |
 
+## Tier 1–6 critical dependencies
+
+```
+Phase 13 (Tier 1 — Widget Polish)
+├── Streaming AI loop (message:delta / message:done)
+├── Markdown renderer — required by Phase 16 (block fallback)
+└── CSAT + Feedback models
+        ↓
+Phase 14 (Tier 2A — Integration Framework)
+├── crypto.service.ts (AES-256-GCM vault)
+├── assertSafeUrl() — reused by Phase 16 (OG preview)
+├── piiMask.ts — reused by Phase 18 (LLM preprocessing)
+└── dispatcher.ts — required by Phase 15 (tool adapters)
+        ↓
+Phase 15 (Tier 2B — Agentic Tools)   Phase 16 (Tier 3 — Rich Messages)
+└── 6 provider adapters               └── resultToBlocks() (needs dispatcher)
+
+Phase 17 (Tier 4 — Proactive)        Phase 18 (Tiers 5–6 — Trust+Voice)
+└── (independent after Phase 13)      └── (independent after Phase 14)
+```
+
 ## Out of scope for v1 (deferred)
 
 - Public blog / changelog / about / careers pages
 - Multi-language support (i18n) in widget
-- Voice / video chat
+- Voice / video chat (shipped in Phase 18 post-launch)
 - Mobile native apps
 - Self-serve API keys + public API beyond the embed flow
 - SOC2 / ISO compliance paperwork (architecture is compliant; certification is a separate workstream)
+- Multi-region data residency routing (deferred per BLOCKERS.md B-3 Option C)

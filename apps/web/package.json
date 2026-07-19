@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack -p 3000",
     "build": "next build",
-    "postbuild": "cp -r .next/static .next/standalone/apps/web/.next/static && cp -r public .next/standalone/apps/web/public",
+    "postbuild": "cp -r .next/static .next/standalone/apps/web/.next/static && cp -r public .next/standalone/apps/web/public && (cd .next/server && find . -name '*_client-reference-manifest.js' -exec cp --parents {} ../standalone/apps/web/.next/server/ ';')",
     "start": "PORT=3000 HOSTNAME=0.0.0.0 node .next/standalone/apps/web/server.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",

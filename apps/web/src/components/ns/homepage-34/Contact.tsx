@@ -3,9 +3,8 @@ import LinkButton from '../ui/button/LinkButton';
 import { APP_NAME } from '@/lib/app-config';
 
 // Branding-bound contact details. Override the actual address/phone via env when
-// rebranding; keep the email host in sync with the app slug.
-const supportEmail =
-  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? `hello@${APP_NAME.toLowerCase()}.com`;
+// rebranding; the email host stays in sync with the app slug.
+const supportEmail = `hello@${APP_NAME.toLowerCase()}.com`;
 const supportPhone = process.env.NEXT_PUBLIC_SUPPORT_PHONE ?? '(239) 555-0108';
 const supportAddress =
   process.env.NEXT_PUBLIC_SUPPORT_ADDRESS ?? '4140 Parker Rd, Allentown, NM 31134';

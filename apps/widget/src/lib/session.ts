@@ -21,6 +21,8 @@ export type WidgetSession = {
   email?: string;
   /** True once the user has submitted contact info. Survives reloads. */
   contactCaptured?: boolean;
+  /** ISO timestamp of the last time the widget was opened. Used to count unread messages on page load. */
+  lastSeenAt?: string;
 };
 
 function safeStorage(): Storage | null {

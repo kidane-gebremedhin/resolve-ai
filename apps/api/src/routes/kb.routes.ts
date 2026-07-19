@@ -11,6 +11,7 @@ import { ingestSource, purgeSourceVectors } from "../services/kb/ingestion.servi
 import { startCrawl } from "../services/kb/firecrawl.service.js";
 import { parseFile, sourceTypeFor } from "../services/kb/parsers.js";
 import { logger } from "../config/logger.js";
+import { logAuditFromReq } from "../services/audit.service.js";
 import type { Server as IoServer } from "socket.io";
 
 const router = Router();
@@ -272,6 +273,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
   await KnowledgeSource.deleteOne({ _id: source._id });
   const io = req.app.get("io") as IoServer | undefined;
   io?.to(`org:${req.orgId}`).emit("knowledge:deleted", { sourceId: id });
+  await logAuditFromReq(req, "knowledge.deleted", id, { title: source.title, type: source.type });
   res.json({ _id: id, deleted: true });
 });
 

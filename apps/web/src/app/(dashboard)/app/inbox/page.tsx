@@ -34,10 +34,12 @@ export default async function InboxPage({
   if (websiteId) qs.set("websiteId", websiteId);
 
   let items: Conversation[] = [];
+  let nextCursor: string | null = null;
   let errorMessage: string | null = null;
   try {
     const res = await api.get<ConversationListResponse>(`/conversations?${qs.toString()}`);
     items = res.items ?? [];
+    nextCursor = res.nextCursor ?? null;
   } catch (e) {
     errorMessage =
       e instanceof ApiError
@@ -57,5 +59,5 @@ export default async function InboxPage({
     );
   }
 
-  return <InboxList initialItems={items} initialFilter={filter} websiteId={websiteId} />;
+  return <InboxList initialItems={items} initialFilter={filter} initialNextCursor={nextCursor} websiteId={websiteId} />;
 }

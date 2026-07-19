@@ -29,7 +29,19 @@ export function ThemeProvider({ children, initialTheme = 'light' }: ThemeProvide
     const resolved = resolveTheme(stored, getSystemTheme());
     setThemeState(resolved);
     applyThemeClass(resolved);
-    if (stored) setThemeCookie(stored);
+    // Always persist the RESOLVED theme to both cookie and localStorage — even
+    // when it was derived from the system preference. Otherwise the cookie stays
+    // unset, every server render defaults to light, and the page flashes light
+    // before the client corrects it on each load. Persisting here makes the next
+    // SSR render the correct class up-front.
+    setThemeCookie(resolved);
+    if (!stored) {
+      try {
+        localStorage.setItem(THEME_COOKIE, resolved);
+      } catch {
+        /* storage blocked — cookie still covers SSR */
+      }
+    }
   }, []);
 
   const setTheme = (t: Theme) => {
