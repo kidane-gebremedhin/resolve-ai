@@ -558,12 +558,20 @@ sharing the same tool key. To keep the AI routing to the live connection:
   Connection is `active`, so even stale duplicates never surface the
   "connection has been revoked" error.
 
-> **Reconnecting reactivates tools (Changelog 5).** Because revoke sets tool defs
-> `isActive:false`, the single-connection providers (OAuth, api-key) must **reactivate**
-> them on reconnect. Their tool-def upserts put `isActive: true` in `$set` (not
-> `$setOnInsert`, which never runs for an existing tool def) — otherwise a reconnect
-> revives the connection but leaves its tools inactive, and the AI is never offered them
-> ("I'm unable to file a support ticket", with no tool call logged).
+> **Reconnecting reactivates tools (Changelog 5; hardened 2026-07 batch).** Because revoke
+> sets tool defs `isActive:false`, the single-connection providers (OAuth, api-key) must
+> **reactivate** them on reconnect. Reactivation lives in `seedConnectionTools()` (shared
+> helper): its tool-def upserts put `isActive: true` in `$set` (not `$setOnInsert`, which
+> never runs for an existing tool def).
+>
+> A bug (2026-07 batch) meant the **api-key reconnect** branch of `POST /:provider/connect`
+> updated the credentials and returned **before** the seeding loop ran, so reconnecting an
+> api-key provider left every tool `isActive:false`. Because `agent.service` only offers
+> `isActive:true` tools, the reconnected provider vanished from the tool chain — and when a
+> second billing provider was also configured, a subscription query set to the reconnected
+> provider as **primary** silently ran against the other provider instead ("no subscription
+> found"). Fixed by calling `seedConnectionTools()` on **both** the new-connection and
+> reconnect branches (and the OAuth callback), so a reconnect always re-offers the tools.
 
 **SSRF protections (mandatory)**
 

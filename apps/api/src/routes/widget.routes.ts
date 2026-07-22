@@ -262,6 +262,11 @@ router.get(
       primaryColor: settings?.primaryColor ?? "#1e40af",
       theme: settings?.theme ?? "auto",
       launcherIcon: null,
+      // Whether the mic / voice-input button is shown (ALLOW_WIDGET_VOICE_INPUT).
+      // The embed uses this to decide whether to delegate `microphone` to the iframe:
+      // requesting that capability unconditionally makes some browsers show a
+      // permission prompt on page load, so we only grant it when voice is enabled.
+      voiceInput: process.env.ALLOW_WIDGET_VOICE_INPUT === "true",
     });
   }),
 );

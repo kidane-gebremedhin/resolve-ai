@@ -23,16 +23,20 @@ async function series(
 }
 
 // Option lists for the org/agent dropdowns. Best-effort — an error just yields
-// an empty list (the "All" choice still works).
-async function loadFilterOptions(): Promise<{
+// an empty list (the "All" choice still works). When an org is selected, the agent
+// list is scoped to THAT org so the Agent dropdown only shows its agents.
+async function loadFilterOptions(organizationId?: string): Promise<{
   orgs: FilterOption[];
   agents: FilterOption[];
 }> {
   try {
+    const agentsQs = organizationId
+      ? `?organizationId=${organizationId}&pageSize=200`
+      : '?pageSize=200';
     const [orgs, agents] = await Promise.all([
       api.get<ListEnvelope<{ _id: string; name: string }>>('/admin/organizations?pageSize=200'),
       api.get<ListEnvelope<{ _id: string; name: string; organizationName?: string }>>(
-        '/admin/agents?pageSize=200',
+        `/admin/agents${agentsQs}`,
       ),
     ]);
     return {
@@ -72,7 +76,7 @@ export default async function AnalyticsPage({
 
   const want = (m: string) => metric === 'all' || metric === m;
 
-  const { orgs, agents } = await loadFilterOptions();
+  const { orgs, agents } = await loadFilterOptions(organizationId || undefined);
 
   let error: string | null = null;
   let signups: { date: string; value: number }[] = [];

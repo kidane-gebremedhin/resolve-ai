@@ -222,6 +222,9 @@ function playProactiveBeep(): void {
   const position = normalizePosition(ds.position ?? fetched?.position);
   const primaryColor = ds.primaryColor ?? fetched?.primaryColor ?? "";
   const theme = ds.theme ?? fetched?.theme ?? "auto";
+  // Only grant the iframe microphone access when the operator has enabled voice
+  // input — otherwise some browsers prompt for device access on page load.
+  const voiceEnabled = fetched?.voiceInput === true;
 
   injectStyles(position);
 
@@ -320,7 +323,14 @@ function playProactiveBeep(): void {
     iframe.id = IFRAME_ID;
     iframe.title = "Chat widget";
     iframe.src = iframeSrc;
-    iframe.setAttribute("allow", "clipboard-write; microphone; autoplay");
+    // `microphone` is only delegated when voice input is enabled (see voiceEnabled) so
+    // the widget never triggers an on-load device-permission prompt for the common
+    // (voice-off) case. The mic itself is still only accessed when the visitor presses
+    // the mic button inside the widget.
+    iframe.setAttribute(
+      "allow",
+      voiceEnabled ? "clipboard-write; microphone; autoplay" : "clipboard-write; autoplay",
+    );
     iframe.setAttribute("aria-label", "Customer support chat");
     iframe.dataset.position = position;
     // Start hidden (but alive) so the widget can boot, keep its socket open, and
@@ -511,6 +521,11 @@ interface Appearance {
   position?: string;
   primaryColor?: string;
   theme?: string;
+  // Whether the widget's voice-input (mic) button is enabled. Only when true do we
+  // delegate `microphone` to the iframe — otherwise requesting that capability makes
+  // some browsers prompt for device access on page load, before the visitor does
+  // anything (voice input is off by default).
+  voiceInput?: boolean;
 }
 
 // Best-effort: never blocks the launcher for long, never throws. A failed fetch

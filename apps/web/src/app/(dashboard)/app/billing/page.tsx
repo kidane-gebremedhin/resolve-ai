@@ -1,4 +1,4 @@
-import { Check, CreditCard } from "lucide-react";
+import { Check, CreditCard, AlertTriangle } from "lucide-react";
 import { Badge } from "@csb/ui";
 import { api, ApiError } from "@/lib/api";
 import { auth } from "@/lib/auth";
@@ -14,6 +14,7 @@ type Subscription = {
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
   canceledAt: string | null;
+  cancelScheduledAt: string | null;
 };
 
 function formatDate(iso: string | null): string {
@@ -65,6 +66,10 @@ async function Page() {
   const hasActiveSubscription = Boolean(
     sub && (sub.status === "active" || sub.status === "trialing"),
   );
+  // A scheduled cancel-at-period-end: the plan is still active but set to end. Show the
+  // effective date (fall back to the current period end if Paddle didn't give an explicit one).
+  const cancellationPending = Boolean(sub?.cancelScheduledAt) && hasActiveSubscription;
+  const cancellationDate = sub?.cancelScheduledAt ?? sub?.currentPeriodEnd ?? null;
 
   // Plan display name — pulled from catalog so it reflects admin overrides.
   const catalogEntry = catalog.find((c) => c.plan === plan);
@@ -82,6 +87,20 @@ async function Page() {
       {loadError && (
         <div className="mt-6 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {loadError}
+        </div>
+      )}
+
+      {cancellationPending && (
+        <div className="mt-6 flex items-start gap-3 rounded-md border border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <div>
+            <div className="font-medium text-foreground">Your subscription is scheduled to cancel</div>
+            <p className="mt-0.5 text-muted-foreground">
+              Your {currentPlanLabel} plan will end on{" "}
+              <span className="font-medium text-foreground">{formatDate(cancellationDate)}</span>. You&apos;ll
+              keep access until then. To stay subscribed, resume from the customer portal or pick a plan below.
+            </p>
+          </div>
         </div>
       )}
 

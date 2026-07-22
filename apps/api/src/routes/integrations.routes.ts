@@ -85,6 +85,180 @@ function suggestPlanPrices(prices: CatalogPrice[]): Record<string, { monthly?: s
   return suggested;
 }
 
+// Fetch the operator's OWN Paddle/Stripe recurring prices for the given environment, as a
+// provider-agnostic list. Shared by the read-only catalog endpoint and the auto-population
+// that runs at connect time. Throws on a provider error so callers can decide how to react.
+async function fetchBillingCatalog(provider: string, sandbox: boolean, key: string): Promise<CatalogPrice[]> {
+  if (provider === "stripe") {
+    // Stripe uses the SAME URL for test and live — the key's own mode decides which data it
+    // returns. One call to /prices with the product expanded gives name + interval.
+    const headers = { Authorization: `Basic ${Buffer.from(`${key}:`).toString("base64")}` };
+    const pricesRes = await fetch(
+      "https://api.stripe.com/v1/prices?limit=100&active=true&expand[]=data.product",
+      { headers },
+    );
+    if (!pricesRes.ok) throw new Error(`Stripe returned HTTP ${pricesRes.status} listing prices.`);
+    const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
+    return (pricesJson.data ?? []).map((p) => {
+      const interval = (p.recurring as { interval?: string } | null | undefined)?.interval;
+      const product = p.product as { id?: string; name?: string } | string | undefined;
+      const productObj = product && typeof product === "object" ? product : undefined;
+      return {
+        priceId: String(p.id ?? ""),
+        name: String(p.nickname ?? productObj?.name ?? ""),
+        interval: interval === "year" ? "year" : interval === "month" ? "month" : "one_time",
+        productId: productObj?.id ?? (typeof product === "string" ? product : ""),
+        productName: productObj?.name ?? "",
+      };
+    });
+  }
+  // Paddle: prices + products (two calls; a price carries product_id + billing_cycle).
+  const baseUrl = sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
+  const headers = { Authorization: `Bearer ${key}` };
+  const [pricesRes, productsRes] = await Promise.all([
+    fetch(`${baseUrl}/prices?per_page=100&status=active`, { headers }),
+    fetch(`${baseUrl}/products?per_page=100&status=active`, { headers }),
+  ]);
+  if (!pricesRes.ok) throw new Error(`Paddle returned HTTP ${pricesRes.status} listing prices.`);
+  const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
+  const productsJson = (await productsRes.json().catch(() => ({}))) as { data?: Array<{ id?: string; name?: string }> };
+  const productName = new Map<string, string>();
+  for (const p of productsJson.data ?? []) if (p.id) productName.set(p.id, p.name ?? "");
+  return (pricesJson.data ?? []).map((p) => {
+    const cycle = (p.billing_cycle as { interval?: string } | null | undefined)?.interval;
+    const productId = String(p.product_id ?? "");
+    return {
+      priceId: String(p.id ?? ""),
+      name: String(p.name ?? ""),
+      interval: cycle === "year" ? "year" : cycle === "month" ? "month" : "one_time",
+      productId,
+      productName: productName.get(productId) ?? "",
+    };
+  });
+}
+
+// Normalise a raw plan→price-id map, persist it onto the connection's ACTIVE environment
+// credentials (preserving the api key), and update the upgrade/downgrade tools' `targetPlan`
+// enum to the operator's plan names. Returns the saved plan names. Shared by the
+// "Configure plans" PUT and the connect-time auto-population.
+async function applyBillingPlanPrices(
+  conn: ConnCredsShape & { _id: unknown },
+  orgId: unknown,
+  raw: Record<string, { monthly?: string; yearly?: string }> | undefined,
+): Promise<string[]> {
+  const planPrices: Record<string, { monthly?: string; yearly?: string }> = {};
+  for (const [name, ids] of Object.entries(raw ?? {})) {
+    const plan = String(name).trim().toLowerCase();
+    const monthly = typeof ids?.monthly === "string" ? ids.monthly.trim() : "";
+    const yearly = typeof ids?.yearly === "string" ? ids.yearly.trim() : "";
+    if (!plan || (!monthly && !yearly)) continue;
+    planPrices[plan] = { ...(monthly ? { monthly } : {}), ...(yearly ? { yearly } : {}) };
+  }
+  if (Object.keys(planPrices).length === 0) return [];
+
+  // Merge into the ACTIVE environment's credential blob (preserves the api key). Read the
+  // env-specific slot as the base — NOT the `encryptedCredentials` mirror, which may hold the
+  // OTHER environment's api key/config after an env switch.
+  let creds: { apiKey?: string; extra?: Record<string, unknown> } = {};
+  try {
+    creds = JSON.parse(decrypt(activeCredsBlob(conn)!));
+  } catch {
+    /* start from empty if unreadable */
+  }
+  creds.extra = { ...(creds.extra ?? {}), planPrices };
+  const encrypted = encrypt(JSON.stringify(creds));
+  const slot = conn.sandbox ? "sandboxCredentials" : "productionCredentials";
+  await Connection.updateOne(
+    { _id: conn._id },
+    { $set: { [slot]: encrypted, encryptedCredentials: encrypted } },
+  );
+
+  const planNames = Object.keys(planPrices);
+  const defs = await ToolDefinition.find({
+    connectionId: conn._id,
+    organizationId: orgId,
+    key: { $in: ["upgrade_subscription", "downgrade_subscription"] },
+  });
+  for (const def of defs) {
+    const schema = (def.jsonSchema as { properties?: { targetPlan?: { enum?: unknown } } }) ?? {};
+    if (schema.properties?.targetPlan) {
+      schema.properties.targetPlan.enum = planNames;
+      def.jsonSchema = schema as typeof def.jsonSchema;
+      def.markModified("jsonSchema");
+      await def.save();
+    }
+  }
+  return planNames;
+}
+
+// At connect time, auto-fetch the operator's Paddle/Stripe prices and pre-fill the
+// plan→price-id mapping so the subscription tools work immediately — no separate "Configure
+// plans" step needed. Best-effort: never throws (the operator can still configure manually),
+// and never clobbers an already-configured mapping for the environment being connected.
+async function autoPopulateBillingPlans(
+  conn: ConnCredsShape & { _id: unknown },
+  orgId: unknown,
+  provider: string,
+  sandbox: boolean,
+  apiKey: string,
+): Promise<void> {
+  if ((provider !== "paddle" && provider !== "stripe") || !apiKey) return;
+  try {
+    const existing = JSON.parse(decrypt(activeCredsBlob(conn)!)) as {
+      extra?: { planPrices?: Record<string, unknown> };
+    };
+    if (existing.extra?.planPrices && Object.keys(existing.extra.planPrices).length > 0) return;
+  } catch {
+    /* unreadable — fall through and try to populate */
+  }
+  try {
+    const prices = await fetchBillingCatalog(provider, sandbox, apiKey);
+    const suggested = suggestPlanPrices(prices);
+    if (Object.keys(suggested).length === 0) return;
+    const plans = await applyBillingPlanPrices(conn, orgId, suggested);
+    logger.info("[integrations] auto-populated billing plans on connect", {
+      provider,
+      plans: plans.length,
+    });
+  } catch (err) {
+    logger.warn("[integrations] auto-populate billing plans failed (configure manually)", {
+      provider,
+      err: (err as Error).message,
+    });
+  }
+}
+
+// Seed AND reactivate a connection's tool definitions from its adapter. `isActive` is forced
+// true (in $set) so RE-connecting a provider whose tools a prior disconnect turned off makes
+// them offerable to the AI again — the agent only sees `isActive:true` tools. `$setOnInsert`
+// seeds any brand-new adapter tools; existing rows keep their enablement (`enabledAgentIds`)
+// and operator edits. Used by BOTH the new-connection and reconnect (existing-connection) paths
+// so a reconnect never silently leaves the tools inactive.
+async function seedConnectionTools(
+  connId: unknown,
+  orgId: unknown,
+  adapter: { getTools(): Array<{ key: string } & Record<string, unknown>> },
+): Promise<void> {
+  await Promise.all(
+    adapter.getTools().map((t) =>
+      ToolDefinition.updateOne(
+        { connectionId: connId, key: t.key },
+        {
+          $set: { isActive: true },
+          $setOnInsert: {
+            connectionId: connId,
+            organizationId: orgId,
+            ...t,
+            enabledAgentIds: [],
+            ...seededGuardrails(t.key),
+          },
+        },
+        { upsert: true },
+      ),
+    ),
+  );
+}
+
 // A real JSON Schema is an object with `type:"object"` and a `properties` map.
 function isJsonObjectSchema(v: unknown): v is { type: "object"; properties: Record<string, unknown> } {
   return (
@@ -122,12 +296,34 @@ function inferSchemaFromSample(sample: Record<string, unknown>): {
   return { type: "object", properties, required };
 }
 
+// Make a webhook input schema strictly enforceable. The model sees this schema as the
+// tool's `parameters` AND the webhook adapter validates calls against it — but a genuine
+// JSON Schema pasted by an operator often omits `required`, so ajv would accept a call
+// that's missing the inputs the endpoint actually needs (the "schema sometimes skipped"
+// bug). When a schema declares properties but no non-empty `required` list, treat EVERY
+// declared property as required so the inputs are always collected and validated, never
+// guessed. (An explicit, non-empty `required` from the operator is respected as-is.)
+// We deliberately DON'T set additionalProperties:false — the dispatcher injects
+// server-side fields (e.g. email) into args for some tools, and rejecting those would
+// break otherwise-valid calls.
+function hardenWebhookSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const props = schema.properties;
+  const hasProps = props && typeof props === "object" && !Array.isArray(props) && Object.keys(props).length > 0;
+  const required = schema.required;
+  const hasRequired = Array.isArray(required) && required.length > 0;
+  if (hasProps && !hasRequired) {
+    return { ...schema, type: "object", required: Object.keys(props as Record<string, unknown>) };
+  }
+  return schema;
+}
+
 // Normalise whatever the operator submitted as a webhook tool's input schema into a
 // genuine object schema: pass a real schema through, infer one from a non-empty sample
 // object, else fall back to an empty (loose-args) schema so a bad definition can never
-// 400 the chat request.
+// 400 the chat request. In every case the result is hardened so its declared inputs are
+// actually enforced (see hardenWebhookSchema).
 function normalizeWebhookInputSchema(input: unknown): Record<string, unknown> {
-  if (isJsonObjectSchema(input)) return input as Record<string, unknown>;
+  if (isJsonObjectSchema(input)) return hardenWebhookSchema(input as Record<string, unknown>);
   if (input && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0) {
     return inferSchemaFromSample(input as Record<string, unknown>);
   }
@@ -527,6 +723,14 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
         existing.status = "active";
         if (name) existing.name = String(name);
         await existing.save();
+        // Reactivate this connection's tool definitions. A prior disconnect set them
+        // isActive:false; without this, RE-connecting revived the connection but left every
+        // tool inactive → the AI was never offered them (e.g. Stripe's subscription tools
+        // stayed off, so queries silently fell through to the other billing provider).
+        await seedConnectionTools(existing._id, orgId, adapter);
+        // Auto-fetch prices for the just-connected environment (e.g. adding production after
+        // sandbox) so its plan mapping is ready without a manual step.
+        await autoPopulateBillingPlans(existing, orgId, provider, isSandbox, String(apiKey));
         res.json({
           connection: { _id: existing._id, name: existing.name, status: existing.status },
           environment: isSandbox ? "sandbox" : "production",
@@ -550,31 +754,13 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
 
     // Seed tool definitions from adapter. Tools start DISABLED for every agent —
     // the operator wires the connection once here, then explicitly toggles it on
-    // per-agent in AI agent settings (enabledAgentIds defaults to []).
-    const tools = adapter.getTools();
-    await Promise.all(
-      tools.map((t) =>
-        ToolDefinition.updateOne(
-          { connectionId: conn._id, key: t.key },
-          {
-            // isActive lives in $set (not $setOnInsert) so RE-connecting an existing
-            // connection reactivates its tools. Disconnecting sets them isActive:false;
-            // without this, a reconnect would revive the connection but leave the tools
-            // inactive → the AI is never offered them ("I'm unable to file a ticket").
-            $set: { isActive: true },
-            $setOnInsert: {
-              connectionId: conn._id,
-              organizationId: orgId,
-              ...t,
-              enabledAgentIds: [],
-              // Subscription-change tools are seeded with OTP verification ON.
-              ...seededGuardrails(t.key),
-            },
-          },
-          { upsert: true },
-        ),
-      ),
-    );
+    // per-agent in AI agent settings (enabledAgentIds defaults to []). Subscription-change
+    // tools are seeded with OTP verification ON (see seededGuardrails).
+    await seedConnectionTools(conn._id, orgId, adapter);
+
+    // For a billing provider connected with an API key, auto-fetch prices and pre-fill the
+    // plan mapping now (tools were just seeded, so their targetPlan enum updates too).
+    if (apiKey) await autoPopulateBillingPlans(conn, orgId, provider, isSandbox, String(apiKey));
 
     res.json({ connection: { _id: conn._id, name: conn.name, status: conn.status } });
     return;
@@ -1104,11 +1290,12 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
     /* start from empty if the current blob can't be read */
   }
 
-  // Same schema handling as the CONNECT route: a genuine JSON Schema passes through, a
-  // pasted SAMPLE payload gets a schema inferred from it (so the inline form still
-  // renders), and anything unusable keeps the existing schema.
+  // Same schema handling as the CONNECT route: a genuine JSON Schema passes through
+  // (hardened so its inputs are actually enforced), a pasted SAMPLE payload gets a
+  // schema inferred from it (so the inline form still renders), and anything unusable
+  // keeps the existing schema.
   const schema = isJsonObjectSchema(inputSchema)
-    ? inputSchema
+    ? hardenWebhookSchema(inputSchema as Record<string, unknown>)
     : inputSchema && typeof inputSchema === "object" && !Array.isArray(inputSchema) && Object.keys(inputSchema).length > 0
       ? inferSchemaFromSample(inputSchema as Record<string, unknown>)
       : existing.inputSchema ?? { type: "object", properties: {}, required: [] };
@@ -1190,56 +1377,7 @@ router.get("/:connectionId/paddle-catalog", requireAuth, requireOrg, async (req:
   }
   const label = conn.provider === "stripe" ? "Stripe" : "Paddle";
   try {
-    let prices: CatalogPrice[];
-    if (conn.provider === "stripe") {
-      // Stripe: one call to /prices with the product expanded gives name + interval.
-      const headers = { Authorization: `Basic ${Buffer.from(`${key}:`).toString("base64")}` };
-      const pricesRes = await fetch("https://api.stripe.com/v1/prices?limit=100&active=true&expand[]=data.product", { headers });
-      if (!pricesRes.ok) {
-        res.status(502).json({ error: `Stripe returned HTTP ${pricesRes.status} listing prices.` });
-        return;
-      }
-      const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
-      prices = (pricesJson.data ?? []).map((p) => {
-        const interval = (p.recurring as { interval?: string } | null | undefined)?.interval;
-        const product = p.product as { id?: string; name?: string } | string | undefined;
-        const productObj = product && typeof product === "object" ? product : undefined;
-        return {
-          priceId: String(p.id ?? ""),
-          name: String(p.nickname ?? productObj?.name ?? ""),
-          interval: interval === "year" ? "year" : interval === "month" ? "month" : "one_time",
-          productId: productObj?.id ?? (typeof product === "string" ? product : ""),
-          productName: productObj?.name ?? "",
-        };
-      });
-    } else {
-      // Paddle: prices + products (two calls; price carries product_id + billing_cycle).
-      const baseUrl = conn.sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
-      const headers = { Authorization: `Bearer ${key}` };
-      const [pricesRes, productsRes] = await Promise.all([
-        fetch(`${baseUrl}/prices?per_page=100&status=active`, { headers }),
-        fetch(`${baseUrl}/products?per_page=100&status=active`, { headers }),
-      ]);
-      if (!pricesRes.ok) {
-        res.status(502).json({ error: `Paddle returned HTTP ${pricesRes.status} listing prices.` });
-        return;
-      }
-      const pricesJson = (await pricesRes.json()) as { data?: Array<Record<string, unknown>> };
-      const productsJson = (await productsRes.json().catch(() => ({}))) as { data?: Array<{ id?: string; name?: string }> };
-      const productName = new Map<string, string>();
-      for (const p of productsJson.data ?? []) if (p.id) productName.set(p.id, p.name ?? "");
-      prices = (pricesJson.data ?? []).map((p) => {
-        const cycle = (p.billing_cycle as { interval?: string } | null | undefined)?.interval;
-        const productId = String(p.product_id ?? "");
-        return {
-          priceId: String(p.id ?? ""),
-          name: String(p.name ?? ""),
-          interval: cycle === "year" ? "year" : cycle === "month" ? "month" : "one_time",
-          productId,
-          productName: productName.get(productId) ?? "",
-        };
-      });
-    }
+    const prices = await fetchBillingCatalog(conn.provider, Boolean(conn.sandbox), key);
     res.json({ prices, suggested: suggestPlanPrices(prices) });
   } catch (err) {
     res.status(502).json({ error: `Couldn't reach ${label}: ${(err as Error).message}` });
@@ -1261,53 +1399,7 @@ router.put("/:connectionId/paddle-plans", requireAuth, requireOrg, async (req: R
     res.status(400).json({ error: "planPrices object is required." });
     return;
   }
-  // Normalise: keep only plans with at least one price id; trim values.
-  const planPrices: Record<string, { monthly?: string; yearly?: string }> = {};
-  for (const [name, ids] of Object.entries(raw)) {
-    const plan = String(name).trim().toLowerCase();
-    const monthly = typeof ids?.monthly === "string" ? ids.monthly.trim() : "";
-    const yearly = typeof ids?.yearly === "string" ? ids.yearly.trim() : "";
-    if (!plan || (!monthly && !yearly)) continue;
-    planPrices[plan] = { ...(monthly ? { monthly } : {}), ...(yearly ? { yearly } : {}) };
-  }
-
-  // Merge into the ACTIVE environment's credential blob (preserves the api key).
-  // Read the env-specific slot as the base — NOT the `encryptedCredentials` mirror,
-  // which may hold the OTHER environment's api key/config after an env switch. Using
-  // the mirror would write planPrices onto the wrong environment's key.
-  let creds: { apiKey?: string; extra?: Record<string, unknown> } = {};
-  try {
-    creds = JSON.parse(decrypt(activeCredsBlob(conn)!));
-  } catch {
-    /* start from empty if unreadable */
-  }
-  creds.extra = { ...(creds.extra ?? {}), planPrices };
-  const encrypted = encrypt(JSON.stringify(creds));
-  const slot = conn.sandbox ? "sandboxCredentials" : "productionCredentials";
-  await Connection.updateOne(
-    { _id: conn._id },
-    { $set: { [slot]: encrypted, encryptedCredentials: encrypted } },
-  );
-
-  // Update the upgrade/downgrade tools' targetPlan enum to the operator's plan names.
-  const planNames = Object.keys(planPrices);
-  if (planNames.length > 0) {
-    const defs = await ToolDefinition.find({
-      connectionId: conn._id,
-      organizationId: req.orgId,
-      key: { $in: ["upgrade_subscription", "downgrade_subscription"] },
-    });
-    for (const def of defs) {
-      const schema = (def.jsonSchema as { properties?: { targetPlan?: { enum?: unknown } } }) ?? {};
-      if (schema.properties?.targetPlan) {
-        schema.properties.targetPlan.enum = planNames;
-        def.jsonSchema = schema as typeof def.jsonSchema;
-        def.markModified("jsonSchema");
-        await def.save();
-      }
-    }
-  }
-
+  const planNames = await applyBillingPlanPrices(conn, req.orgId, raw);
   res.json({ ok: true, plans: planNames });
 });
 
@@ -1449,6 +1541,7 @@ router.post("/paddle/webhook/:connectionId", async (req: Request, res: Response)
   }
   const raw = (req as unknown as { rawBody?: string }).rawBody ?? "";
   const sig = req.headers["paddle-signature"] as string | undefined;
+  console.log('WEBHOOK-LOG-PADDLE', raw, sig, loaded.webhookSecret);
   if (!verifyPaddleSignature(raw, sig, loaded.webhookSecret)) {
     res.status(401).json({ error: { code: "invalid_signature", message: "Bad signature." } });
     return;
@@ -1470,6 +1563,7 @@ router.post("/stripe/webhook/:connectionId", async (req: Request, res: Response)
   }
   const raw = (req as unknown as { rawBody?: string }).rawBody ?? "";
   const sig = req.headers["stripe-signature"] as string | undefined;
+  console.log('WEBHOOK-LOG-STRIPE', raw, sig, loaded.webhookSecret);
   if (!verifyStripeSignature(raw, sig, loaded.webhookSecret)) {
     res.status(401).json({ error: { code: "invalid_signature", message: "Bad signature." } });
     return;

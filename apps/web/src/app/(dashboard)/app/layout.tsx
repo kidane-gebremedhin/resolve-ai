@@ -24,10 +24,17 @@ async function safeGet<T>(path: string): Promise<T | null> {
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Hard subscription gate: no dashboard access without an active paid plan.
   // Unpaid orgs are sent to checkout (the only post-signup destination).
-  const sub = await safeGet<{ active?: boolean; plan?: string }>('/billing/subscription');
+  const sub = await safeGet<{
+    active?: boolean;
+    plan?: string;
+    status?: string;
+    cancelScheduledAt?: string | null;
+  }>('/billing/subscription');
   if (!sub?.active) {
     redirect('/checkout');
   }
+  // A scheduled cancel-at-period-end (still active) surfaces a warning on the header plan pill.
+  const cancellationPending = Boolean(sub?.cancelScheduledAt);
 
   // The org name is a fixed label; websites drive the scope switcher. Both come
   // from the API; the operator's current scope comes from the cookie.
@@ -43,6 +50,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       websites={websites ?? []}
       activeWebsiteId={activeWebsiteId}
       plan={sub?.plan ?? undefined}
+      cancellationPending={cancellationPending}
     >
       {/* Checkout is complete (this route is subscription-gated) — clear any
           plan stashed during pricing → checkout. */}

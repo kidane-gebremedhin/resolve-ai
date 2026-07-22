@@ -13,6 +13,24 @@ import { env } from "../../../config/env.js";
 // compile time (we don't register ajv-formats).
 const ajv = new Ajv({ allErrors: true, coerceTypes: true, strict: false });
 
+// Guarantee the input schema is actually enforced at call time. Operators (or older
+// connections created before schemas were hardened at save time) may store an object
+// schema that declares `properties` but no `required` list — ajv would then accept a
+// call missing every input, letting the model "skip" the schema. When a schema declares
+// properties but no non-empty `required`, require ALL of them so the inputs are validated,
+// not guessed. An explicit non-empty `required` is respected as authored.
+function enforceableSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const props = schema.properties;
+  const hasProps =
+    props && typeof props === "object" && !Array.isArray(props) && Object.keys(props).length > 0;
+  const required = schema.required;
+  const hasRequired = Array.isArray(required) && required.length > 0;
+  if (hasProps && !hasRequired) {
+    return { ...schema, required: Object.keys(props as Record<string, unknown>) };
+  }
+  return schema;
+}
+
 export class WebhookAdapter implements ProviderAdapter {
   readonly provider = "webhook";
 
@@ -58,7 +76,7 @@ export class WebhookAdapter implements ProviderAdapter {
     // in plain language (not the raw ajv error objects) so the model can ask the
     // customer for the right value instead of echoing internals or looping.
     if (inputSchema) {
-      const validate = ajv.compile(inputSchema);
+      const validate = ajv.compile(enforceableSchema(inputSchema));
       if (!validate(args)) {
         const problems = (validate.errors ?? [])
           .map((e) => {

@@ -1,7 +1,11 @@
 import crypto from "node:crypto";
 import type { Types } from "mongoose";
-import { ExternalSubscription, ProcessedWebhook } from "../../models/index.js";
+import { ExternalSubscription, ProcessedWebhook, Organization } from "../../models/index.js";
 import { logger } from "../../config/logger.js";
+import {
+  classifyReceiptAction,
+  sendSubscriptionReceipt,
+} from "../subscription-receipt.service.js";
 
 // Inbound webhook receiver for an OPERATOR's OWN Paddle/Stripe account. Each
 // operator connection registers a callback URL that points here with its
@@ -85,6 +89,9 @@ type PaddleEvent = {
     items?: { price?: { id?: string; billing_cycle?: { interval?: string } } }[];
     current_billing_period?: { ends_at?: string };
     canceled_at?: string | null;
+    // A pending change scheduled for period end (e.g. a cancel-at-period-end, which is
+    // how the widget cancels). Present before the definitive `subscription.canceled`.
+    scheduled_change?: { action?: string; effective_at?: string } | null;
   };
 };
 
@@ -98,6 +105,13 @@ export async function handlePaddleSubscriptionEvent(conn: ReceiverConnection, ev
   const interval = data.items?.[0]?.price?.billing_cycle?.interval;
   const plan = planNameForPriceId(conn.planPrices, priceId);
   const email = data.customer_id ? await resolvePaddleCustomerEmail(conn, data.customer_id) : undefined;
+  const price = priceId ? await resolvePaddlePriceAmount(conn, priceId) : undefined;
+  // Treat a scheduled cancel-at-period-end as a cancellation so the customer is notified
+  // when they cancel, not only when the subscription finally ends.
+  const scheduledCancel =
+    data.scheduled_change?.action === "cancel"
+      ? (data.scheduled_change.effective_at ?? new Date().toISOString())
+      : undefined;
 
   await upsertSnapshot({
     conn,
@@ -108,11 +122,41 @@ export async function handlePaddleSubscriptionEvent(conn: ReceiverConnection, ev
     plan,
     status: data.status,
     priceId,
+    amount: price?.amount,
+    currency: price?.currency,
     billingInterval: interval === "year" ? "year" : interval === "month" ? "month" : undefined,
     currentPeriodEnd: data.current_billing_period?.ends_at,
-    canceledAt: data.canceled_at ?? undefined,
+    canceledAt: data.canceled_at ?? scheduledCancel ?? undefined,
+    eventType: event.event_type,
     raw: event,
   });
+}
+
+// Fetch a Paddle price's recurring amount (major units) + currency for receipts and
+// upgrade/downgrade classification. Best-effort — returns undefined on any failure.
+async function resolvePaddlePriceAmount(
+  conn: ReceiverConnection,
+  priceId: string,
+): Promise<{ amount: number; currency: string } | undefined> {
+  if (!conn.apiKey) return undefined;
+  const baseUrl = conn.sandbox ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
+  try {
+    const res = await fetch(`${baseUrl}/prices/${encodeURIComponent(priceId)}`, {
+      headers: { Authorization: `Bearer ${conn.apiKey}` },
+    });
+    if (!res.ok) return undefined;
+    const json = (await res.json()) as { data?: { unit_price?: { amount?: string; currency_code?: string } } };
+    const raw = json.data?.unit_price?.amount;
+    const currency = json.data?.unit_price?.currency_code;
+    if (raw == null || !currency) return undefined;
+    // Paddle amounts are in the currency's minor units (e.g. cents).
+    const amount = Number(raw) / 100;
+    if (!Number.isFinite(amount)) return undefined;
+    return { amount, currency: currency.toUpperCase() };
+  } catch (err) {
+    logger.warn("[webhookReceiver] paddle price lookup failed", { err: (err as Error).message });
+    return undefined;
+  }
 }
 
 async function resolvePaddleCustomerEmail(conn: ReceiverConnection, customerId: string): Promise<string | undefined> {
@@ -151,7 +195,22 @@ type StripeEvent = {
       status?: string;
       current_period_end?: number;
       canceled_at?: number | null;
-      items?: { data?: { price?: { id?: string; nickname?: string; recurring?: { interval?: string } } }[] };
+      // The widget cancels via cancel_at_period_end; the definitive delete fires later.
+      cancel_at_period_end?: boolean;
+      cancel_at?: number | null;
+      items?: {
+        data?: {
+          // Stripe API 2025-03-31+ carries the period on the item, not the subscription.
+          current_period_end?: number;
+          price?: {
+            id?: string;
+            nickname?: string;
+            unit_amount?: number | null;
+            currency?: string;
+            recurring?: { interval?: string };
+          };
+        }[];
+      };
     };
   };
 };
@@ -162,9 +221,19 @@ export async function handleStripeSubscriptionEvent(conn: ReceiverConnection, ev
   if (!obj?.id) return;
   if (!(await claimEvent("stripe", String(conn._id), event.id))) return;
 
-  const price = obj.items?.data?.[0]?.price;
+  const item0 = obj.items?.data?.[0];
+  const price = item0?.price;
   const interval = price?.recurring?.interval;
+  const periodEnd = item0?.current_period_end ?? obj.current_period_end;
   const email = obj.customer ? await resolveStripeCustomerEmail(conn, obj.customer) : undefined;
+  // Stripe embeds the price (with unit_amount in minor units) in subscription events.
+  const amount =
+    price?.unit_amount != null && Number.isFinite(price.unit_amount) ? price.unit_amount / 100 : undefined;
+  // A scheduled cancel-at-period-end counts as a cancellation for the receipt (the
+  // widget cancels this way); `cancel_at` (or now) marks when it takes effect.
+  const scheduledCancelTs =
+    obj.cancel_at_period_end === true ? (obj.cancel_at ?? Math.floor(Date.now() / 1000)) : undefined;
+  const canceledTs = obj.canceled_at ?? scheduledCancelTs;
 
   await upsertSnapshot({
     conn,
@@ -176,9 +245,12 @@ export async function handleStripeSubscriptionEvent(conn: ReceiverConnection, ev
     plan: price?.nickname,
     status: obj.status,
     priceId: price?.id,
+    amount,
+    currency: price?.currency ? price.currency.toUpperCase() : undefined,
     billingInterval: interval === "year" ? "year" : interval === "month" ? "month" : undefined,
-    currentPeriodEnd: obj.current_period_end ? new Date(obj.current_period_end * 1000).toISOString() : undefined,
-    canceledAt: obj.canceled_at ? new Date(obj.canceled_at * 1000).toISOString() : undefined,
+    currentPeriodEnd: periodEnd ? new Date(periodEnd * 1000).toISOString() : undefined,
+    canceledAt: canceledTs ? new Date(canceledTs * 1000).toISOString() : undefined,
+    eventType: event.type,
     raw: event,
   });
 }
@@ -210,11 +282,23 @@ async function upsertSnapshot(args: {
   plan?: string;
   status?: string;
   priceId?: string;
+  amount?: number;
+  currency?: string;
   billingInterval?: "month" | "year";
   currentPeriodEnd?: string;
   canceledAt?: string;
+  eventType?: string;
   raw?: unknown;
 }): Promise<void> {
+  // Read the prior snapshot BEFORE the upsert so we can tell a creation from an
+  // upgrade/downgrade/cancel for the receipt email.
+  const prior = await ExternalSubscription.findOne({
+    connectionId: args.conn._id,
+    externalSubscriptionId: args.externalSubscriptionId,
+  })
+    .select("plan status amount customerEmail canceledAt pendingReceipt")
+    .lean();
+
   const set: Record<string, unknown> = {
     organizationId: args.conn.organizationId,
     connectionId: args.conn._id,
@@ -228,6 +312,8 @@ async function upsertSnapshot(args: {
   if (args.plan) set.plan = args.plan;
   if (args.status) set.status = args.status;
   if (args.priceId) set.priceId = args.priceId;
+  if (args.amount != null) set.amount = args.amount;
+  if (args.currency) set.currency = args.currency;
   if (args.billingInterval) set.billingInterval = args.billingInterval;
   if (args.currentPeriodEnd) set.currentPeriodEnd = new Date(args.currentPeriodEnd);
   set.canceledAt = args.canceledAt ? new Date(args.canceledAt) : null;
@@ -244,4 +330,87 @@ async function upsertSnapshot(args: {
     status: args.status,
     plan: args.plan,
   });
+
+  // Receipt email to the operator's CUSTOMER, under the operator's brand. Fire-and-forget
+  // so a mail hiccup never affects webhook processing; renewals/no-op events send nothing.
+  void sendExternalReceipt(args, prior);
+}
+
+async function sendExternalReceipt(
+  args: Parameters<typeof upsertSnapshot>[0],
+  prior: {
+    plan?: string | null;
+    status?: string | null;
+    amount?: number | null;
+    customerEmail?: string | null;
+    canceledAt?: Date | null;
+    pendingReceipt?: { action?: string | null; at?: Date | null } | null;
+  } | null,
+): Promise<void> {
+  try {
+    const to = args.email ?? prior?.customerEmail ?? undefined;
+    if (!to) return; // no customer to notify
+
+    // A widget tool change stamps the precise action (upgraded/downgraded/canceled). Prefer
+    // it when recent — the dispatcher's eager write clobbers the prior plan/amount we'd
+    // otherwise infer direction from. Consuming it (clearing below) also dedupes.
+    const pending = prior?.pendingReceipt;
+    const pendingFresh =
+      pending?.action && pending.at ? Date.now() - new Date(pending.at).getTime() < 15 * 60_000 : false;
+
+    const priorActive = prior?.status === "active" || prior?.status === "trialing";
+    const isActiveNow = args.status === "active" || args.status === "trialing";
+    const canceledNow =
+      args.eventType?.endsWith(".canceled") === true ||
+      args.eventType === "customer.subscription.deleted" ||
+      args.status === "canceled" ||
+      args.status === "paused" ||
+      (Boolean(args.canceledAt) && !prior?.canceledAt);
+
+    const action = pendingFresh
+      ? (pending!.action as "upgraded" | "downgraded" | "canceled")
+      : classifyReceiptAction({
+          hadActivePrior: priorActive,
+          isActiveNow,
+          isCanceled: canceledNow,
+          planChanged:
+            (prior?.plan ?? null) !== (args.plan ?? null) || (prior?.amount ?? null) !== (args.amount ?? null),
+          priorLevel: prior?.amount ?? null,
+          newLevel: args.amount ?? null,
+        });
+
+    // Consume the pending hint regardless of outcome so a later event (e.g. the definitive
+    // cancel) doesn't re-use it.
+    if (pending) {
+      await ExternalSubscription.updateOne(
+        { connectionId: args.conn._id, externalSubscriptionId: args.externalSubscriptionId },
+        { $unset: { pendingReceipt: 1 } },
+      ).catch(() => {});
+    }
+
+    if (!action) return;
+    // A cancel is observed twice (scheduled at period end, then the definitive event).
+    // If we already recorded a cancellation, don't email a second time.
+    if (action === "canceled" && !pendingFresh && prior?.canceledAt) return;
+
+    const org = await Organization.findById(args.conn.organizationId).select("name").lean();
+    const brand = (org?.name as string | undefined) ?? undefined;
+    const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Support";
+
+    await sendSubscriptionReceipt({
+      to,
+      action,
+      planName: args.plan ?? "your plan",
+      amount: args.amount ?? null,
+      currency: args.currency ?? "USD",
+      billingInterval: args.billingInterval ?? null,
+      periodEnd: args.currentPeriodEnd ? new Date(args.currentPeriodEnd) : null,
+      appName,
+      brandName: brand ?? appName,
+      fromName: brand ?? appName,
+      billingUrl: null, // the operator's own billing portal URL isn't known here
+    });
+  } catch (err) {
+    logger.warn("[webhookReceiver] customer receipt failed", { err: (err as Error).message });
+  }
 }

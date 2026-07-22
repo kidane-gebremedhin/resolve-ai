@@ -25,8 +25,24 @@ const externalSubscriptionSchema = new Schema(
     status: { type: String },
     priceId: { type: String },
     billingInterval: { type: String }, // "month" | "year"
+    // The recurring price, in MAJOR currency units (e.g. 199 = $199.00). Resolved from
+    // the provider's price object. Used to render receipts and to classify a plan change
+    // as an upgrade vs a downgrade (higher amount = upgrade).
+    amount: { type: Number },
+    currency: { type: String }, // ISO 4217, uppercased (e.g. "USD")
     currentPeriodEnd: { type: Date },
     canceledAt: { type: Date },
+    // Set by the dispatcher the moment a widget tool changes this subscription, so the
+    // (slightly later) provider webhook knows the PRECISE action — the dispatcher's eager
+    // snapshot write would otherwise overwrite the prior plan/amount the webhook uses to
+    // infer upgrade-vs-downgrade. The webhook prefers this action, then clears it.
+    pendingReceipt: {
+      type: new Schema(
+        { action: { type: String }, at: { type: Date } },
+        { _id: false },
+      ),
+      default: undefined,
+    },
     // The raw provider event that last updated this row, for debugging/audit.
     raw: { type: Schema.Types.Mixed },
   },

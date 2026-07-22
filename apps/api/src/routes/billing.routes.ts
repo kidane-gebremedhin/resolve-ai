@@ -81,6 +81,7 @@ router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: R
     currentPeriodStart: sub?.currentPeriodStart ?? null,
     currentPeriodEnd: sub?.currentPeriodEnd ?? null,
     canceledAt: sub?.canceledAt ?? null,
+    cancelScheduledAt: sub?.cancelScheduledAt ?? null,
   });
 });
 

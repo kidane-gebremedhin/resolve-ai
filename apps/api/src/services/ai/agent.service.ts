@@ -997,13 +997,34 @@ export async function generateAiReply(
             // result stands (a truthful definite answer).
             const softMiss = (d: Awaited<ReturnType<typeof dispatchToolCall>>) =>
               d.ok && (d.result as { found?: boolean } | null)?.found === false;
+            // Subscription lookups have three result tiers: an ACTIVE subscription (wins
+            // immediately), a found-but-inactive record (canceled/paused — worth reporting, but
+            // an active one in another provider should win), and a definite not-found. So for
+            // get_subscription we keep walking past an inactive record too, remembering it, and
+            // fall back to it only if no connection has an active subscription — otherwise a
+            // canceled sub in the primary would hide an active sub in the fallback (or be lost).
+            const isSubLookup = String(call.name) === "get_subscription";
+            const activeHit = (d: Awaited<ReturnType<typeof dispatchToolCall>>) =>
+              d.ok && (d.result as { hasSubscription?: boolean } | null)?.hasSubscription === true;
+            const inactiveRecord = (d: Awaited<ReturnType<typeof dispatchToolCall>>) =>
+              d.ok &&
+              (d.result as { found?: boolean } | null)?.found === true &&
+              (d.result as { hasSubscription?: boolean } | null)?.hasSubscription !== true;
             let dispatch = await dispatchToolCall(call.name, call.arguments, dispatchCtx, chain[0] || undefined);
+            let inactiveFallback: typeof dispatch | null =
+              isSubLookup && inactiveRecord(dispatch) ? dispatch : null;
             for (let i = 1; i < chain.length; i++) {
               const hardError = !dispatch.ok && dispatch.status === "error";
-              if (!hardError && !softMiss(dispatch)) break; // success or intentional stop (guardrail/OTP/rate-limit)
+              const keepWalking =
+                hardError || softMiss(dispatch) || (isSubLookup && inactiveRecord(dispatch));
+              if (!keepWalking) break; // active hit or intentional stop (guardrail/OTP/rate-limit)
               logger.info("[ai] tool primary missed/failed, trying fallback", { tool: call.name, attempt: i });
               dispatch = await dispatchToolCall(call.name, call.arguments, dispatchCtx, chain[i]);
+              if (isSubLookup && inactiveRecord(dispatch)) inactiveFallback = dispatch;
             }
+            // Ended without an active subscription but saw a canceled/paused record on the way →
+            // report that (so a canceled plan is surfaced) rather than a bare not-found.
+            if (isSubLookup && !activeHit(dispatch) && inactiveFallback) dispatch = inactiveFallback;
             if (dispatch.ok) {
               // Ticket creation returns a browsable ticket URL; never expose it to
               // the model, or it offers the customer a "track it here" link.
@@ -1131,7 +1152,9 @@ export async function generateAiReply(
       }
     } catch (err) {
       logger.error("[ai] streaming final call failed", { err: (err as Error).message });
-      streamedText = "Sorry, I hit a glitch — connecting you to a teammate.";
+      // Generic, non-committal error — don't promise a human handoff here (the escalation
+      // action is decided by the meta-pass below, not by this fallback string).
+      streamedText = "Sorry, I encountered some issues, please try again later.";
     }
 
     // Concurrent meta-pass for confidence + action.
