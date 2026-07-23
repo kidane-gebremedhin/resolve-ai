@@ -458,7 +458,13 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
     webhookReceiver: webhookReceiverOf(conn),
   });
 
-  const providers = adapters.flatMap((a) => {
+  // Optional display allow-list (INTEGRATION_ALLOWED_TOOLS): show only the listed providers on
+  // the integrations page. Filtering is purely presentational — it never touches `getAdapter`
+  // (connect/execute) or existing connections, so already-configured integrations keep working
+  // even if hidden here. Unset/empty → show all. Unknown ids simply don't match anything.
+  const allowedTools = env.integrationAllowedTools;
+  const visibleAdapters = allowedTools ? adapters.filter((a) => allowedTools.has(a.provider)) : adapters;
+  const providers = visibleAdapters.flatMap((a) => {
     const staticTools = a.getTools().map((t) => ({ key: t.key, displayName: t.displayName, description: t.description }));
     // Webhook is a multi-instance connector: each connection is its own tool, so
     // emit one card per existing webhook connection plus a blank card to add more.
@@ -635,6 +641,18 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
     // stored in its environment's slot so they can add a separate sandbox/production
     // endpoint later and switch between them (see the /webhook-endpoint route).
     const whSandbox = Boolean(sandbox);
+    // Reject an invalid endpoint UP FRONT — the same gate api-key connects get. Calls the
+    // webhook's verifyCredentials (reachability + a 2xx from the configured endpoint), so a URL
+    // that can't be reached or doesn't return success is never stored as a "connected"
+    // integration. `credentials` already has the { extra: { url, method, auth… } } shape the
+    // verifier reads. (Skipped only if the adapter somehow lacks a verifier.)
+    const whCheck = await (adapter as {
+      verifyCredentials?: (c: unknown, s: boolean) => Promise<{ ok: boolean; error?: string }>;
+    }).verifyCredentials?.(credentials, whSandbox);
+    if (whCheck && !whCheck.ok) {
+      res.status(400).json({ error: whCheck.error ?? "Couldn't verify the webhook endpoint." });
+      return;
+    }
     const whEncrypted = encrypt(JSON.stringify(credentials));
     const conn = await Connection.create({
       organizationId: orgId,

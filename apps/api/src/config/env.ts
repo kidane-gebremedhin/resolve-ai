@@ -65,6 +65,16 @@ export const env = {
   webBaseUrl: optional("WEB_INTERNAL_URL", "http://localhost:3000"),
   // Integration webhook outbound call timeout (ms).
   webhookTimeoutMs: Number(optional("WEBHOOK_TIMEOUT_MS", "10000")),
+  // Optional allow-list controlling which integration providers appear on the integrations
+  // page. DISPLAY FILTERING ONLY — it never affects connect/execute or existing connections.
+  // Comma-separated provider ids (e.g. "jira,stripe,webhook"); matching is case-insensitive and
+  // whitespace-trimmed, and unknown ids are silently ignored. Unset/empty → show all providers.
+  integrationAllowedTools: ((): Set<string> | null => {
+    const raw = process.env.INTEGRATION_ALLOWED_TOOLS;
+    if (!raw || !raw.trim()) return null;
+    const set = new Set(raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+    return set.size > 0 ? set : null;
+  })(),
   // OTP expiry for identity-verification step in high-stakes tool calls (seconds).
   otpExpirySeconds: Number(optional("OTP_EXPIRY_SECONDS", "600")),
   // SMTP fallback. The mailer prefers the admin panel's stored SMTP
