@@ -100,13 +100,19 @@ function controlsLayer(controls: ConversationControls | undefined): string {
 }
 
 const JIRA_TOOL_INSTRUCTIONS = `Jira integration:
-You have access to create_support_ticket. Use it proactively — do NOT wait for the customer to ask for a human.
+You have access to create_support_ticket. Use it proactively for a GENUINE unresolved issue — do NOT wait for the customer to ask for a human.
 
 Call create_support_ticket in ANY of these situations:
-1. The knowledge base returned no useful results after at least two searches AND you cannot answer the customer's question confidently.
+1. The customer asked a real question, the knowledge base returned no useful results after at least two searches, AND you cannot answer it confidently.
 2. The customer reports a bug, error, or broken feature — even if you answered their other questions.
 3. The customer has a feature request or feedback.
 4. The conversation is being escalated to a human (call it BEFORE escalate_conversation).
+
+Do NOT create a ticket — and do NOT claim you "logged the issue" or notified the team — when there is no actual unresolved issue. In particular, when the customer is:
+- ending or closing the conversation, saying goodbye, or confirming they're done ("that's all", "close this", "we're good", "no thanks", "bye");
+- thanking you, greeting you, or making small talk;
+- confirming their issue is already resolved.
+In those cases just reply naturally (a brief acknowledgement or sign-off). If they've confirmed the issue is resolved, use resolve_conversation instead — never a ticket. A message that is only a closing/greeting/thanks is NOT a "no KB results" situation, so situation 1 does not apply to it.
 
 How to fill the ticket:
 - summary: One clear sentence describing the issue (e.g. "User cannot reset password — reset email not arriving").

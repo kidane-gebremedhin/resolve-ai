@@ -975,6 +975,10 @@ endpoint, so a test request (POST `{}`) reaches the operator's handler.
    **custom-webhook** connect path: `verifyCredentials` runs before `Connection.create`, so a
    webhook whose endpoint is unreachable or doesn't return a 2xx is rejected during
    initialization (the connect form shows the reason) rather than stored and only failing later.
+   The webhook **edit** routes are gated the same way (shared `verifyWebhookReachable` helper):
+   `POST /:connectionId/webhook-endpoint` (add/replace an environment's endpoint) and
+   `PATCH /:connectionId/webhook-config` (full edit) both verify before persisting, so a bad URL
+   edit can't repoint a connection at a dead endpoint.
 2. **`POST /:connectionId/verify` (manual "Test connection")** — re-checks the
    credentials of the environment named in the body (`{sandbox}`, Changelog 4), reading
    that env's own slot (never the mirror), for ANY connection including OAuth ones that

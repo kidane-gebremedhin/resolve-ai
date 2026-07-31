@@ -594,6 +594,20 @@ router.get("/jira/projects", requireAuth, requireOrg, async (req: Request, res: 
   }
 });
 
+// Run the webhook adapter's reachability/2xx check against a to-be-stored credentials blob.
+// Shared by the webhook CONNECT and the two webhook EDIT routes so an unreachable / non-2xx
+// endpoint is rejected before it's ever persisted. A truthy `{ ok:false }` should 400 the caller.
+async function verifyWebhookReachable(
+  credentials: unknown,
+  sandbox: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const adapter = getAdapter("webhook") as {
+    verifyCredentials?: (c: unknown, s: boolean) => Promise<{ ok: boolean; error?: string }>;
+  } | null;
+  if (!adapter?.verifyCredentials) return { ok: true };
+  return adapter.verifyCredentials(credentials, sandbox);
+}
+
 // ---- POST /integrations/:provider/connect ---- start OAuth or store API key
 router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, res: Response) => {
   const orgId = req.orgId;
@@ -646,10 +660,8 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
     // that can't be reached or doesn't return success is never stored as a "connected"
     // integration. `credentials` already has the { extra: { url, method, auth… } } shape the
     // verifier reads. (Skipped only if the adapter somehow lacks a verifier.)
-    const whCheck = await (adapter as {
-      verifyCredentials?: (c: unknown, s: boolean) => Promise<{ ok: boolean; error?: string }>;
-    }).verifyCredentials?.(credentials, whSandbox);
-    if (whCheck && !whCheck.ok) {
+    const whCheck = await verifyWebhookReachable(credentials, whSandbox);
+    if (!whCheck.ok) {
       res.status(400).json({ error: whCheck.error ?? "Couldn't verify the webhook endpoint." });
       return;
     }
@@ -1259,6 +1271,12 @@ router.post("/:connectionId/webhook-endpoint", requireAuth, requireOrg, async (r
     },
   };
   const isSandbox = Boolean(sandbox);
+  // Reject an unreachable / non-2xx endpoint before persisting it (same gate as connect).
+  const epCheck = await verifyWebhookReachable(credentials, isSandbox);
+  if (!epCheck.ok) {
+    res.status(400).json({ error: epCheck.error ?? "Couldn't verify the webhook endpoint." });
+    return;
+  }
   const encrypted = encrypt(JSON.stringify(credentials));
   const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
   // Store into the target slot AND make it the active environment (the operator is
@@ -1330,6 +1348,13 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
     },
   };
   const isSandbox = Boolean(conn.sandbox);
+  // Reject an unreachable / non-2xx endpoint before saving the edit (same gate as connect), so a
+  // bad URL edit can't leave the connection pointing at a dead endpoint.
+  const cfgCheck = await verifyWebhookReachable(credentials, isSandbox);
+  if (!cfgCheck.ok) {
+    res.status(400).json({ error: cfgCheck.error ?? "Couldn't verify the webhook endpoint." });
+    return;
+  }
   const encrypted = encrypt(JSON.stringify(credentials));
   const slot = isSandbox ? "sandboxCredentials" : "productionCredentials";
   const connSet: Record<string, unknown> = { [slot]: encrypted, encryptedCredentials: encrypted };

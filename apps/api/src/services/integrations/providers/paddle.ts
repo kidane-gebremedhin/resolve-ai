@@ -37,7 +37,6 @@ type PaddleSub = {
   currentInterval: BillingInterval;
   currentQuantity: number;
   nextBilledAt?: string;
-  canceledAt?: string;
 };
 
 export class PaddleAdapter implements ProviderAdapter {
@@ -173,7 +172,7 @@ export class PaddleAdapter implements ProviderAdapter {
     // can't proceed without a subscription).
     const resolveSubscription = async (
       email: string,
-      opts?: { softMissing?: boolean; includeInactive?: boolean },
+      opts?: { softMissing?: boolean },
     ): Promise<PaddleSub | null> => {
       // Guard the common race where the tool fires before the widget has captured
       // the visitor's email (contact form not yet completed): querying Paddle with
@@ -195,25 +194,12 @@ export class PaddleAdapter implements ProviderAdapter {
         if (opts?.softMissing) return null;
         throw new Error(`No Paddle customer found for ${email}.`);
       }
+      // Only active/trialing count as "having a subscription". A canceled/paused subscription is
+      // treated as no subscription (get_subscription then returns the not-found message).
       const subs = await getJson(
         `${baseUrl}/subscriptions?customer_id=${customer.id}&status=active&status=trialing`,
       );
-      let list = (subs.data as Array<Record<string, unknown>> | undefined) ?? [];
-      if (list.length === 0 && opts?.includeInactive) {
-        // No live subscription — surface the most recent canceled/paused one so a READ can
-        // report it ("your Pro plan was canceled on …") instead of a bare "no subscription".
-        // (Mutations never pass includeInactive: you can't upgrade/cancel an ended sub.)
-        const past = await getJson(
-          `${baseUrl}/subscriptions?customer_id=${customer.id}&status=canceled&status=paused`,
-        );
-        list = (past.data as Array<Record<string, unknown>> | undefined) ?? [];
-        // Most-recently-ended first, so list[0] is the latest.
-        list.sort((a, b) => {
-          const ta = new Date((a.canceled_at as string) ?? (a.updated_at as string) ?? 0).getTime();
-          const tb = new Date((b.canceled_at as string) ?? (b.updated_at as string) ?? 0).getTime();
-          return tb - ta;
-        });
-      }
+      const list = (subs.data as Array<Record<string, unknown>> | undefined) ?? [];
       if (list.length === 0) {
         if (opts?.softMissing) return null;
         throw new Error(`No active subscription found for ${email}.`);
@@ -243,38 +229,19 @@ export class PaddleAdapter implements ProviderAdapter {
         currentInterval,
         currentQuantity: item0?.quantity ?? 1,
         nextBilledAt: sub.next_billed_at as string | undefined,
-        canceledAt: sub.canceled_at as string | undefined,
       };
     };
 
     if (toolKey === "get_subscription") {
-      // includeInactive so a canceled/paused subscription is reported (not swallowed as
-      // "no subscription") — the customer should hear "your Pro plan was canceled on …".
-      const sub = await resolveSubscription(String(args.email), { softMissing: true, includeInactive: true });
-      // Explicit not-found. The email doesn't map to a customer/subscription in our
-      // records — state that plainly; never guess a plan.
+      const sub = await resolveSubscription(String(args.email), { softMissing: true });
+      // Only active/trialing subscriptions count. A not-found (incl. a canceled/paused sub, which
+      // resolveSubscription treats as none) states plainly that there's no subscription — never
+      // guess a plan.
       if (!sub) {
         return {
           found: false,
           hasSubscription: false,
           message: "No subscription is associated with this email address in our records.",
-        };
-      }
-      const isActive = sub.status === "active" || sub.status === "trialing";
-      if (!isActive) {
-        // A subscription EXISTS but has ended (canceled) or is paused. Report it clearly so
-        // the assistant can tell the customer their prior plan + when it ended.
-        return {
-          found: true,
-          hasSubscription: false,
-          status: sub.status,
-          plan: sub.plan ?? "current plan",
-          canceledAt: sub.canceledAt,
-          subscriptionId: sub.id,
-          message:
-            sub.status === "paused"
-              ? `The ${sub.plan ?? "current"} subscription is currently paused.`
-              : `The ${sub.plan ?? "current"} subscription was canceled${sub.canceledAt ? ` on ${new Date(sub.canceledAt).toISOString().slice(0, 10)}` : ""} and is no longer active.`,
         };
       }
       return {

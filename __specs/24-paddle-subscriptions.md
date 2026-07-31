@@ -114,14 +114,13 @@ Subscription lookups resolve the customer by **email** (the identifier):
 - **Customer name backfill.** The overlay checkout creates the customer with just an email (Paddle
   shows "-" for the name). `handlePaddleEvent` backfills the name from the org **owner**
   (`backfillPaddleCustomerName`) when empty — best-effort, idempotent, runs on the reconcile too.
-- **Canceled/paused subscriptions are reported, not hidden.** `resolveSubscription(...,
-  { includeInactive: true })` (READs only — mutations still need an active sub) falls back to the
-  most recently-ended subscription, and `get_subscription` returns `{ found: true,
-  hasSubscription: false, status, plan, canceledAt, message: "The <Plan> subscription was canceled
-  on … and is no longer active." }`. The `agent.service` primary→fallback chain uses a 3-tier
-  preference: an **active** subscription in any connection wins; a canceled/paused record is
-  reported only if no connection has an active one (so a canceled sub in the primary can't hide an
-  active sub in the fallback, nor be lost by walking the chain).
+- **Only active/trialing count as "having a subscription."** `resolveSubscription` queries
+  `status=active&status=trialing` only; a canceled/paused subscription is treated as **none**, so
+  `get_subscription` returns the plain not-found message (`{ found: false, hasSubscription: false,
+  message: "No subscription is associated with this email address…" }`) — never a "your plan was
+  canceled" report. (An earlier iteration that surfaced canceled subs with an `includeInactive`
+  option + a 3-tier chain in `agent.service` was reverted per product decision; the chain is back
+  to the simple soft-miss walk.)
 
 ### `get_subscription` resolves ONLY from connected integrations (2026-07 batch)
 The widget's `get_subscription` (and the other subscription tools) resolve a customer's

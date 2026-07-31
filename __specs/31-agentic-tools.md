@@ -115,6 +115,16 @@ concluding it can't help, it must re-read the listed tool descriptions and match
 by meaning; if any tool's description covers the request, call that tool instead of falling
 back to the KB. (Tool descriptions are already injected via `integrationTools`.)
 
+### No support ticket for closing/farewell intents (2026-07 batch)
+`JIRA_TOOL_INSTRUCTIONS` told the model to create tickets **proactively**, and situation 1 ("KB
+returned no useful results … can't answer confidently") tripped on conversation-**closing** or
+farewell messages (which aren't real questions, so KB is empty) — the model filed a ticket and
+replied "I've logged the issue with our team." The instructions now (a) scope situation 1 to a
+**real question**, and (b) add an explicit exclusion: do NOT create a ticket (or claim one was
+logged) when the customer is ending/closing the conversation, saying goodbye/thanks, greeting, or
+confirming they're already resolved — reply naturally, and use `resolve_conversation` if they
+confirmed resolution.
+
 ### Support-ticket description + issue-scoped transcript (updated, 2026-07 batch)
 The ticket **description** is the model's **concise, issue-only** summary (2–5 sentences),
 directed by `JIRA_TOOL_INSTRUCTIONS` in `prompts.ts` — never the raw chat.
