@@ -180,12 +180,22 @@ export class PaddleAdapter implements ProviderAdapter {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         throw new Error("A valid account email is required. Ask the customer for the email on their account, then try again.");
       }
-      const cust = await getJson(`${baseUrl}/customers?email=${encodeURIComponent(email)}`);
-      const customer = (cust.data as { id: string }[] | undefined)?.[0];
+      // Email is the identifier, so resolve the customer by email regardless of status.
+      // Paddle's list-customers defaults to ACTIVE only; an operator can reuse a customer
+      // across subscriptions and it may be ARCHIVED (e.g. after an earlier cancel), yet still
+      // hold the live subscription we need — so ask for both statuses or we'd miss them.
+      const cust = await getJson(
+        `${baseUrl}/customers?email=${encodeURIComponent(email)}&status=active&status=archived`,
+      );
+      const customers = (cust.data as { id: string; status?: string }[] | undefined) ?? [];
+      // Prefer an active customer when several share the email; fall back to the first.
+      const customer = customers.find((c) => c.status === "active") ?? customers[0];
       if (!customer) {
         if (opts?.softMissing) return null;
         throw new Error(`No Paddle customer found for ${email}.`);
       }
+      // Only active/trialing count as "having a subscription". A canceled/paused subscription is
+      // treated as no subscription (get_subscription then returns the not-found message).
       const subs = await getJson(
         `${baseUrl}/subscriptions?customer_id=${customer.id}&status=active&status=trialing`,
       );
@@ -224,8 +234,9 @@ export class PaddleAdapter implements ProviderAdapter {
 
     if (toolKey === "get_subscription") {
       const sub = await resolveSubscription(String(args.email), { softMissing: true });
-      // Explicit not-found. The email doesn't map to a customer/subscription in our
-      // records — state that plainly; never guess a plan.
+      // Only active/trialing subscriptions count. A not-found (incl. a canceled/paused sub, which
+      // resolveSubscription treats as none) states plainly that there's no subscription — never
+      // guess a plan.
       if (!sub) {
         return {
           found: false,
@@ -276,8 +287,13 @@ export class PaddleAdapter implements ProviderAdapter {
       if (sub.currentPriceId === newPriceId) {
         return { ok: true, plan: targetPlan, status: sub.status, noChange: true, message: `Already on the ${targetPlan} plan.` };
       }
-      // Replace the priced item, preserving the existing seat quantity, and prorate
-      // immediately so the change (and its cost) is applied now.
+      // Replace the priced item, preserving the existing seat quantity.
+      //  - UPGRADE: bill the prorated delta NOW. `prorated_immediately` calculates the
+      //    difference and charges the customer's payment method this period (so an upgrade
+      //    is never granted free until the next renewal).
+      //  - DOWNGRADE: kept as-is — Paddle's `prorated_immediately` applies the proration
+      //    credit at the switch; downgrade behavior is unchanged.
+      const isUpgrade = toolKey === "upgrade_subscription";
       const updated = await getJson(`${baseUrl}/subscriptions/${sub.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -286,12 +302,19 @@ export class PaddleAdapter implements ProviderAdapter {
         }),
       });
       const data = (updated.data ?? updated) as Record<string, unknown>;
+      const status = (data.status as string | undefined) ?? sub.status;
+      // If the upgrade's prorated charge didn't clear, Paddle leaves the subscription
+      // past_due — surface it so the assistant doesn't report a clean upgrade.
+      if (isUpgrade && status === "past_due") {
+        throw new Error("The plan changed but the prorated payment for the upgrade didn't go through. Please check the payment method on file.");
+      }
       return {
         ok: true,
         plan: targetPlan,
         billingInterval: sub.currentInterval === "year" ? "yearly" : "monthly",
-        status: data.status ?? sub.status,
+        status,
         subscriptionId: sub.id,
+        ...(isUpgrade ? { chargedProratedDelta: true } : {}),
       };
     }
 

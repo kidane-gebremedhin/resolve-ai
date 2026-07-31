@@ -33,6 +33,7 @@ import {
   ClipboardList,
   MessageSquareHeart,
   ThumbsDown,
+  AlertTriangle,
 } from 'lucide-react';
 import { Logo } from '@/components/site/Logo';
 import { Input } from '@csb/ui';
@@ -324,12 +325,14 @@ export function AppShell({
   websites = [],
   activeWebsiteId = null,
   plan,
+  cancellationPending = false,
 }: {
   children: React.ReactNode;
   orgName?: string;
   websites?: ScopeWebsite[];
   activeWebsiteId?: string | null;
   plan?: string;
+  cancellationPending?: boolean;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -380,9 +383,20 @@ export function AppShell({
             {plan ? (
               <Link
                 href="/app/billing"
-                title="Manage your plan"
-                className="hidden items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 text-xs hover:bg-muted sm:inline-flex"
+                title={
+                  cancellationPending
+                    ? 'Your subscription is scheduled to cancel — manage your plan'
+                    : 'Manage your plan'
+                }
+                className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs sm:inline-flex ${
+                  cancellationPending
+                    ? 'border-warning/50 bg-warning/10 hover:bg-warning/20'
+                    : 'border-border bg-background hover:bg-muted'
+                }`}
               >
+                {cancellationPending && (
+                  <AlertTriangle className="h-3.5 w-3.5 text-warning" aria-label="Subscription scheduled to cancel" />
+                )}
                 <span className="font-medium capitalize">{plan}</span>
                 <span className="text-muted-foreground">· Change plan</span>
               </Link>

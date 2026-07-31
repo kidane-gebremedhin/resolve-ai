@@ -185,8 +185,9 @@ export class StripeAdapter implements ProviderAdapter {
     if (toolKey === "lookup_order") {
       const id = args.orderId as string;
       const endpoint = id.startsWith("ch_") ? "charges" : "payment_intents";
-      const res = await fetch(`${base}/${endpoint}/${id}`, { headers });
-      return res.json();
+      // Route through stripeFetch so a not-found id throws a clear error instead of returning
+      // Stripe's raw `{ error: … }` body (which the model might present as a real order).
+      return stripeFetch(`/${endpoint}/${id}`);
     }
 
     if (toolKey === "issue_refund") {
@@ -196,8 +197,10 @@ export class StripeAdapter implements ProviderAdapter {
         amount: String(amountCents),
         ...(args.reason ? { reason: args.reason as string } : {}),
       });
-      const res = await fetch(`${base}/refunds`, { method: "POST", headers, body });
-      return res.json();
+      // stripeFetch throws on a Stripe error (already refunded, unknown charge, …) so a failed
+      // refund surfaces as an error the assistant reports — never a silent error object it
+      // could mistake for a successful refund.
+      return stripeFetch(`/refunds`, { method: "POST", body });
     }
 
     // ---- Subscription tools (operator's OWN Stripe, resolved by customer email) --------
@@ -221,26 +224,37 @@ export class StripeAdapter implements ProviderAdapter {
       }
       const subs = await stripeFetch(`/subscriptions?customer=${customer.id}&status=all&limit=100`);
       const list = (subs.data as Array<Record<string, unknown>> | undefined) ?? [];
-      const active = list.find((s) => s.status === "active" || s.status === "trialing");
-      if (!active) {
+      // Only active/trialing count as "having a subscription"; a canceled/paused sub is treated
+      // as none (get_subscription then returns the not-found message).
+      const chosen = list.find((s) => s.status === "active" || s.status === "trialing");
+      if (!chosen) {
         if (opts?.softMissing) return null;
         throw new Error(`No active subscription found for ${email}.`);
       }
-      const items = ((active.items as { data?: Array<Record<string, unknown>> } | undefined)?.data) ?? [];
+      const items = ((chosen.items as { data?: Array<Record<string, unknown>> } | undefined)?.data) ?? [];
       const item0 = items[0] as
-        | { id?: string; quantity?: number; price?: { id?: string; recurring?: { interval?: string } } }
+        | {
+            id?: string;
+            quantity?: number;
+            current_period_end?: number;
+            price?: { id?: string; recurring?: { interval?: string } };
+          }
         | undefined;
       const currentPriceId = item0?.price?.id;
       const currentInterval: BillingInterval = item0?.price?.recurring?.interval === "year" ? "year" : "month";
       return {
-        id: String(active.id),
-        status: active.status as string | undefined,
+        id: String(chosen.id),
+        status: chosen.status as string | undefined,
         itemId: item0?.id,
         currentPriceId,
         plan: planForPriceId(planPrices, currentPriceId),
         currentInterval,
         currentQuantity: item0?.quantity ?? 1,
-        currentPeriodEnd: active.current_period_end as number | undefined,
+        // Stripe API 2025-03-31+ moved `current_period_end` from the subscription object onto
+        // each subscription ITEM. Prefer the item's value, fall back to the (older) top-level
+        // field so both API versions report the renewal/cancellation date correctly.
+        currentPeriodEnd:
+          item0?.current_period_end ?? (chosen.current_period_end as number | undefined),
       };
     };
 
@@ -249,6 +263,8 @@ export class StripeAdapter implements ProviderAdapter {
 
     if (toolKey === "get_subscription") {
       const sub = await resolveSubscription(String(args.email), { softMissing: true });
+      // Only active/trialing subscriptions count. A not-found (incl. a canceled/paused sub, which
+      // resolveSubscription treats as none) states plainly that there's no subscription.
       if (!sub) {
         return { found: false, hasSubscription: false, message: "No subscription is associated with this email address in our records." };
       }
@@ -291,19 +307,34 @@ export class StripeAdapter implements ProviderAdapter {
         return { ok: true, plan: targetPlan, status: sub.status, noChange: true, message: `Already on the ${targetPlan} plan.` };
       }
       if (!sub.itemId) throw new Error("Could not resolve the subscription item to update.");
-      // Replace the priced item, preserving the seat quantity, and prorate the change.
+      // Replace the priced item, preserving the seat quantity.
+      //  - UPGRADE: charge the prorated delta NOW. `always_invoice` immediately creates and
+      //    charges an invoice for the difference, so the customer pays the delta within the
+      //    current period (fixes the edge case where an upgrade took effect free until the
+      //    next renewal). `create_prorations` alone only defers the delta to the next invoice.
+      //  - DOWNGRADE: kept as-is — `create_prorations` records the proration credit against
+      //    the next invoice; no immediate charge or refund.
+      const isUpgrade = toolKey === "upgrade_subscription";
       const body = new URLSearchParams();
       body.set("items[0][id]", sub.itemId);
       body.set("items[0][price]", newPriceId);
       body.set("items[0][quantity]", String(sub.currentQuantity));
-      body.set("proration_behavior", "create_prorations");
+      body.set("proration_behavior", isUpgrade ? "always_invoice" : "create_prorations");
       const updated = await stripeFetch(`/subscriptions/${sub.id}`, { method: "POST", body });
+      // On an upgrade the delta invoice is created + paid off the customer's default payment
+      // method. If it couldn't be paid, Stripe leaves the subscription past_due/unpaid —
+      // surface that so the assistant doesn't claim a clean upgrade.
+      const status = (updated.status as string | undefined) ?? sub.status;
+      if (isUpgrade && (status === "past_due" || status === "unpaid" || status === "incomplete")) {
+        throw new Error("The plan changed but the prorated payment for the upgrade didn't go through. Please check the payment method on file.");
+      }
       return {
         ok: true,
         plan: targetPlan,
         billingInterval: sub.currentInterval === "year" ? "yearly" : "monthly",
-        status: updated.status ?? sub.status,
+        status,
         subscriptionId: sub.id,
+        ...(isUpgrade ? { chargedProratedDelta: true } : {}),
       };
     }
 

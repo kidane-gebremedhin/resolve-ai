@@ -96,13 +96,52 @@ Three root causes were fixed so a clearly-defined webhook tool actually works:
   webhook adapter also returns clear, non-leaky error messages so the model surfaces a
   truthful failure rather than papering over an opaque one.
 
-### Support-ticket description — concise summary (updated, Changelog 1)
-Superseded the earlier full-transcript injection. The dispatcher no longer dumps
-the whole conversation into the ticket: `JIRA_TOOL_INSTRUCTIONS` in
-`prompts.ts` direct the model to write a **concise, issue-only** `description`
-(2–5 sentences). For `create_support_ticket` the dispatcher only overrides the
-**project key** with the agent's operator-configured `jiraProjectKey` (per-agent
-routing), so tickets land on the right board without leaking unrelated chat.
+**Webhook input schema is always enforced (2026-07 batch).** A genuine JSON Schema pasted
+by an operator often omits a `required` list, so ajv would accept a call missing the inputs
+the endpoint needs (the "schema sometimes skipped" bug). Two guards now close this:
+- **Save time** — `hardenWebhookSchema()` in `integrations.routes.ts` (applied on both
+  connect and edit): when a schema declares `properties` but no non-empty `required`, every
+  declared property becomes required. An explicit `required` list is respected as authored.
+  This drives both the tool schema the model sees and the adapter's validation.
+- **Call time** — `enforceableSchema()` in the webhook adapter applies the same hardening
+  before validating, so **pre-existing** connections (whose schemas were stored before this
+  change) are enforced too, without a data migration.
+- `additionalProperties` is intentionally left open, because the dispatcher injects
+  server-side fields (e.g. `email`) into some tool calls.
+
+**Check tool descriptions before any KB fallback (2026-07 batch).** The integration-tools
+prompt layer now instructs the model that, before running a knowledge-base search or
+concluding it can't help, it must re-read the listed tool descriptions and match the request
+by meaning; if any tool's description covers the request, call that tool instead of falling
+back to the KB. (Tool descriptions are already injected via `integrationTools`.)
+
+### No support ticket for closing/farewell intents (2026-07 batch)
+`JIRA_TOOL_INSTRUCTIONS` told the model to create tickets **proactively**, and situation 1 ("KB
+returned no useful results … can't answer confidently") tripped on conversation-**closing** or
+farewell messages (which aren't real questions, so KB is empty) — the model filed a ticket and
+replied "I've logged the issue with our team." The instructions now (a) scope situation 1 to a
+**real question**, and (b) add an explicit exclusion: do NOT create a ticket (or claim one was
+logged) when the customer is ending/closing the conversation, saying goodbye/thanks, greeting, or
+confirming they're already resolved — reply naturally, and use `resolve_conversation` if they
+confirmed resolution.
+
+### Support-ticket description + issue-scoped transcript (updated, 2026-07 batch)
+The ticket **description** is the model's **concise, issue-only** summary (2–5 sentences),
+directed by `JIRA_TOOL_INSTRUCTIONS` in `prompts.ts` — never the raw chat.
+
+The attached **transcript** is scoped to the issue that triggered the ticket, not the whole
+conversation. `dispatcher.ts` builds the masked, timestamped lines and passes them (plus the
+AI issue summary as a hint) to `buildIssueScopedTranscript()`
+(`services/ai/ticket-transcript.service.ts`): the model SELECTS the line numbers relevant to
+the issue (it never rewrites the customer's words — masked lines are reconstructed verbatim
+from the selection), dropping greetings, small talk, and unrelated/already-handled topics.
+On any failure, missing API key, empty selection, or a very short chat, it falls back to the
+trailing window (the exchange right before the ticket) — never the full history. The Jira
+adapter uploads this scoped transcript as `conversation-transcript.txt`.
+
+For `create_support_ticket` the dispatcher also overrides the **project key** with the
+agent's operator-configured `jiraProjectKey` (per-agent routing), so tickets land on the
+right board without leaking unrelated chat.
 
 ### Per-agent Jira project (Changelog 1)
 `jiraProjectKey` added to the `Agent` model, the agent update route
@@ -357,6 +396,21 @@ export const PaddleAdapter: ProviderAdapter = {
   },
 };
 ```
+
+### Proration on plan change (2026-07 batch) — applies to Paddle **and** Stripe
+
+The subscription tools are mirrored onto the Stripe adapter, and the proration rules below
+apply to **every** payment processor, not just Paddle:
+
+- **Upgrade** charges the prorated delta **immediately**, against the payment method on
+  file, so a higher plan is never granted free until the next renewal:
+  - Paddle: `proration_billing_mode: "prorated_immediately"`.
+  - Stripe: `proration_behavior: "always_invoice"`.
+  - After an upgrade, a `past_due` (Stripe also `unpaid`/`incomplete`) status **throws**, so
+    the assistant reports the delta payment failed instead of confirming a clean upgrade.
+- **Downgrade** is unchanged (Paddle `prorated_immediately`, Stripe `create_prorations`).
+- **Cancel** takes effect at the **end of the current billing cycle** (Paddle
+  `effective_from: "next_billing_period"`, Stripe `cancel_at_period_end: true`).
 
 ### Guardrails — enforced in code, not operator-configurable
 

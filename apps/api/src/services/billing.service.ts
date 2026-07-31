@@ -1,9 +1,39 @@
 import crypto from "node:crypto";
-import { Organization, Subscription, ProcessedWebhook } from "../models/index.js";
+import { Organization, Subscription, ProcessedWebhook, User, Membership } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { NotFoundError } from "../utils/errors.js";
-import { planByPriceId, loadPlanCatalog } from "../config/plans.js";
+import { planByPriceId, loadPlanCatalog, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans.js";
 import { recordEarnedCommissionForOrg } from "./affiliate.service.js";
+import {
+  classifyReceiptAction,
+  orgBillingRecipientEmails,
+  sendSubscriptionReceipt,
+} from "./subscription-receipt.service.js";
+
+// Tier rank so a plan change can be classified as an upgrade vs a downgrade.
+const PLATFORM_PLAN_RANK: Record<Plan, number> = { pro: 1, business: 2, enterprise: 3 };
+
+// Paddle's overlay checkout creates the customer with just an email (no name), so the Paddle
+// dashboard shows the customer as "-". Backfill the name from the org's owner when the Paddle
+// customer has none, so registered accounts are identifiable there. Best-effort + idempotent
+// (it GETs first and only PATCHes an empty name), and never throws to its caller.
+async function backfillPaddleCustomerName(customerId: string, organizationId: string): Promise<void> {
+  try {
+    const res = (await paddleFetch(`/customers/${customerId}`)) as { data?: { name?: string | null } };
+    if (res.data?.name && String(res.data.name).trim()) return; // already named
+    const owner = await Membership.findOne({ organizationId, role: "owner", status: "active" })
+      .select("userId")
+      .lean();
+    if (!owner) return;
+    const user = await User.findById(owner.userId).select("name").lean();
+    const name = (user?.name as string | undefined)?.trim();
+    if (!name) return;
+    await paddleFetch(`/customers/${customerId}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    logger.info("[billing] backfilled paddle customer name", { customerId, organizationId });
+  } catch (err) {
+    logger.warn("[billing] paddle customer name backfill failed", { err: (err as Error).message });
+  }
+}
 
 const PADDLE_API_BASE =
   (process.env.PADDLE_ENVIRONMENT ?? "sandbox") === "production"
@@ -52,6 +82,9 @@ type SubscriptionEvent = {
     items?: { price?: { id?: string } }[];
     current_billing_period?: { starts_at: string; ends_at: string };
     canceled_at?: string;
+    // A pending change scheduled for period end (Paddle). action "cancel" means the
+    // subscription is set to cancel at `effective_at` while still active until then.
+    scheduled_change?: { action?: string; effective_at?: string } | null;
     custom_data?: { organizationId?: string };
   };
 };
@@ -82,6 +115,12 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
   const yearlyPriceIds = new Set(catalog.map((c) => c.priceIdYearly).filter(Boolean));
   const billingInterval: "month" | "year" = priceId && yearlyPriceIds.has(priceId) ? "year" : "month";
 
+  // Snapshot the prior state BEFORE the upsert so we can tell a creation from an
+  // upgrade/downgrade/cancel and email the right receipt.
+  const prior = await Subscription.findOne({ organizationId })
+    .select("plan status canceledAt")
+    .lean();
+
   await Subscription.findOneAndUpdate(
     { organizationId },
     {
@@ -98,6 +137,12 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
         ? new Date(data.current_billing_period.ends_at)
         : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       canceledAt: data.canceled_at ? new Date(data.canceled_at) : undefined,
+      // Track a scheduled cancel-at-period-end so the dashboard can warn about it while the
+      // plan is still active. Cleared (set null) when Paddle reports no such scheduled change.
+      cancelScheduledAt:
+        data.scheduled_change?.action === "cancel" && data.scheduled_change.effective_at
+          ? new Date(data.scheduled_change.effective_at)
+          : null,
       paddleData: event,
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },
@@ -111,6 +156,52 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
       ? { $set: { plan, paddleSubscriptionId: data.id, paddleCustomerId: data.customer_id } }
       : { $unset: { plan: 1 }, $set: { paddleSubscriptionId: data.id, paddleCustomerId: data.customer_id } },
   );
+
+  // Give the Paddle customer a name (from the org owner) if the overlay checkout left it blank,
+  // so it isn't shown as "-" in Paddle. Fire-and-forget; runs on the post-checkout reconcile too.
+  if (data.customer_id) {
+    void backfillPaddleCustomerName(data.customer_id, organizationId);
+  }
+
+  // Receipt email to the org's owner/admins on create / upgrade / downgrade / cancel.
+  // Fire-and-forget so a mail hiccup never blocks the webhook 200. Renewals send nothing.
+  void (async () => {
+    const priorActive = prior?.status === "active" || prior?.status === "trialing";
+    const canceledNow =
+      event.event_type?.endsWith(".canceled") === true ||
+      data.status === "canceled" ||
+      data.status === "paused" ||
+      (Boolean(data.canceled_at) && !prior?.canceledAt);
+    const action = classifyReceiptAction({
+      hadActivePrior: priorActive,
+      isActiveNow: isActive,
+      isCanceled: canceledNow,
+      planChanged: (prior?.plan ?? null) !== plan,
+      priorLevel: prior?.plan ? PLATFORM_PLAN_RANK[prior.plan as Plan] : null,
+      newLevel: PLATFORM_PLAN_RANK[plan as Plan] ?? null,
+    });
+    if (!action) return;
+    // Don't email a second cancellation receipt if we already recorded one.
+    if (action === "canceled" && prior?.canceledAt) return;
+    const emails = await orgBillingRecipientEmails(organizationId);
+    if (emails.length === 0) return;
+    const entry = catalog.find((c) => c.plan === plan);
+    const amount = billingInterval === "year" ? entry?.priceYearlyUsd : entry?.priceMonthlyUsd;
+    const appName = process.env.NEXT_PUBLIC_APP_NAME ?? process.env.APP_NAME ?? "Platform";
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+    await sendSubscriptionReceipt({
+      to: emails,
+      action,
+      planName: PLAN_DISPLAY_NAMES[plan as Plan] ?? String(plan),
+      amount: amount ?? null,
+      currency: "USD",
+      billingInterval,
+      periodEnd: data.current_billing_period?.ends_at ? new Date(data.current_billing_period.ends_at) : null,
+      appName,
+      brandName: appName,
+      billingUrl: appUrl ? `${appUrl}/app/billing` : null,
+    });
+  })().catch((err) => logger.warn("[billing] receipt email failed", { organizationId, err: String(err) }));
 
   // Affiliate: when a referred org first activates a paid plan, earn the
   // referrer's commission (no-op if there's no pending referral).

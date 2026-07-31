@@ -211,7 +211,7 @@ export class JiraAdapter implements ProviderAdapter {
                 type: "paragraph",
                 content: [
                   // Keep the description to the AI's CONCISE, issue-only summary.
-                  // The full conversation goes up as a file attachment below.
+                  // The issue-scoped transcript goes up as a file attachment below.
                   { type: "text", text: String(args.description ?? "No description provided.") },
                 ],
               },
@@ -243,9 +243,10 @@ export class JiraAdapter implements ProviderAdapter {
       const siteUrl = (credentials.extra?.siteUrl as string | undefined) ?? "";
       const browseUrl = key && siteUrl ? `${siteUrl}/browse/${key}` : undefined;
 
-      // Attach the full conversation transcript as a file so agents have the
-      // complete context without bloating the description. Best-effort — a failed
-      // attachment must never fail the ticket itself.
+      // Attach the issue-scoped conversation transcript as a file so agents have the
+      // relevant context (the messages about this issue, not the whole chat) without
+      // bloating the description. Best-effort — a failed attachment must never fail the
+      // ticket itself.
       const transcript = String(args._transcript ?? "").trim();
       if (key && transcript) {
         try {

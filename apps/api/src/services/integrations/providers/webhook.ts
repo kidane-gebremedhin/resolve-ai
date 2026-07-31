@@ -13,6 +13,24 @@ import { env } from "../../../config/env.js";
 // compile time (we don't register ajv-formats).
 const ajv = new Ajv({ allErrors: true, coerceTypes: true, strict: false });
 
+// Guarantee the input schema is actually enforced at call time. Operators (or older
+// connections created before schemas were hardened at save time) may store an object
+// schema that declares `properties` but no `required` list — ajv would then accept a
+// call missing every input, letting the model "skip" the schema. When a schema declares
+// properties but no non-empty `required`, require ALL of them so the inputs are validated,
+// not guessed. An explicit non-empty `required` is respected as authored.
+function enforceableSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const props = schema.properties;
+  const hasProps =
+    props && typeof props === "object" && !Array.isArray(props) && Object.keys(props).length > 0;
+  const required = schema.required;
+  const hasRequired = Array.isArray(required) && required.length > 0;
+  if (hasProps && !hasRequired) {
+    return { ...schema, required: Object.keys(props as Record<string, unknown>) };
+  }
+  return schema;
+}
+
 export class WebhookAdapter implements ProviderAdapter {
   readonly provider = "webhook";
 
@@ -26,6 +44,64 @@ export class WebhookAdapter implements ProviderAdapter {
 
   async refreshTokens(_blob: EncryptedBlob): Promise<RawCredentials | null> {
     return null;
+  }
+
+  // "Test connection" for a custom webhook. Previously the verify route had nothing to call for
+  // webhooks and reported success unconditionally — even for a URL with no server behind it.
+  // This calls the endpoint with its CONFIGURED method + auth and only reports success on an
+  // actual 2xx response, so a non-existent endpoint (unreachable OR a URL that answers 4xx/5xx,
+  // e.g. a wrong path returning 404) fails. Non-GET methods send a minimal `{}` JSON body — the
+  // test does invoke the endpoint (that's the point: it must return success), so operators should
+  // expect a test request to arrive.
+  async verifyCredentials(
+    credentials: RawCredentials,
+    _sandbox: boolean,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const { url, method, authHeader, authValue } = (credentials.extra ?? {}) as {
+      url?: string;
+      method?: string;
+      authHeader?: string;
+      authValue?: string;
+    };
+    if (!url) return { ok: false, error: "No endpoint URL is configured for this environment." };
+    try {
+      await assertSafeUrl(url);
+    } catch {
+      return { ok: false, error: "The endpoint URL isn't allowed (use a public http(s) address)." };
+    }
+    const httpMethod = (method ?? "POST").toUpperCase();
+    const headers: Record<string, string> = {};
+    if (authHeader && authValue) headers[authHeader] = authValue;
+    let body: string | undefined;
+    if (httpMethod !== "GET" && httpMethod !== "HEAD") {
+      headers["Content-Type"] = "application/json";
+      body = "{}";
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), env.webhookTimeoutMs);
+    try {
+      const res = await fetch(url, { method: httpMethod, headers, body, signal: controller.signal, redirect: "follow" });
+      if (res.ok) return { ok: true }; // 2xx from the real endpoint
+      // Reachable but did NOT return success — surface why so the operator can fix it.
+      const reason =
+        res.status === 401 || res.status === 403
+          ? "the endpoint rejected the request — check the auth header/value"
+          : res.status === 404
+            ? "the endpoint URL was not found (HTTP 404)"
+            : res.status === 405
+              ? "the endpoint doesn't allow this method (HTTP 405)"
+              : res.status >= 500
+                ? `the endpoint returned a server error (HTTP ${res.status})`
+                : `the endpoint returned HTTP ${res.status}`;
+      return { ok: false, error: `Connection test failed — ${reason}.` };
+    } catch (err) {
+      if ((err as Error).name === "AbortError") {
+        return { ok: false, error: "The endpoint didn't respond in time — check the URL." };
+      }
+      return { ok: false, error: "Couldn't reach the endpoint — check the URL is correct and publicly reachable." };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   getTools(): ToolTemplate[] {
@@ -58,7 +134,7 @@ export class WebhookAdapter implements ProviderAdapter {
     // in plain language (not the raw ajv error objects) so the model can ask the
     // customer for the right value instead of echoing internals or looping.
     if (inputSchema) {
-      const validate = ajv.compile(inputSchema);
+      const validate = ajv.compile(enforceableSchema(inputSchema));
       if (!validate(args)) {
         const problems = (validate.errors ?? [])
           .map((e) => {

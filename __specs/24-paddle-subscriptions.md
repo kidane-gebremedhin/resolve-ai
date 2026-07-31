@@ -38,6 +38,19 @@
 > lists their prices/products and suggests the plan→price-id mapping), and an unconfigured
 > connection shows a persistent "⚠ Configure plans" warning until it's done.
 >
+> **Stripe parity + connect-time price auto-fetch (2026-07 batch).** Everything above applies
+> equally to **Stripe** — the same subscription tools, the same `paddle-catalog` endpoint
+> (it serves both providers), and the same "Configure plans" UI. On top of the panel's
+> pre-fill, connecting **either** provider with an API key now **auto-fetches the catalog and
+> pre-fills `planPrices` at connect time** (`autoPopulateBillingPlans` in
+> `integrations.routes.ts`, using the shared `fetchBillingCatalog` + `applyBillingPlanPrices`
+> helpers), so the subscription tools work immediately without a manual step. Best-effort:
+> it never throws (a restricted key without price-read permission just logs and the operator
+> configures manually) and never clobbers an already-configured environment. Stripe fixes in
+> the same batch: `current_period_end` is read from the subscription **item** (Stripe API
+> 2025-03-31+ moved it there) with a legacy fallback, and `issue_refund` / `lookup_order`
+> throw on a Stripe error instead of returning the raw error body as if it were a result.
+>
 > **Operator subscription webhook receiver (Changelog 5).** Operators can register a
 > per-connection callback URL (`POST /integrations/paddle/webhook/:connectionId`, and
 > the Stripe equivalent) in their OWN provider dashboard. Events are HMAC-verified
@@ -77,6 +90,81 @@ Backlog item #4: "subscription system should be powered by Paddle.js; define any
 ---
 
 ## Design
+
+### Scheduled-cancellation warnings (2026-07 batch)
+When a platform subscription is set to cancel at period end, Paddle keeps it `active` and reports
+a `scheduled_change` with action `cancel` — the plan stays usable until the effective date.
+`Subscription.cancelScheduledAt` (optional Date) captures that effective date:
+`handlePaddleEvent` sets it from `data.scheduled_change` and clears it (null) when there's no
+scheduled change, so it stays correct through checkout activation and the admin "Refresh status"
+reconcile (both route through `handlePaddleEvent`). `GET /billing/subscription` returns it.
+Two dashboard surfaces warn about it while the plan is still active:
+- **Billing page** ([`billing/page.tsx`](../apps/web/src/app/(dashboard)/app/billing/page.tsx)) —
+  an amber banner at the top ("scheduled to cancel … access until <date>").
+- **Header plan indicator** ([`app-shell.tsx`](../apps/web/src/components/layouts/app-shell.tsx)) —
+  a warning triangle + amber pill on the "<Plan> · Change plan" chip; the dashboard layout passes
+  `cancellationPending` down.
+
+### Customer lookup + canceled reporting (2026-07 batch)
+Subscription lookups resolve the customer by **email** (the identifier):
+- **Archived customers are included.** Paddle's `GET /customers?email=` defaults to active-only;
+  a reused customer can be archived yet still hold the live subscription, so the adapter queries
+  `status=active&status=archived` and prefers an active match. (Paddle stores the email at
+  checkout even though the overlay collects no name — see the name backfill below.)
+- **Customer name backfill.** The overlay checkout creates the customer with just an email (Paddle
+  shows "-" for the name). `handlePaddleEvent` backfills the name from the org **owner**
+  (`backfillPaddleCustomerName`) when empty — best-effort, idempotent, runs on the reconcile too.
+- **Only active/trialing count as "having a subscription."** `resolveSubscription` queries
+  `status=active&status=trialing` only; a canceled/paused subscription is treated as **none**, so
+  `get_subscription` returns the plain not-found message (`{ found: false, hasSubscription: false,
+  message: "No subscription is associated with this email address…" }`) — never a "your plan was
+  canceled" report. (An earlier iteration that surfaced canceled subs with an `includeInactive`
+  option + a 3-tier chain in `agent.service` was reverted per product decision; the chain is back
+  to the simple soft-miss walk.)
+
+### `get_subscription` resolves ONLY from connected integrations (2026-07 batch)
+The widget's `get_subscription` (and the other subscription tools) resolve a customer's
+subscription **exclusively** from the operator's connected billing integrations (Stripe, Paddle,
+…) via their live API — they must **never** read platform DB records (the `Subscription`
+collection). In the dogfood setup the platform subscription lives in the connected Paddle account,
+so it is found through that Paddle integration's live lookup, not from the local DB. (A DB-backed
+platform-subscription fallback was considered and deliberately rejected to keep the integration the
+single source of truth.) The only DB read on this path is the resilience cache
+(`ExternalSubscription` snapshot) the dispatcher serves when the provider's live API is unreachable
+— i.e. cached integration data, still keyed to the connection.
+
+### Subscription receipt emails (2026-07 batch)
+A branded receipt is emailed on every subscription **creation, upgrade, downgrade, or
+cancellation** — renewals and payment-method updates send nothing. Shared logic lives in
+`services/subscription-receipt.service.ts` (`classifyReceiptAction`,
+`buildSubscriptionReceiptEmail`, `sendSubscriptionReceipt`); full receipt = action heading,
+plan, amount + interval, next-renewal/access-until date, and a "Manage billing" button.
+All sends are fire-and-forget (they never block webhook processing) and no-op if SMTP is
+unconfigured.
+
+Two audiences:
+- **Platform subscription** (the operator's own SaaS plan) → the org's **owner/admin** emails.
+  `billing.service.ts:handlePaddleEvent` snapshots the prior plan/status, classifies the
+  change (direction by plan tier: pro < business < enterprise; amount from the plan catalog),
+  and sends. Because checkout activation and the admin "Refresh status" both flow through
+  `handlePaddleEvent` (via `syncSubscriptionFromPaddle`), creation is covered too; the later
+  real webhook sees the already-updated plan and no-ops (natural de-dup).
+- **Operator's customers' subscriptions** → the **customer**, under the operator's brand
+  (org name as the From name). `integrations/webhookReceiver.ts` resolves the price
+  amount+currency (Stripe reads the embedded `unit_amount`; Paddle fetches `GET /prices/{id}`),
+  stores them on `ExternalSubscription`, classifies, and sends. Scheduled cancels (Paddle
+  `scheduled_change:cancel`, Stripe `cancel_at_period_end`) count as a cancellation so the
+  customer is notified at cancel time, not only at period end; the definitive later event is
+  de-duped via `canceledAt`.
+
+**Correct up/down label for widget-driven changes:** the dispatcher eagerly overwrites the
+snapshot's plan the moment a widget tool runs, which would erase the "prior" the webhook uses
+to infer direction. The dispatcher therefore stamps `ExternalSubscription.pendingReceipt =
+{ action, at }` (action known from the tool key); the webhook prefers that hint when recent
+(< 15 min) and clears it (which also de-dups). Out-of-band dashboard changes have no hint and
+fall back to amount-based inference. Customer receipts require the operator to have configured
+the inbound webhook callback (same as the existing snapshot sync). New optional
+`ExternalSubscription` fields: `amount`, `currency`, `pendingReceipt` (no migration needed).
 
 ### Plan changes preserve the billing cycle (Changelog 15)
 `upgrade_subscription` / `downgrade_subscription` change the plan **tier only** and

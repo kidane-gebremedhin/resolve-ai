@@ -5,7 +5,7 @@ export async function PublicWidget() {
     <Script
           src="http://localhost:3002/widget.js"
           strategy="afterInteractive"
-          data-agent="6a5a280c00e61481c3974a9c"
+          data-agent="6a62761958e7468171061ad0"
           data-widget-url="http://localhost:3001"
           data-api-url="http://localhost:4000/api/v1"
         />

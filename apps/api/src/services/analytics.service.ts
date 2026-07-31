@@ -4,7 +4,7 @@
 
 import mongoose from "mongoose";
 import type { Model } from "mongoose";
-import { Conversation, Message, Subscription, User } from "../models/index.js";
+import { Conversation, Membership, Message, Subscription, User } from "../models/index.js";
 
 /** Hardcoded fallback plan prices in USD/month. Env overrides take priority. */
 export const PLAN_PRICE = { free: 0, starter: 19, pro: 99, enterprise: 499 } as const;
@@ -145,11 +145,22 @@ export async function adminTimeSeries(
   const { organizationId, agentId } = opts;
 
   if (metric === "signups") {
+    // Users have no organizationId of their own — they belong to orgs via Membership.
+    // So an org filter can't be applied on the User collection directly; resolve the
+    // org's member userIds and match by _id instead. (Agent filtering doesn't apply to
+    // signups — a signup is an account, not an agent-scoped event.)
+    let match: Record<string, unknown> | undefined;
+    if (organizationId) {
+      const userIds = await Membership.find({
+        organizationId: new mongoose.Types.ObjectId(organizationId),
+      }).distinct("userId");
+      match = { _id: { $in: userIds } };
+    }
     return dailyMetric({
       collection: User as unknown as Model<unknown>,
       dateField: "createdAt",
       days,
-      organizationId,
+      match,
     });
   }
   if (metric === "conversations") {

@@ -867,7 +867,7 @@ function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () =
           error?: string;
         };
         if (!res.ok) {
-          setCatalogNote(d.error ?? "Couldn't load plans from Paddle.");
+          setCatalogNote(d.error ?? `Couldn't load plans from ${providerLabel}.`);
           return;
         }
         setPrices(d.prices ?? []);
@@ -880,10 +880,10 @@ function PaddlePlansModal({ info, onClose }: { info: ProviderInfo; onClose: () =
           setRows(suggestedRows);
           setCatalogNote(`Pre-filled ${suggestedRows.length} plan(s) from your ${providerLabel} ${envLabel} catalog — review and Save.`);
         } else if (suggestedRows.length === 0) {
-          setCatalogNote("No recurring prices found in this Paddle environment.");
+          setCatalogNote(`No recurring prices found in this ${providerLabel} ${envLabel} environment.`);
         }
       } catch {
-        setCatalogNote("Couldn't reach Paddle to load plans.");
+        setCatalogNote(`Couldn't reach ${providerLabel} to load plans.`);
       } finally {
         setLoadingCatalog(false);
       }

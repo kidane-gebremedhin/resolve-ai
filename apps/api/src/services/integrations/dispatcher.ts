@@ -4,6 +4,7 @@ import { getAdapter } from "./adapters/index.js";
 import { evaluateGuardrails } from "./guardrails.js";
 import { checkRateLimit } from "./rateLimit.js";
 import { maskPii } from "./piiMask.js";
+import { buildIssueScopedTranscript } from "../ai/ticket-transcript.service.js";
 import { decrypt, encrypt } from "../security/crypto.service.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
@@ -318,23 +319,33 @@ export async function dispatchToolCall(
         // else falls back to a real project so the ticket is still created.
         enrichedArgs = { ...args, projectKey };
       }
-      // Attach the full conversation to the ticket (as a file, not in the concise
-      // description) so the operator has the exact context the customer provided.
-      // PII is masked per line, mirroring how tool-call args are masked.
+      // Attach a transcript to the ticket (as a file, not in the concise description)
+      // so the operator has the exact context the customer provided — but scoped to the
+      // ISSUE that triggered the ticket, not the whole chat history. We drop greetings,
+      // small talk, and unrelated/already-handled topics (see buildIssueScopedTranscript)
+      // so the attachment matches the issue-only description. PII is masked per line,
+      // mirroring how tool-call args are masked.
       if (ctx.conversationId) {
         try {
           const msgs = await Message.find({ conversationId: ctx.conversationId })
             .sort({ createdAt: 1 })
             .select("role content createdAt")
             .lean();
-          const transcript = (msgs as { role: string; content?: string; createdAt: Date }[])
+          const lines = (msgs as { role: string; content?: string; createdAt: Date }[])
             .filter((m) => m.role !== "system" && (m.content ?? "").trim())
-            .map((m) => {
-              const who = m.role === "customer" ? "Customer" : m.role === "ai" ? "Assistant" : "Operator";
-              const ts = new Date(m.createdAt).toISOString();
-              return `[${ts}] ${who}: ${maskPii(String(m.content ?? ""))}`;
-            })
-            .join("\n");
+            .map((m) => ({
+              who: m.role === "customer" ? "Customer" : m.role === "ai" ? "Assistant" : "Operator",
+              ts: new Date(m.createdAt).toISOString(),
+              text: maskPii(String(m.content ?? "")),
+            }));
+          const transcript = await buildIssueScopedTranscript({
+            lines,
+            issueSummary: String(
+              (args as { description?: unknown; summary?: unknown }).description ??
+                (args as { summary?: unknown }).summary ??
+                "",
+            ),
+          });
           if (transcript) enrichedArgs = { ...enrichedArgs, _transcript: transcript };
         } catch (err) {
           logger.warn("[dispatcher] transcript build failed", { err: (err as Error).message });
@@ -489,6 +500,16 @@ export async function dispatchToolCall(
     const subId = r?.subscriptionId;
     if (subId) {
       const email = String((enrichedArgs as Record<string, unknown>).email ?? "").trim().toLowerCase();
+      // The exact action is known here (from the tool key). Stamp it as pendingReceipt so
+      // the provider webhook — which lands after this eager write has already overwritten
+      // the prior plan/amount — can send the receipt with the correct upgrade/downgrade
+      // label instead of re-inferring it from a snapshot we just changed.
+      const receiptAction =
+        toolKey === "upgrade_subscription"
+          ? "upgraded"
+          : toolKey === "downgrade_subscription"
+            ? "downgraded"
+            : "canceled";
       ExternalSubscription.updateOne(
         { connectionId: connection._id, externalSubscriptionId: subId },
         {
@@ -500,6 +521,7 @@ export async function dispatchToolCall(
             ...(r?.plan ? { plan: r.plan } : {}),
             ...(r?.status ? { status: r.status } : {}),
             ...(r?.billingInterval ? { billingInterval: r.billingInterval === "yearly" ? "year" : "month" } : {}),
+            pendingReceipt: { action: receiptAction, at: new Date() },
           },
         },
         { upsert: true },

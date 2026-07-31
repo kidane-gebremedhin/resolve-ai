@@ -142,6 +142,15 @@ version encrypted it without re-decrypting everything first. When rotating:
 ### New env var
 `CREDENTIALS_ENCRYPTION_KEY` — 32 bytes, base64-encoded. Add to `.env.example`.
 
+`INTEGRATION_ALLOWED_TOOLS` (optional, 2026-07 batch) — a **display allow-list** for the
+integrations page. Comma-separated provider ids (`jira,stripe,webhook`; valid ids: `calcom,
+calendly, stripe, shopify, linear, jira, paddle, webhook`). Only listed providers appear in the
+`GET /integrations` catalog; unset/empty shows all. Matching is case-insensitive + whitespace
+trimmed; unknown ids are silently ignored. Parsed in `config/env.ts` to
+`env.integrationAllowedTools` (`Set<string> | null`) and applied ONLY to the `providers` catalog
+in the `GET /integrations` handler — it never affects `getAdapter`, connect/execute, the
+dispatcher, or existing connections (a hidden-but-connected integration keeps working).
+
 ---
 
 ## 2A.2 — Data models
@@ -558,12 +567,20 @@ sharing the same tool key. To keep the AI routing to the live connection:
   Connection is `active`, so even stale duplicates never surface the
   "connection has been revoked" error.
 
-> **Reconnecting reactivates tools (Changelog 5).** Because revoke sets tool defs
-> `isActive:false`, the single-connection providers (OAuth, api-key) must **reactivate**
-> them on reconnect. Their tool-def upserts put `isActive: true` in `$set` (not
-> `$setOnInsert`, which never runs for an existing tool def) — otherwise a reconnect
-> revives the connection but leaves its tools inactive, and the AI is never offered them
-> ("I'm unable to file a support ticket", with no tool call logged).
+> **Reconnecting reactivates tools (Changelog 5; hardened 2026-07 batch).** Because revoke
+> sets tool defs `isActive:false`, the single-connection providers (OAuth, api-key) must
+> **reactivate** them on reconnect. Reactivation lives in `seedConnectionTools()` (shared
+> helper): its tool-def upserts put `isActive: true` in `$set` (not `$setOnInsert`, which
+> never runs for an existing tool def).
+>
+> A bug (2026-07 batch) meant the **api-key reconnect** branch of `POST /:provider/connect`
+> updated the credentials and returned **before** the seeding loop ran, so reconnecting an
+> api-key provider left every tool `isActive:false`. Because `agent.service` only offers
+> `isActive:true` tools, the reconnected provider vanished from the tool chain — and when a
+> second billing provider was also configured, a subscription query set to the reconnected
+> provider as **primary** silently ran against the other provider instead ("no subscription
+> found"). Fixed by calling `seedConnectionTools()` on **both** the new-connection and
+> reconnect branches (and the OAuth callback), so a reconnect always re-offers the tools.
 
 **SSRF protections (mandatory)**
 
@@ -942,12 +959,26 @@ never appears "connected".
 - Calendly — `GET /users/me`
 - Linear — GraphQL `{ viewer { id } }`
 
-Custom Webhook has no credentials to check, so it has no `verifyCredentials` and the
-verify endpoint returns `{ ok: true, unsupported: true }`.
+Custom Webhook (2026-07 batch) verifies by calling the endpoint and requiring a **2xx**:
+`verifyCredentials` sends the configured **method** (non-GET/HEAD carry a minimal `{}` JSON body) +
+auth header to the endpoint URL for the tested environment, with the `WEBHOOK_TIMEOUT_MS` timeout,
+after an `assertSafeUrl` SSRF check. **Success only on a 2xx response**; a non-2xx (e.g. a wrong
+path → 404, `401/403` auth, `405`, `5xx`) or an unreachable/DNS/TLS/timeout error fails with a
+specific reason. This replaced the earlier behavior where the webhook adapter had no
+`verifyCredentials` and "Test connection" reported success unconditionally (and an interim
+reachability-only probe that still passed a URL answering non-2xx). The probe does invoke the
+endpoint, so a test request (POST `{}`) reaches the operator's handler.
 
 **Two call sites:**
-1. **Connect (api-key path)** — gate: a failed check 400s the connect, so the
-   connection is never created/marked active with a bad key.
+1. **Connect gate** — a failed check 400s the connect, so a connection is never created/marked
+   active with bad credentials. Applies to the **api-key** path AND (2026-07 batch) the
+   **custom-webhook** connect path: `verifyCredentials` runs before `Connection.create`, so a
+   webhook whose endpoint is unreachable or doesn't return a 2xx is rejected during
+   initialization (the connect form shows the reason) rather than stored and only failing later.
+   The webhook **edit** routes are gated the same way (shared `verifyWebhookReachable` helper):
+   `POST /:connectionId/webhook-endpoint` (add/replace an environment's endpoint) and
+   `PATCH /:connectionId/webhook-config` (full edit) both verify before persisting, so a bad URL
+   edit can't repoint a connection at a dead endpoint.
 2. **`POST /:connectionId/verify` (manual "Test connection")** — re-checks the
    credentials of the environment named in the body (`{sandbox}`, Changelog 4), reading
    that env's own slot (never the mirror), for ANY connection including OAuth ones that

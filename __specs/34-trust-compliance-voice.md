@@ -321,6 +321,18 @@ New endpoint: `POST /widget/conversations/:id/voice-message`
 
 New "mic" button in `Composer.tsx`. On hold → records via `MediaRecorder` API.
 On release → uploads audio blob, shows transcription + plays audio reply.
+`getUserMedia({ audio: true })` is called **only** inside `startRecording()` (the mic
+button press) — never on mount — so the browser only prompts for the microphone when the
+visitor presses the button.
+
+**Microphone permission is not requested on page load (2026-07 batch).** The embed
+(`apps/embed/src/widget.ts`) delegates `microphone` to the widget iframe's `allow`
+attribute **only when voice input is enabled**; otherwise the iframe is created with
+`allow="clipboard-write; autoplay"`. Requesting the capability unconditionally made some
+browsers show a device-permission prompt ("… would like to access other services on this
+device") on page load, before the visitor interacted with anything — voice input is off by
+default (`ALLOW_WIDGET_VOICE_INPUT=false`). The embed reads the flag from
+`GET /widget/appearance` (which now returns `voiceInput`) before creating the iframe.
 
 **Latency targets**:
 - STT: < 1 s for < 10 s clips (Deepgram streaming).

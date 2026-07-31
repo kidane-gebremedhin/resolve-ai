@@ -42,6 +42,9 @@ export function AnalyticsFilters({
     const sp = new URLSearchParams(params.toString());
     if (value === ALL || !value) sp.delete(key);
     else sp.set(key, value);
+    // Changing the organization re-scopes the agent list, so a previously picked
+    // agent (belonging to the old org) would no longer be a valid choice. Clear it.
+    if (key === 'organizationId') sp.delete('agentId');
     router.push(`${pathname}?${sp.toString()}`);
   }
 

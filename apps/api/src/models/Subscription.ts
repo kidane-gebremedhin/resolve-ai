@@ -15,6 +15,10 @@ const subscriptionSchema = new Schema(
     currentPeriodEnd: { type: Date, required: true },
     billingInterval: { type: String, enum: ["month", "year"], default: "month" },
     canceledAt: { type: Date },
+    // When a cancel-at-period-end is SCHEDULED (Paddle `scheduled_change` with action
+    // "cancel"), this holds the date it takes effect while the subscription is still
+    // `active`. Cleared when the schedule is removed or the cancel actually happens.
+    cancelScheduledAt: { type: Date },
     trialEndAt: { type: Date },
     paddleData: { type: Schema.Types.Mixed },
   },
