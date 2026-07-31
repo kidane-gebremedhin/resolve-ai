@@ -3,11 +3,11 @@ import Script from 'next/script';
 export async function PublicWidget() {
   return (
     <Script
-          src="http://localhost:3002/widget.js"
-          strategy="afterInteractive"
-          data-agent="6a62761958e7468171061ad0"
-          data-widget-url="http://localhost:3001"
-          data-api-url="http://localhost:4000/api/v1"
-        />
+      src="https://widget.chataxis.pro/widget.js"
+      strategy="afterInteractive"
+      data-agent="6a306233c1585e817bf991c4"
+      data-widget-url="https://e145pl3s7xcydow2n503ncvw.157.173.125.72.sslip.io"
+      data-api-url="https://back.chataxis.pro/api/v1"
+    />
   );
 }
