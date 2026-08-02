@@ -7,6 +7,11 @@ const widgetSettingsSchema = new Schema(
     welcomeMessage: { type: String },
     suggestedQuestions: { type: [String], default: [] },
     primaryColor: { type: String },
+    // Header background treatment. "pinstripe" = the lavender/blue diagonal-pinstripe pattern
+    // (the default look, independent of primaryColor). "solid" = a solid header in the operator's
+    // accent (primaryColor). Kept separate from primaryColor so a solid accent (e.g. #1e40af) is
+    // its own option and never conflated with the pattern.
+    headerStyle: { type: String, enum: ["pinstripe", "solid"], default: "pinstripe" },
     position: {
       type: String,
       enum: ["bottom-right", "bottom-left", "centered"],

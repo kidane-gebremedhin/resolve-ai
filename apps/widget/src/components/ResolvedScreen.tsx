@@ -13,6 +13,7 @@ import { CSATCard } from "./CSATCard";
 export function ResolvedScreen({
   agent,
   primaryColor,
+  headerStyle,
   messages,
   onStartNew,
   busy,
@@ -21,6 +22,7 @@ export function ResolvedScreen({
 }: {
   agent: WidgetAgent | null;
   primaryColor: string;
+  headerStyle: "pinstripe" | "solid";
   messages: WidgetMessage[];
   onStartNew: () => void;
   busy: boolean;
@@ -32,6 +34,7 @@ export function ResolvedScreen({
       <WidgetHeader
         agent={agent}
         primaryColor={primaryColor}
+        headerStyle={headerStyle}
         status={{ label: "Resolved", tone: "success" }}
       />
       <div className="border-b border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300">

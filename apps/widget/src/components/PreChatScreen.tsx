@@ -15,12 +15,14 @@ export function PreChatScreen({
   agent,
   settings,
   primaryColor,
+  headerStyle,
   onStart,
   busy,
 }: {
   agent: WidgetAgent | null;
   settings: WidgetSettings;
   primaryColor: string;
+  headerStyle: "pinstripe" | "solid";
   /** Called when the user submits their first message. */
   onStart: (args: { content: string }) => Promise<void> | void;
   busy: boolean;
@@ -39,7 +41,7 @@ export function PreChatScreen({
 
   return (
     <div className="flex h-full w-full flex-col bg-white dark:bg-neutral-900">
-      <WidgetHeader agent={agent} primaryColor={primaryColor} />
+      <WidgetHeader agent={agent} primaryColor={primaryColor} headerStyle={headerStyle} />
 
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
         {welcome ? (
