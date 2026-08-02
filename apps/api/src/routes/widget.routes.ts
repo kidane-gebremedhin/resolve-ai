@@ -260,6 +260,9 @@ router.get(
     res.json({
       position: settings?.position ?? "bottom-right",
       primaryColor: settings?.primaryColor ?? "#1e40af",
+      // Header treatment: lavender/blue pinstripe by default; but if the operator already set a
+      // primaryColor before this option existed, keep their solid-accent header.
+      headerStyle: settings?.headerStyle ?? (settings?.primaryColor ? "solid" : "pinstripe"),
       theme: settings?.theme ?? "auto",
       launcherIcon: null,
       // Whether the mic / voice-input button is shown (ALLOW_WIDGET_VOICE_INPUT).

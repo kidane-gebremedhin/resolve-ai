@@ -32,7 +32,8 @@ const FooterOne = () => {
                   <figcaption className="font-display text-xl font-semibold tracking-tight text-accent">{APP_NAME}</figcaption>
                 </figure>
                 <p className="text-accent/60 text-[1rem] leading-[150%] mt-4 mb-7 font-normal">
-                  Turpis tortor nunc sed amet et faucibus vitae morbi congue sed id mauris.
+                  AI customer support that answers instantly, takes real actions, and hands off to
+                  your team, on every page of your site.
                 </p>
                 <div className="flex items-center gap-3">
                   {socialLinks.map((s, i) => (
@@ -52,11 +53,11 @@ const FooterOne = () => {
             <div className="col-span-12 md:col-span-4">
               <RevealAnimation delay={0.4}>
                 <div className="space-y-8">
-                  <p className="text-[1.25rem] leading-[140%] text-primary-50 font-normal">Company</p>
+                  <p className="text-[1.25rem] leading-[140%] text-primary-50 font-normal">Product</p>
                   <ul className="space-y-3 sm:space-y-5">
-                    <li><a href="/about" className="footer-link">About Us</a></li>
-                    <li><a href="/careers" className="footer-link">Career</a></li>
-                    <li><a href="/contact" className="footer-link">Contact Us</a></li>
+                    <li><a href="/features" className="footer-link">Features</a></li>
+                    <li><a href="/pricing" className="footer-link">Pricing</a></li>
+                    <li><a href="/customers" className="footer-link">Use cases</a></li>
                   </ul>
                 </div>
               </RevealAnimation>
@@ -64,12 +65,10 @@ const FooterOne = () => {
             <div className="col-span-12 md:col-span-4">
               <RevealAnimation delay={0.5}>
                 <div className="space-y-8">
-                  <p className="text-[1.25rem] leading-[140%] text-primary-50 font-normal">Support</p>
+                  <p className="text-[1.25rem] leading-[140%] text-primary-50 font-normal">Company</p>
                   <ul className="space-y-3 sm:space-y-5">
-                    <li><a href="/faq" className="footer-link">FAQ</a></li>
-                    <li><a href="/docs" className="footer-link">Documentation</a></li>
-                    <li><a href="/tutorials" className="footer-link">Tutorial</a></li>
-                    <li><a href="/support" className="footer-link">Support</a></li>
+                    <li><a href="/affiliates" className="footer-link">Affiliates</a></li>
+                    <li><a href="/contact" className="footer-link">Contact Us</a></li>
                   </ul>
                 </div>
               </RevealAnimation>
@@ -82,7 +81,6 @@ const FooterOne = () => {
                     <li><a href="/terms" className="footer-link">Terms &amp; Conditions</a></li>
                     <li><a href="/privacy" className="footer-link">Privacy Policy</a></li>
                     <li><a href="/refund" className="footer-link">Refund Policy</a></li>
-                    <li><a href="/gdpr" className="footer-link">GDPR Compliance</a></li>
                   </ul>
                 </div>
               </RevealAnimation>

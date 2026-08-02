@@ -68,6 +68,7 @@ export type WidgetSettings = {
   agentId?: string;
   welcomeMessage?: string;
   primaryColor?: string;
+  headerStyle?: "pinstripe" | "solid";
   position?: "bottom-right" | "bottom-left" | "centered";
   theme?: "light" | "dark" | "auto";
   showBranding?: boolean;
@@ -117,6 +118,7 @@ type AgentEditable = {
 
 type SettingsEditable = {
   primaryColor: string;
+  headerStyle: "pinstripe" | "solid";
   position: "bottom-right" | "bottom-left" | "centered";
   theme: "light" | "dark" | "auto";
   avatarUrl: string;
@@ -148,6 +150,10 @@ function toSettingsEditable(
 ): SettingsEditable {
   return {
     primaryColor: s?.primaryColor ?? COLORS[0],
+    // Pinstripe (lavender/blue pattern) is the DEFAULT header. But if the operator already set a
+    // primaryColor before this option existed, keep them on the solid-accent header so the studio
+    // matches what their live widget shows.
+    headerStyle: s?.headerStyle ?? (s?.primaryColor ? "solid" : "pinstripe"),
     position: s?.position ?? "bottom-right",
     theme: s?.theme ?? "light",
     // Pre-fill with the agent's configured avatar (e.g. the favicon captured on
@@ -283,6 +289,7 @@ export function WidgetStudio({
     // (the seed demo org).
     if (agent?._id) u.searchParams.set("agentId", agent._id);
     u.searchParams.set("primaryColor", settingsDraft.primaryColor);
+    u.searchParams.set("headerStyle", settingsDraft.headerStyle);
     u.searchParams.set("position", settingsDraft.position);
     u.searchParams.set("theme", settingsDraft.theme);
     return u.toString();
@@ -385,8 +392,12 @@ export function WidgetStudio({
               </div>
 
               <ColorPickerCard
-                value={settingsDraft.primaryColor}
-                onChange={(c) => updateSettings("primaryColor", c)}
+                headerStyle={settingsDraft.headerStyle}
+                primaryColor={settingsDraft.primaryColor}
+                onChange={(next) => {
+                  updateSettings("headerStyle", next.headerStyle);
+                  if (next.primaryColor !== undefined) updateSettings("primaryColor", next.primaryColor);
+                }}
               />
 
               <RadioCard
@@ -541,7 +552,7 @@ export function WidgetStudio({
                   style={{ height: "100%" }}
                 >
                   <iframe
-                    key={`${device}-${agent._id}-${settingsDraft.primaryColor}-${settingsDraft.position}-${settingsDraft.theme}`}
+                    key={`${device}-${agent._id}-${settingsDraft.primaryColor}-${settingsDraft.headerStyle}-${settingsDraft.position}-${settingsDraft.theme}`}
                     src={previewSrc}
                     title="Widget preview"
                     className="h-full w-full border-0"
@@ -568,39 +579,72 @@ export function WidgetStudio({
   );
 }
 
+// The pinstripe swatch preview (matches the widget header's default lavender/blue pattern).
+const PINSTRIPE_SWATCH_STYLE: React.CSSProperties = {
+  backgroundColor: "#E5E5F7",
+  backgroundImage: "repeating-linear-gradient(45deg, #444CF7 0, #444CF7 0.6px, #E5E5F7 0, #E5E5F7 50%)",
+  backgroundSize: "6px 6px",
+};
+
 function ColorPickerCard({
-  value,
+  headerStyle,
+  primaryColor,
   onChange,
 }: {
-  value: string;
-  onChange: (c: string) => void;
+  headerStyle: "pinstripe" | "solid";
+  primaryColor: string;
+  onChange: (next: { headerStyle: "pinstripe" | "solid"; primaryColor?: string }) => void;
 }) {
+  const isPinstripe = headerStyle === "pinstripe";
   return (
     <div className="rounded-xl border border-border bg-card p-5">
-      <Label className="text-xs font-medium">Accent color</Label>
+      <Label className="text-xs font-medium">Header style</Label>
       <div className="mt-2.5 grid grid-cols-8 gap-2">
-        {COLORS.map((c) => (
-          <button
-            key={c}
-            onClick={() => onChange(c)}
-            className={`relative aspect-square rounded-md transition ${value === c
-              ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
-              : "hover:scale-105"
-              }`}
-            style={{ backgroundColor: c }}
-            aria-label={c}
-          >
-            {value === c && (
-              <Check className="absolute inset-0 m-auto h-3.5 w-3.5 text-white mix-blend-difference" />
-            )}
-          </button>
-        ))}
+        {/* Default: the lavender/blue pinstripe pattern (header treatment, not a solid colour). */}
+        <button
+          onClick={() => onChange({ headerStyle: "pinstripe" })}
+          className={`relative aspect-square rounded-md transition ${isPinstripe
+            ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
+            : "hover:scale-105"
+            }`}
+          style={PINSTRIPE_SWATCH_STYLE}
+          aria-label="Lavender pinstripe (default)"
+          title="Lavender pinstripe (default)"
+        >
+          {isPinstripe && (
+            <Check className="absolute inset-0 m-auto h-3.5 w-3.5" style={{ color: "#312e81" }} />
+          )}
+        </button>
+        {/* Solid accent colours — selecting one gives a solid header in that colour. */}
+        {COLORS.map((c) => {
+          const selected = !isPinstripe && primaryColor === c;
+          return (
+            <button
+              key={c}
+              onClick={() => onChange({ headerStyle: "solid", primaryColor: c })}
+              className={`relative aspect-square rounded-md transition ${selected
+                ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
+                : "hover:scale-105"
+                }`}
+              style={{ backgroundColor: c }}
+              aria-label={c}
+            >
+              {selected && (
+                <Check className="absolute inset-0 m-auto h-3.5 w-3.5 text-white mix-blend-difference" />
+              )}
+            </button>
+          );
+        })}
       </div>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        The <span className="font-medium">pinstripe</span> pattern is the default header. Pick a
+        colour for a solid accent header instead.
+      </p>
       <div className="mt-3">
-        <Label className="text-[11px] text-muted-foreground">Custom hex</Label>
+        <Label className="text-[11px] text-muted-foreground">Custom accent hex</Label>
         <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+          value={primaryColor}
+          onChange={(e) => onChange({ headerStyle: "solid", primaryColor: e.target.value })}
           className="mt-1 h-8 font-mono text-xs"
         />
       </div>

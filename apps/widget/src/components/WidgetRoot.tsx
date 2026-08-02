@@ -65,6 +65,8 @@ export type WidgetRootProps = {
   theme?: "light" | "dark" | "auto";
   position?: "bottom-right" | "bottom-left" | "centered";
   primaryColor?: string;
+  /** Header treatment hint from the embed/preview; the saved setting wins once loaded. */
+  headerStyle?: "pinstripe" | "solid";
 };
 
 export function WidgetRoot({
@@ -74,6 +76,7 @@ export function WidgetRoot({
   theme: themeProp,
   position: positionProp = "bottom-right",
   primaryColor: primaryColorProp,
+  headerStyle: headerStyleProp,
 }: WidgetRootProps) {
   const { state, send } = useWidgetMachine({
     domain,
@@ -272,6 +275,15 @@ export function WidgetRoot({
   // may update settings later, so we recompute on every render.
   const primaryColor =
     primaryColorProp ?? state.context.settings?.primaryColor ?? DEFAULT_PRIMARY;
+  // Header treatment: preview prop → saved setting → default. Default is "pinstripe" (the
+  // lavender/blue pattern) for new/uncustomised widgets, but "solid" when the operator already
+  // chose a primaryColor before this option existed — so their custom-accent header is preserved.
+  const settingsHeaderStyle = (state.context.settings as { headerStyle?: "pinstripe" | "solid" } | null)
+    ?.headerStyle;
+  const headerStyle: "pinstripe" | "solid" =
+    headerStyleProp ??
+    settingsHeaderStyle ??
+    (state.context.settings?.primaryColor ? "solid" : "pinstripe");
 
   // ---- Bootstrap --------------------------------------------------------
   // Runs once on mount and whenever the user dispatches RETRY (state.state
@@ -916,6 +928,7 @@ export function WidgetRoot({
             agent={state.context.agent}
             settings={state.context.settings}
             primaryColor={primaryColor}
+            headerStyle={headerStyle}
             onStart={handlePreChatStart}
             busy={busy}
           />
@@ -927,6 +940,7 @@ export function WidgetRoot({
           <ChatScreen
             agent={state.context.agent}
             primaryColor={primaryColor}
+            headerStyle={headerStyle}
             messages={state.context.messages}
             escalated={state.state === "escalated"}
             onSend={handleChatSend}
@@ -947,6 +961,7 @@ export function WidgetRoot({
           <ResolvedScreen
             agent={state.context.agent}
             primaryColor={primaryColor}
+            headerStyle={headerStyle}
             messages={state.context.messages}
             onStartNew={handleStartNew}
             busy={busy}
@@ -964,6 +979,7 @@ export function WidgetRoot({
           <ChatScreen
             agent={state.context.agent}
             primaryColor={primaryColor}
+            headerStyle={headerStyle}
             messages={state.context.messages}
             escalated={false}
             onSend={handleChatSend}
@@ -1060,6 +1076,7 @@ export function WidgetRoot({
                 agent={state.context.agent}
                 sections={state.context.sections}
                 primaryColor={primaryColor}
+                headerStyle={headerStyle}
                 onSelect={handleOpenSection}
               />
             )

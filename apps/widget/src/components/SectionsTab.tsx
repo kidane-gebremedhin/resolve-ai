@@ -13,16 +13,18 @@ export function SectionsTab({
   agent,
   sections,
   primaryColor,
+  headerStyle,
   onSelect,
 }: {
   agent: WidgetAgent | null;
   sections: WidgetSection[];
   primaryColor: string;
+  headerStyle: "pinstripe" | "solid";
   onSelect: (section: WidgetSection) => void;
 }) {
   return (
     <div className="flex h-full w-full flex-col bg-white dark:bg-neutral-900">
-      <WidgetHeader agent={agent} primaryColor={primaryColor} />
+      <WidgetHeader agent={agent} primaryColor={primaryColor} headerStyle={headerStyle} />
       <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
         <div className="mb-1">
           <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">

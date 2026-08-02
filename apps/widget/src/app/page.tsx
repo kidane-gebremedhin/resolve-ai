@@ -27,6 +27,9 @@ function WidgetEntry() {
         ? "centered"
         : "bottom-right";
   const primaryColor = params.get("primaryColor") ?? undefined;
+  const headerStyleParam = params.get("headerStyle");
+  const headerStyle: "pinstripe" | "solid" | undefined =
+    headerStyleParam === "solid" ? "solid" : headerStyleParam === "pinstripe" ? "pinstripe" : undefined;
 
   return (
     <WidgetRoot
@@ -36,6 +39,7 @@ function WidgetEntry() {
       theme={theme}
       position={position}
       primaryColor={primaryColor}
+      headerStyle={headerStyle}
     />
   );
 }

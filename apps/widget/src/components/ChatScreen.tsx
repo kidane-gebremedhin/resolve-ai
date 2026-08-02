@@ -19,6 +19,7 @@ import { SuggestedQuestions } from "./SuggestedQuestions";
 export function ChatScreen({
   agent,
   primaryColor,
+  headerStyle,
   messages,
   escalated,
   onSend,
@@ -34,6 +35,7 @@ export function ChatScreen({
 }: {
   agent: WidgetAgent | null;
   primaryColor: string;
+  headerStyle: "pinstripe" | "solid";
   messages: WidgetMessage[];
   /** Show the escalated banner above the transcript. */
   escalated: boolean;
@@ -67,6 +69,7 @@ export function ChatScreen({
       <WidgetHeader
         agent={agent}
         primaryColor={primaryColor}
+        headerStyle={headerStyle}
         status={
           escalated ? { label: "Connecting", tone: "warn" } : null
         }
