@@ -492,7 +492,75 @@ plan changes stay in sync:
   "no plans are configured for this environment", the plans were set on the other env's
   slot — re-enter them while the connection is on the target environment.
 
-## 14. Where to go next
+## 14. Error monitoring (Sentry)
+
+Spec: [`__specs/35-error-monitoring-sentry.md`](__specs/35-error-monitoring-sentry.md).
+Two projects under the `mllabs-xk` org — `chataxispro-backend` (`apps/api`) and
+`chataxispro-frontend` (`apps/web`, browser + Next.js server). `apps/admin`,
+`apps/widget` and `apps/embed` are not instrumented.
+
+Everything is optional: with no DSN the SDKs never initialise, every Sentry call
+is a no-op, and both apps behave exactly as before.
+
+### 14.1 Configuration
+
+| Where | Variables | When they're read |
+|-------|-----------|-------------------|
+| API service | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE` | Runtime — restart to apply |
+| Web **image build** | `NEXT_PUBLIC_SENTRY_DSN`, `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | Build — inlined into the client bundle |
+| Web service | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE` | Runtime — server-side errors only |
+| Web build (optional) | `SENTRY_ORG`, `SENTRY_PROJECT`, `SENTRY_AUTH_TOKEN` | Build — source-map upload |
+
+> **The one gotcha**: `NEXT_PUBLIC_SENTRY_DSN` must be set as a **build argument**,
+> not just a runtime env var. In Coolify that means ticking "Build Variable" on
+> the web service's variable. Set it only at runtime and the app looks healthy —
+> server errors report, browser errors silently vanish.
+
+Without `SENTRY_AUTH_TOKEN` the build still succeeds; production stack traces
+just stay minified.
+
+### 14.2 Verifying a deploy
+
+Open `https://<web-host>/sentry-example-page` — public, `noindex`, no login. One
+button per reporting path:
+
+| Test | Proves |
+|------|--------|
+| Handled exception | Browser SDK reaches Sentry (reports the event ID in-page) |
+| Uncaught exception | `window.onerror` path |
+| Unhandled rejection | `unhandledrejection` path |
+| React render crash | `global-error.tsx` reports render failures |
+| Route handler 500 | Next.js server runtime + `onRequestError` |
+| API unhandled 500 | Express handler (returns the event ID in the 500 body) |
+| API handled message | API → Sentry connectivity, without causing a 500 |
+
+Start with **Handled exception** and **API handled message**: both confirm
+delivery in the page itself, so you learn whether the DSN works before hunting
+through the Sentry issue feed. The two API endpoints are rate limited to 5/min
+per IP.
+
+The same endpoints work with curl:
+
+```bash
+curl -i https://<api-host>/api/v1/debug-sentry          # → 500 + error.eventId
+curl -s https://<api-host>/api/v1/debug-sentry/message  # → {"configured":true,"eventId":"…"}
+```
+
+`"configured": false` means the API has no `SENTRY_DSN`.
+
+### 14.3 Troubleshooting
+
+- **Server events arrive, browser events don't** — `NEXT_PUBLIC_SENTRY_DSN` was
+  not a build arg (see §14.1), or an ad blocker is active. Browser events are
+  tunnelled through `/monitoring` on the app's own origin specifically to survive
+  blockers; if that route 404s, the build predates the Sentry wiring.
+- **Stack traces are minified** — no `SENTRY_AUTH_TOKEN` at build time.
+- **A 404 or validation error didn't create an issue** — by design. The API only
+  reports non-`ApiError` throws and `ApiError`s with status ≥ 500.
+- **No events at all from the API** — check the boot log for
+  `SENTRY_DSN not set — error monitoring is disabled`.
+
+## 15. Where to go next
 
 - Architecture & rationale: [`__specs/00-table-of-contents.md`](__specs/00-table-of-contents.md)
 - Phased implementation plan: [`__plans/00-overview.md`](__plans/00-overview.md)

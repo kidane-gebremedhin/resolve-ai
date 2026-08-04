@@ -1,8 +1,12 @@
+// Sentry first — it patches http/express/mongoose as they load, so nothing may
+// be imported above this line.
+import "./instrument.js";
 import "express-async-errors";
 import net from "node:net";
 import dns from "node:dns";
 import { createServer } from "node:http";
 import express from "express";
+import * as Sentry from "@sentry/node";
 import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
@@ -12,6 +16,7 @@ import { connectDb } from "./config/db.js";
 import { logger } from "./config/logger.js";
 import routes from "./routes/index.js";
 import { errorHandler } from "./middleware/error-handler.middleware.js";
+import { ApiError } from "./utils/errors.js";
 import { attachSocketServer } from "./socket/index.js";
 import { startJobs } from "./jobs/index.js";
 
@@ -73,6 +78,16 @@ async function main() {
 
   app.use((_req, res) => {
     res.status(404).json({ error: { code: "not_found", message: "Route not found." } });
+  });
+
+  // Sentry's error handler must sit after every controller and before our own
+  // error middleware. It only reports genuine faults: `ApiError`s below 500 are
+  // expected client-side outcomes (401/404/validation) and would drown the
+  // project in noise. It stashes the event id on `res.sentry`, which
+  // `errorHandler` returns to the caller for support lookups.
+  Sentry.setupExpressErrorHandler(app, {
+    shouldHandleError: (error) =>
+      !(error instanceof ApiError) || error.status >= 500,
   });
 
   app.use(errorHandler);

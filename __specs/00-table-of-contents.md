@@ -69,6 +69,12 @@ This specification describes the complete implementation plan for a production-r
 | 33 | [33-proactive-lifecycle.md](./33-proactive-lifecycle.md) | Proactive triggers · Typing indicators · Read receipts · Launcher unread badge | Tier 4 — Proactive & lifecycle |
 | 34 | [34-trust-compliance-voice.md](./34-trust-compliance-voice.md) | PII redaction · Audit trail · Transcript export · Data residency · Rate limiting · Browser voice · Phone bridge | Tiers 5–6 — Trust, compliance & voice |
 
+### Operations specs
+
+| # | File | Section |
+|---|------|---------|
+| 35 | [35-error-monitoring-sentry.md](./35-error-monitoring-sentry.md) | Error Monitoring (Sentry) — API + web SDKs, `/sentry-example-page` smoke test |
+
 ---
 
 ## Key Architectural Decisions (Quick Reference)

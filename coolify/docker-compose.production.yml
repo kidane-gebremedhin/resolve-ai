@@ -22,6 +22,10 @@ services:
       NODE_ENV: production
       MONGODB_URI: ${MONGODB_URI}
       WEB_INTERNAL_URL: http://web:3000
+      # Sentry (backend project). SENTRY_DSN itself comes from .env; this only
+      # tags which environment the events belong to. Unset DSN → reporting off.
+      SENTRY_ENVIRONMENT: production
+      SENTRY_RELEASE: ${SHA}
     labels:
       - traefik.enable=true
       - traefik.http.routers.api.rule=Host(`api.example.com`)
@@ -58,6 +62,11 @@ services:
       NEXT_PUBLIC_EMBED_URL: https://embed.example.com/widget.js
       NEXT_PUBLIC_APP_URL: https://app.example.com
       NEXTAUTH_URL: https://app.example.com
+      # Sentry (frontend project). NEXT_PUBLIC_SENTRY_DSN is NOT settable here —
+      # it is inlined into the client bundle at image build time (see
+      # apps/web/Dockerfile build args). These two only affect the server runtime.
+      SENTRY_ENVIRONMENT: production
+      SENTRY_RELEASE: ${SHA}
     labels:
       - traefik.enable=true
       - traefik.http.routers.web.rule=Host(`app.example.com`)

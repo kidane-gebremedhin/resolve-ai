@@ -122,6 +122,17 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 | `LOG_DIR` | — | `./logs` | Log file directory |
 | `LOG_MAX_FILES` | — | `14d` | Max log retention |
 
+### Error monitoring — Sentry (spec 35)
+
+Read at runtime. All optional: with no DSN the SDK never initialises and every
+`Sentry.*` call is a no-op, so the API boots and behaves identically.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SENTRY_DSN` | — | — | Backend project DSN (`chataxispro-backend`). Unset → reporting disabled |
+| `SENTRY_ENVIRONMENT` | — | `NODE_ENV` | Environment tag on each event (`development` / `staging` / `production`) |
+| `SENTRY_RELEASE` | — | — | Build identifier, usually the git SHA. Set by the Coolify compose files |
+
 ---
 
 ### Tier 1 — Widget polish additions (spec 29)
@@ -217,6 +228,8 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `NEXT_PUBLIC_APP_URL` | ✅ | `http://localhost:3000` | Dashboard app URL |
 | `NEXT_PUBLIC_PADDLE_ENVIRONMENT` | — | `sandbox` | Paddle client-side environment |
 | `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` | — | — | Paddle client-side token (for Paddle.js) |
+| `NEXT_PUBLIC_SENTRY_DSN` | — | — | Frontend project DSN (`chataxispro-frontend`). **Build-time**: inlined into the client bundle, so it must be a docker build arg — setting it only at runtime leaves the browser SDK uninitialised |
+| `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | — | `NODE_ENV` | Environment tag on browser events |
 
 ### Server-side only
 
@@ -226,6 +239,20 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `NEXTAUTH_URL` | ✅ | `http://localhost:3000` | NextAuth callback URL |
 | `GOOGLE_CLIENT_ID` | ✅ | — | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | ✅ | — | Google OAuth client secret |
+| `SENTRY_DSN` | — | `NEXT_PUBLIC_SENTRY_DSN` | DSN for the Next.js server runtime. Runtime-read, so it can change without a rebuild |
+| `SENTRY_ENVIRONMENT` | — | `NODE_ENV` | Environment tag on server events |
+| `SENTRY_RELEASE` | — | — | Build identifier (git SHA) |
+
+### Build-time only — Sentry source maps (spec 35)
+
+Optional. Without `SENTRY_AUTH_TOKEN` the build still succeeds; production stack
+traces just stay minified.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SENTRY_ORG` | — | — | Sentry org slug (`mllabs-xk`) |
+| `SENTRY_PROJECT` | — | — | Sentry project slug (`chataxispro-frontend`) |
+| `SENTRY_AUTH_TOKEN` | — | — | Token with `project:releases` scope. Used only in the build stage; never copied into the runtime image |
 
 ---
 
@@ -271,6 +298,8 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `COOLIFY_API_TOKEN` | ✅ | Coolify bearer token for dev + staging |
 | `COOLIFY_PROD_WEBHOOK_URL` | ✅ | Production Coolify deploy webhook (scoped to `production` env) |
 | `COOLIFY_PROD_API_TOKEN` | ✅ | Production Coolify bearer token |
+| `NEXT_PUBLIC_SENTRY_DSN` | — | Frontend Sentry DSN, passed as a build arg to the web image (spec 35). Unset → the built bundle has no browser reporting |
+| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | — | Source-map upload during the web image build. Unset → build succeeds, traces stay minified |
 
 ### GitHub repository variables (non-secret)
 

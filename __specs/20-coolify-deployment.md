@@ -243,6 +243,20 @@ Create one **shared environment variable group** per project and attach it to ev
 | `CORS_ORIGINS` | `https://dev.customer-service-chatbot.app,https://widget.dev.customer-service-chatbot.app` | `https://staging.customer-service-chatbot.app,https://widget.staging.customer-service-chatbot.app` | `https://app.customer-service-chatbot.app,https://widget.customer-service-chatbot.app` |
 | `MONGO_INITDB_ROOT_PASSWORD`, `REDIS_PASSWORD` | Generated 32-char | Generated 32-char | Generated 32-char |
 | `SENTRY_ENVIRONMENT` | `dev` | `staging` | `production` |
+| `SENTRY_DSN` | `chataxispro-backend` DSN | same | same |
+| `NEXT_PUBLIC_SENTRY_DSN` | `chataxispro-frontend` DSN — **tick "Build Variable"** | same | same |
+| `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | optional — **build variables** | same | same |
+
+> **Sentry's build-time trap**: `NEXT_PUBLIC_SENTRY_DSN` is inlined into the
+> client bundle by `next build`, so in Coolify it must be marked as a **Build
+> Variable**, not just a runtime one. Set it only at runtime and the deploy looks
+> healthy — the API and the Next.js server report errors normally — while every
+> browser error silently disappears. `/sentry-example-page` catches this: its
+> "Handled exception" test reports whether the browser SDK initialised at all.
+> The same applies to `SENTRY_AUTH_TOKEN`, which is consumed during the build for
+> source-map upload and never reaches the runtime image. All Sentry variables are
+> optional; unset means reporting is off, not a failed build. See
+> [35-error-monitoring-sentry.md](./35-error-monitoring-sentry.md).
 
 **Rule**: every secret must be **distinct across environments**. A dev secret leaking must not give access to staging or production data.
 
@@ -426,7 +440,7 @@ Coolify exposes container logs in its UI. For production, ship to a centralized 
 | Container stdout/stderr | Vector (sidecar) or Coolify's built-in Fluentbit | Better Stack / Grafana Loki |
 | Metrics | `prom-client` in API; Coolify Node Exporter | Grafana Cloud (free tier) |
 | APM | OpenTelemetry from `apps/api` (Express auto-instrumentation) | Honeycomb / Tempo |
-| Errors | Sentry (Next.js + Express SDKs) | `sentry.io` project per env |
+| Errors | Sentry (Next.js + Express SDKs) — **implemented**, see [35](./35-error-monitoring-sentry.md); verify a deploy at `/sentry-example-page` | `chataxispro-frontend` + `chataxispro-backend`, tagged by `SENTRY_ENVIRONMENT` |
 | Uptime | Better Stack / UptimeRobot pinging `/health` | Slack + PagerDuty |
 
 The API exposes `/metrics` on port `9090` (Prometheus format) gated by `METRICS_TOKEN`; Coolify scrapes it via Traefik internal label.

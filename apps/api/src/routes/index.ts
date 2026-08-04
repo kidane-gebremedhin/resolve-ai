@@ -21,8 +21,13 @@ import integrations from "./integrations.routes.js";
 import analytics from "./analytics.routes.js";
 import triggers from "./triggers.routes.js";
 import voice from "./voice.routes.js";
+import debug from "./debug.routes.js";
 
 const router = Router();
+
+// Mounted at the /api/v1 root (not under a prefix) so the endpoint reads
+// /api/v1/debug-sentry, matching Sentry's documented convention.
+router.use(debug);
 
 router.use("/public", publicRoutes);
 router.use("/referrals", referrals);

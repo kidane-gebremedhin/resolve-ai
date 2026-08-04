@@ -82,6 +82,7 @@ account (there is no demo seed data — onboard via the sign-up flow).
 | [__skills/](__skills/) | **Reusable procedures** (Anthropic Skill format) invoked by the plans. |
 | [SKILLS_GALLERY.md](SKILLS_GALLERY.md) | **Skills catalog** — purpose, provenance (custom-written vs downloaded), and phase for every skill. |
 | [E2E_FLOW.md](E2E_FLOW.md) | **RAG flow** — indexing → retrieval → generation, end to end. |
+| [__specs/35-error-monitoring-sentry.md](__specs/35-error-monitoring-sentry.md) | **Error monitoring** — Sentry for the API + web app, and the `/sentry-example-page` production smoke test ([RUNBOOK §14](RUNBOOK.md)). |
 | [IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md) | Spec-by-spec implementation status. |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | Conventions for AI coding agents working in this repo. |
 | `CHANGELOG_*.md` | Per-session change logs (latest: [CHANGELOG_1.md](CHANGELOG_1.md)). |

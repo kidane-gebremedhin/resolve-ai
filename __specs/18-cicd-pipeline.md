@@ -219,6 +219,19 @@ jobs:
         with:
           context: .
           file: apps/${{ matrix.app }}/Dockerfile
+          # Sentry (spec 35). Only apps/web declares these ARGs; the other
+          # Dockerfiles ignore them. Unset secrets resolve to empty strings, which
+          # builds a bundle with reporting disabled rather than failing the job.
+          # NEXT_PUBLIC_SENTRY_DSN must be a BUILD arg — it is inlined into the
+          # client bundle. SENTRY_AUTH_TOKEN is used only to upload source maps in
+          # the build stage and never reaches the runtime image.
+          build-args: |
+            NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
+            NEXT_PUBLIC_SENTRY_ENVIRONMENT=${{ github.ref_name }}
+            SENTRY_ORG=${{ secrets.SENTRY_ORG }}
+            SENTRY_PROJECT=${{ secrets.SENTRY_PROJECT }}
+            SENTRY_AUTH_TOKEN=${{ secrets.SENTRY_AUTH_TOKEN }}
+            SENTRY_RELEASE=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

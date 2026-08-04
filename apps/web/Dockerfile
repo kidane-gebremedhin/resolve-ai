@@ -30,6 +30,25 @@ ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
 ARG NEXT_PUBLIC_APP_NAME=Chataxis
 ARG NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=
 ARG NEXT_PUBLIC_PADDLE_ENV=sandbox
+# Sentry. The DSN is inlined into the client bundle, so it MUST be a build arg —
+# setting it only at runtime leaves the browser SDK uninitialised. All Sentry
+# args are optional: with none of them the app builds and runs exactly as before,
+# just without error reporting.
+ARG NEXT_PUBLIC_SENTRY_DSN=
+ARG NEXT_PUBLIC_SENTRY_ENVIRONMENT=
+# Source-map upload — only runs when SENTRY_AUTH_TOKEN is supplied. Without it
+# production stack traces stay minified but errors are still reported. The token
+# is consumed in this build stage only; it never reaches the runtime image.
+ARG SENTRY_ORG=
+ARG SENTRY_PROJECT=
+ARG SENTRY_AUTH_TOKEN=
+ARG SENTRY_RELEASE=
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN \
+    NEXT_PUBLIC_SENTRY_ENVIRONMENT=$NEXT_PUBLIC_SENTRY_ENVIRONMENT \
+    SENTRY_ORG=$SENTRY_ORG \
+    SENTRY_PROJECT=$SENTRY_PROJECT \
+    SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN \
+    SENTRY_RELEASE=$SENTRY_RELEASE
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL \
     NEXT_PUBLIC_WIDGET_URL=$NEXT_PUBLIC_WIDGET_URL \

@@ -11,8 +11,10 @@ import "./patch-router.js";
 
 import express, { type Express } from "express";
 import cors from "cors";
+import * as Sentry from "@sentry/node";
 import routes from "../routes/index.js";
 import { errorHandler } from "../middleware/error-handler.middleware.js";
+import { ApiError } from "../utils/errors.js";
 
 export function createApp(): Express {
   const app = express();
@@ -29,6 +31,14 @@ export function createApp(): Express {
 
   app.use((_req, res) => {
     res.status(404).json({ error: { code: "not_found", message: "Route not found." } });
+  });
+
+  // Mirrors index.ts. Tests run without a DSN, so Sentry is uninitialised and
+  // this is a no-op — it's here so the middleware ORDER stays under test: any
+  // future change that lets it swallow errors or reorder the chain shows up in
+  // the existing suites rather than in production.
+  Sentry.setupExpressErrorHandler(app, {
+    shouldHandleError: (error) => !(error instanceof ApiError) || error.status >= 500,
   });
 
   app.use(errorHandler);

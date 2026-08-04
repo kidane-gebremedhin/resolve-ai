@@ -32,6 +32,8 @@
 | 17 ✅ | [`17-proactive-lifecycle.md`](./17-proactive-lifecycle.md) | **Tier 4.** Typing indicators (bidirectional) · Proactive trigger rules · Launcher unread badge · Triggers management UI | Operator/customer typing socket events; ProactiveTrigger model; embed trigger evaluation; csb:unread badge | 33 |
 | 18 ✅ | [`18-trust-compliance-voice.md`](./18-trust-compliance-voice.md) | **Tiers 5–6.** PII redaction · Audit trail UI · Transcript export · Data residency stub · Widget rate limiting + abuse detection · Browser-mic voice · Twilio phone bridge | piiMask extensions; widgetRateLimit middleware; ToolCallLog audit UI; S3 transcript export; stt.service + tts.service; voice routes; Twilio WebSocket handler | 34 |
 
+| 19 ✅ | [`19-error-monitoring-sentry.md`](./19-error-monitoring-sentry.md) | **Ops.** Sentry SDKs for the API and web app · `/sentry-example-page` production smoke test · build-arg + Coolify wiring | instrument.ts (API, first import); setupExpressErrorHandler; debug.routes.ts; instrumentation-client.ts; sentry.{server,edge}.config.ts; global-error.tsx; withSentryConfig | 35 |
+
 > **Post-v1 phases (5–12)** are independent enhancement tracks from the product backlog, not strictly sequential like Phases 0–4. Phase 8 (affiliate) benefits from Phase 7 (plan catalog) landing first.
 >
 > **Tier phases (13–18)** are the ROADMAP.md feature tiers. They are ordered: 13 → 14 → 15 (spine required before tools); 13 → 16 (Markdown renderer needed for block fallback); 17 is independent after 13; 18 requires 14 for piiMask.ts reuse. Tiers 5–6 (Phase 18) are post-launch hardening.
