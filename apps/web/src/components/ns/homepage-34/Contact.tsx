@@ -2,22 +2,19 @@ import RevealAnimation from '../animation/RevealAnimation';
 import LinkButton from '../ui/button/LinkButton';
 import { APP_NAME } from '@/lib/app-config';
 
-// Branding-bound contact details. Override the actual address/phone via env when
-// rebranding; the email host stays in sync with the app slug.
+// Branding-bound contact details. The email host stays in sync with the app slug; the phone
+// and postal address are shown ONLY when the operator provides real values via env, so the
+// live site never displays a placeholder (fake) phone number or address.
 const supportEmail = `hello@${APP_NAME.toLowerCase()}.com`;
-const supportPhone = process.env.NEXT_PUBLIC_SUPPORT_PHONE ?? '(239) 555-0108';
-const supportAddress =
-  process.env.NEXT_PUBLIC_SUPPORT_ADDRESS ?? '4140 Parker Rd, Allentown, NM 31134';
+const supportPhone = process.env.NEXT_PUBLIC_SUPPORT_PHONE;
+const supportAddress = process.env.NEXT_PUBLIC_SUPPORT_ADDRESS;
 
 const contactInfo = [
   { id: 1, type: 'email', value: supportEmail, href: `mailto:${supportEmail}` },
-  {
-    id: 2,
-    type: 'phone',
-    value: supportPhone,
-    href: `tel:${supportPhone.replace(/\D/g, '')}`,
-  },
-  { id: 3, type: 'address', value: supportAddress },
+  ...(supportPhone
+    ? [{ id: 2, type: 'phone', value: supportPhone, href: `tel:${supportPhone.replace(/\D/g, '')}` }]
+    : []),
+  ...(supportAddress ? [{ id: 3, type: 'address', value: supportAddress }] : []),
 ];
 
 const EmailIcon = () => (
@@ -61,7 +58,7 @@ const Contact = () => {
                     <h2 className="max-w-[517px]">Support when you need It</h2>
                   </RevealAnimation>
                   <RevealAnimation delay={0.2}>
-                    <p className="max-w-[372px]">Our support team is here to guide you, whether you're picking a plan or filing a claim.</p>
+                    <p className="max-w-[372px]">Our team is here to help, whether you're choosing a plan, setting up your agent, or connecting your tools.</p>
                   </RevealAnimation>
                 </div>
                 <RevealAnimation delay={0.3}>

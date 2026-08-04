@@ -7,39 +7,31 @@ import { APP_NAME } from '@/lib/app-config';
 const stepCards = [
   {
     id: 1,
-    title: 'AI Resolution Agent',
-    description: `Train once on your docs. ${APP_NAME} resolves tickets automatically and knows when to escalate.`,
+    title: 'AI resolution agent',
+    description: `Trained on your own help docs and website, ${APP_NAME} answers customer questions in seconds and knows when to hand off to a human.`,
     gradient: '/images/gradient/gradient-32.png',
-    stepImg: '/images/home-page-34/step-1.png',
-    stepDarkImg: null,
-    maxDescWidth: 'max-w-[281px]',
+    maxDescWidth: 'max-w-[340px]',
   },
   {
     id: 2,
-    title: 'Unified Inbox',
-    description: 'Every channel in one place: email, chat, WhatsApp, Slack, with smart priority queuing.',
+    title: 'Unified inbox',
+    description: 'Every conversation in one shared inbox, so your team and the AI agent work side by side in real time.',
     gradient: '/images/gradient/gradient-33.png',
-    stepImg: '/images/home-page-34/step-2.png',
-    stepDarkImg: '/images/home-page-34/step-2-dark.png',
-    maxDescWidth: 'max-w-[250px]',
+    maxDescWidth: 'max-w-[320px]',
   },
   {
     id: 3,
-    title: 'Reply Copilot',
-    description: 'AI-drafted replies with tone controls and live translation across 92+ languages.',
+    title: 'Reply suggestions',
+    description: 'AI-drafted replies your agents can send, edit, or polish, keeping responses fast and on-brand.',
     gradient: '/images/gradient/gradient-34.png',
-    stepImg: '/images/home-page-34/step-3.png',
-    stepDarkImg: '/images/home-page-34/step-3-dark.png',
-    maxDescWidth: 'max-w-[250px]',
+    maxDescWidth: 'max-w-[320px]',
   },
   {
     id: 4,
-    title: 'Insight Engine',
-    description: 'Auto-tagged conversations surface trending issues before they become support crises.',
+    title: 'Analytics & insights',
+    description: 'Built-in analytics surface conversation volume, resolution rates, and trends so you can spot issues early.',
     gradient: '/images/gradient/gradient-9.png',
-    stepImg: '/images/home-page-34/step-4.png',
-    stepDarkImg: '/images/home-page-34/step-4-dark.png',
-    maxDescWidth: 'max-w-[280px]',
+    maxDescWidth: 'max-w-[340px]',
   },
 ];
 
@@ -76,21 +68,9 @@ const Steps = () => {
                         <figure className="absolute pointer-events-none -top-[99%] -left-[88%] size-[1000px] -z-10 rotate-[307deg] opacity-50 select-none">
                           <img src={step.gradient} alt="step gradient" />
                         </figure>
-                        <div className="relative z-10 p-8 rounded-[14px] sm:max-w-[467px] max-w-full w-full space-y-6 bg-white dark:bg-black">
-                          <div className="space-y-1">
-                            <p className="text-heading-5 text-secondary dark:text-accent">{step.title}</p>
-                            <p className={`${step.maxDescWidth} w-full`}>{step.description}</p>
-                          </div>
-                          <figure className="max-w-[385px] w-full rounded-2xl overflow-hidden">
-                            {step.stepDarkImg ? (
-                              <>
-                                <img src={step.stepImg} alt="step" className="dark:hidden block md:max-h-[300px] md:min-h-[300px] w-full object-cover" />
-                                <img src={step.stepDarkImg} alt="step" className="hidden dark:block md:max-h-[300px] md:min-h-[300px] w-full object-cover" />
-                              </>
-                            ) : (
-                              <img src={step.stepImg} alt="step" className="md:max-h-[300px] md:min-h-[300px] w-full object-cover" />
-                            )}
-                          </figure>
+                        <div className="relative z-10 p-8 rounded-[14px] sm:max-w-[467px] max-w-full w-full space-y-3 bg-white dark:bg-black">
+                          <p className="text-heading-5 text-secondary dark:text-accent">{step.title}</p>
+                          <p className={`${step.maxDescWidth} w-full`}>{step.description}</p>
                         </div>
                       </div>
                     </StackCardItem>

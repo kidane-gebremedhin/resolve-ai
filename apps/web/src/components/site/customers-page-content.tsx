@@ -1,41 +1,32 @@
 'use client';
 
-import { Quote } from 'lucide-react';
+import { MessagesSquare, Clock, Layers, Sparkles } from 'lucide-react';
 import { MarketingShell } from '@/components/site/MarketingShell';
 import { APP_NAME } from '@/lib/app-config';
 
-const stories = [
+// Honest, capability-based use cases — NOT fabricated customer testimonials, quotes, logos, or
+// metrics. Replace this section with real case studies once you have customers who agree to be
+// featured.
+const useCases = [
   {
-    co: 'Northwind',
-    industry: 'B2B SaaS',
-    quote: 'We deflected 71% of tier-1 tickets in the first month. CSAT went up.',
-    who: 'Maya Okafor, VP Support',
-    metric: '−43%',
-    metricLabel: 'median handle time',
+    icon: MessagesSquare,
+    title: 'Deflect repetitive questions',
+    body: `Let ${APP_NAME} handle the FAQs, order-status checks, and how-tos, so your team only sees the conversations that truly need a person.`,
   },
   {
-    co: 'Lumen Health',
-    industry: 'Healthcare',
-    quote: `${APP_NAME} handles intake at 3am so our nurses don't have to. Game-changing.`,
-    who: 'Dr. Idris Khan, COO',
-    metric: '24/7',
-    metricLabel: 'automated triage',
+    icon: Clock,
+    title: 'Answer around the clock',
+    body: 'Customers get accurate, sourced answers instantly, day or night, and in their own language, without waiting for business hours.',
   },
   {
-    co: 'Routebound',
-    industry: 'Logistics',
-    quote: 'Replaced Zendesk + Intercom + a homegrown bot in one weekend.',
-    who: 'Anya Petrov, Head of CX',
-    metric: '3 → 1',
-    metricLabel: 'tools consolidated',
+    icon: Layers,
+    title: 'Consolidate your support stack',
+    body: 'A grounded AI agent, a shared inbox, and built-in analytics in one place, so you can retire the patchwork of bots and tools.',
   },
   {
-    co: 'Petalwise',
-    industry: 'DTC',
-    quote: 'Our agents stopped copy-pasting and started actually talking to customers.',
-    who: 'Sam Reyes, Support Lead',
-    metric: '+18',
-    metricLabel: 'NPS in Q1',
+    icon: Sparkles,
+    title: 'Keep agents focused',
+    body: 'AI-drafted replies and one-click actions mean less copy-pasting and more real conversations with customers.',
   },
 ];
 
@@ -44,30 +35,24 @@ export default function CustomersPageContent() {
     <MarketingShell>
       <section className="border-b border-border">
         <div className="container-page py-20">
-          <div className="text-xs font-semibold uppercase tracking-wider text-primary">Customers</div>
+          <div className="text-xs font-semibold uppercase tracking-wider text-primary">Use cases</div>
           <h1 className="mt-3 max-w-3xl text-balance font-display text-4xl font-semibold tracking-tight md:text-5xl">
-            Teams shipping calmer support with {APP_NAME}.
+            What teams build with {APP_NAME}.
           </h1>
+          <p className="mt-4 max-w-2xl text-lg text-muted-foreground">
+            From startups to established support teams, {APP_NAME} takes the repetitive load off your
+            inbox so your people can focus on the conversations that matter.
+          </p>
         </div>
       </section>
 
       <section>
         <div className="container-page grid gap-px overflow-hidden border-b border-border bg-border md:grid-cols-2">
-          {stories.map((s) => (
-            <article key={s.co} className="flex flex-col gap-6 bg-card p-8">
-              <div className="flex items-center justify-between">
-                <span className="font-display text-lg font-semibold">{s.co}</span>
-                <span className="text-xs text-muted-foreground">{s.industry}</span>
-              </div>
-              <Quote className="h-5 w-5 text-primary" />
-              <p className="font-display text-xl leading-snug tracking-tight">&quot;{s.quote}&quot;</p>
-              <div className="mt-auto flex items-end justify-between border-t border-border pt-5">
-                <div className="text-sm text-muted-foreground">{s.who}</div>
-                <div className="text-right">
-                  <div className="font-display text-2xl font-semibold tracking-tight">{s.metric}</div>
-                  <div className="text-xs text-muted-foreground">{s.metricLabel}</div>
-                </div>
-              </div>
+          {useCases.map((u) => (
+            <article key={u.title} className="flex flex-col gap-4 bg-card p-8">
+              <u.icon className="h-6 w-6 text-primary" />
+              <h2 className="font-display text-xl font-semibold tracking-tight">{u.title}</h2>
+              <p className="text-muted-foreground">{u.body}</p>
             </article>
           ))}
         </div>

@@ -25,6 +25,8 @@ const widgetSettingsSchema = z.object({
     .string()
     .regex(/^#[0-9a-fA-F]{3,8}$/, "primaryColor must be a hex color (e.g. #1e40af)")
     .optional(),
+  // Header treatment: the lavender/blue pinstripe pattern (default) or a solid accent header.
+  headerStyle: z.enum(["pinstripe", "solid"]).optional(),
   position: z.enum(["bottom-right", "bottom-left", "centered"]).optional(),
   theme: z.enum(["light", "dark", "auto"]).optional(),
   showBranding: z.boolean().optional(),
