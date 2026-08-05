@@ -26,8 +26,14 @@ COPY --from=build --chown=app:app /out ./
 # (EACCES on mkdir) — pre-create it and hand it to `app`. Mount a volume here in
 # production for persistence (attachments are otherwise lost on redeploy).
 RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
+# Entrypoint runs DB migrations before starting the server (see the script). Copied
+# from the build context (not /out) so it's independent of `pnpm deploy` file rules.
+COPY --chown=app:app apps/api/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 USER app
 EXPOSE 4000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+# start-period gives the pre-boot migration step (entrypoint) room before health
+# failures start counting.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD wget -qO- http://localhost:4000/health || exit 1
-CMD ["node", "dist/index.js"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

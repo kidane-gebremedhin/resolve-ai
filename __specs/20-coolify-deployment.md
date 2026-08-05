@@ -412,6 +412,24 @@ Post-deploy: GitHub Actions hits /health endpoints; on failure → trigger Cooli
 
 Coolify retains the **last 3 successful deployments** per environment. Rollback in dev/staging is one click in the UI; for production prefer a re-run of `deploy-production.yml` with the previous SHA so the rollback is recorded in the GitHub audit log.
 
+### Database migrations (automatic, on every API boot)
+
+The **API container runs migrations before the server starts** — its entrypoint
+(`apps/api/docker-entrypoint.sh`) runs `node dist/scripts/migrate.js` and only then execs
+`node dist/index.js`. So each rolling restart applies any pending index sync + data migrations
+as part of the deploy; there is **no separate manual migrate step**.
+
+- The migrate step is **idempotent**: index sync is a no-op when nothing drifted, and data
+  migrations are gated by the `SchemaMigration` ledger (each runs at most once, ever).
+- A **failed migration aborts the container** (`set -e`, non-zero exit) rather than serving an
+  un-migrated schema — that fails the deploy and Coolify keeps the previous version.
+- The migrate entrypoint lives under `src/` so it compiles into `dist` and runs with plain
+  `node` (the runtime image has no `tsx`/dev deps). `pnpm db:migrate` runs the same file via tsx
+  locally.
+- Escape hatch: set `SKIP_DB_MIGRATE=1` in the environment to boot the server without migrating
+  (e.g. while running a problematic migration by hand). The healthcheck `start-period` (45s)
+  gives the pre-boot migration room before failures count.
+
 ---
 
 ## 7. Backups

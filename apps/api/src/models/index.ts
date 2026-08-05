@@ -20,6 +20,7 @@ export { Referral, type ReferralDocType } from "./Referral.js";
 export { Campaign, type CampaignDocType } from "./Campaign.js";
 export { UsageRecord, type UsageRecordDocType } from "./UsageRecord.js";
 export { BudgetAlert, type BudgetAlertDocType } from "./BudgetAlert.js";
+export { Notification, type NotificationDocType } from "./Notification.js";
 export { MessageFeedback, type MessageFeedbackDocType } from "./MessageFeedback.js";
 export { ConversationRating, type ConversationRatingDocType } from "./ConversationRating.js";
 export { Connection, type ConnectionDocType } from "./Connection.js";

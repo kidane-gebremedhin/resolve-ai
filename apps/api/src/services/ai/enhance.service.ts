@@ -1,5 +1,6 @@
 import { ENHANCE_SYSTEM_PROMPT } from "./prompts.js";
 import { env } from "../../config/env.js";
+import { recordUsage } from "../openrouter-usage.service.js";
 
 const OPENROUTER_URL =
   process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
@@ -10,6 +11,9 @@ const ENHANCE_MODEL = process.env.ENHANCE_MODEL ?? env.ai.model;
 export async function enhanceDraft(args: {
   draft: string;
   customerLastMessage?: string;
+  // Org/conversation for usage metering (operator-side AI spend).
+  organizationId?: string;
+  conversationId?: string | null;
 }): Promise<{ enhanced: string }> {
   const draft = args.draft.trim();
   if (!draft) return { enhanced: "" };
@@ -41,7 +45,18 @@ export async function enhanceDraft(args: {
   }
   const body = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
+    id?: string;
   };
+  // Meter the tokens this polish call spent, attributed to the operator's org.
+  if (body.id && args.organizationId) {
+    void recordUsage({
+      feature: "enhance",
+      organizationId: args.organizationId,
+      conversationId: args.conversationId ?? null,
+      model: ENHANCE_MODEL,
+      generationIds: [body.id],
+    }).catch(() => undefined);
+  }
   const enhanced = body.choices?.[0]?.message?.content?.trim() ?? draft;
   return { enhanced };
 }

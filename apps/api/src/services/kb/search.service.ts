@@ -48,7 +48,7 @@ export async function searchKb(args: {
   const pinecone = getPineconeIndex();
   let res: { matches: { id: string; score: number; metadata?: Record<string, unknown> }[] };
   try {
-    const [queryVector] = await embed([query]);
+    const [queryVector] = await embed([query], { organizationId });
     if (!queryVector) return [];
     // Always scope to the agent's KB, AND-ed with the org as defence in depth so
     // a stray vector can never cross either boundary.

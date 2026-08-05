@@ -9,6 +9,10 @@ const usageRecordSchema = new Schema(
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true },
     websiteId: { type: Schema.Types.ObjectId, ref: "Website", default: null },
     conversationId: { type: Schema.Types.ObjectId, ref: "Conversation", default: null },
+    // Which AI feature produced this usage — so every token is metered AND attributable.
+    // "widget_reply" (customer-facing agent), "suggestions"/"enhance" (operator AI),
+    // "ticket_summary" (support-ticket transcript), "embedding" (KB vector embeddings).
+    feature: { type: String, default: "widget_reply" },
     // OpenRouter generation IDs — stored as an array because a single agent
     // turn can involve multiple LLM calls (tool loop + final reply).
     generationIds: { type: [String], default: [] },

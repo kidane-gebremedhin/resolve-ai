@@ -10,7 +10,6 @@ import {
   Settings,
   Bot,
   Search,
-  Bell,
   LayoutDashboard,
   Globe,
   Sparkles,
@@ -36,6 +35,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Logo } from '@/components/site/Logo';
+import { NotificationBell } from '@/components/layouts/notification-bell';
 import { Input } from '@csb/ui';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { useSession, signOut } from 'next-auth/react';
@@ -402,10 +402,7 @@ export function AppShell({
               </Link>
             ) : null}
             <ThemeToggle />
-            <button className="relative grid h-9 w-9 place-items-center rounded-md border border-border bg-background hover:bg-muted">
-              <Bell className="h-4 w-4" />
-              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
-            </button>
+            <NotificationBell />
             <UserMenu />
           </div>
         </header>
