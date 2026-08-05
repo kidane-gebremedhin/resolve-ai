@@ -4,12 +4,15 @@ import { z } from "zod";
 import { Conversation, Message, ContactSession, ToolCallLog } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
 import { generateSuggestions } from "../services/ai/suggestions.service.js";
 import { getStorage } from "../config/storage.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// Working the inbox (assign, resolve, reply) is agent-level; viewers are read-only.
+router.use(requireOrgRole("agent"));
 
 function emitConversationUpdated(req: Request, conversationId: string, status: string): void {
   const io = req.app.get("io") as IoServer | undefined;

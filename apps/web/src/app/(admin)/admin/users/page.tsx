@@ -14,8 +14,9 @@ import { formatNumber } from "@/components/admin/utils";
 
 async function loadUsers(): Promise<{ users: AdminUser[]; error: string | null }> {
   try {
-    const users = await api.get<AdminUser[]>("/admin/users?limit=200");
-    return { users, error: null };
+    // /admin/users returns a paginated envelope ({ items, total, … }); unwrap it.
+    const { items } = await api.get<{ items: AdminUser[] }>("/admin/users?limit=200");
+    return { users: items, error: null };
   } catch (err) {
     const message = err instanceof ApiError ? err.message : "Failed to load users";
     return { users: [], error: message };

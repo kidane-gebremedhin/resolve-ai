@@ -1,5 +1,6 @@
 import type { Server as IoServer } from "socket.io";
 import type { HydratedDocument } from "mongoose";
+import * as Sentry from "@sentry/node";
 import {
   Agent,
   Conversation,
@@ -1131,6 +1132,11 @@ export async function generateAiReply(
       }
     } catch (err) {
       logger.error("[ai] streaming final call failed", { err: (err as Error).message });
+      // Report to Sentry so a provider-side outage (OpenRouter key/credits/model)
+      // is actually alertable. Without this the failure is swallowed into a 201 +
+      // the fallback string below, so uptime checks and dashboards stay green
+      // while every customer conversation is silently broken.
+      Sentry.captureException(err, { tags: { area: "ai.stream" } });
       // Generic, non-committal error — don't promise a human handoff here (the escalation
       // action is decided by the meta-pass below, not by this fallback string).
       streamedText = "Sorry, I encountered some issues, please try again later.";

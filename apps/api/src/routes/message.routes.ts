@@ -6,6 +6,7 @@ import { Conversation, Message } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { enhanceDraft } from "../services/ai/enhance.service.js";
 import { env } from "../config/env.js";
@@ -19,6 +20,8 @@ import {
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// Sending/editing operator messages is agent-level; viewers are read-only.
+router.use(requireOrgRole("agent"));
 
 const attachmentSchema = z.object({
   fileName: z.string(),

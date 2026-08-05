@@ -393,6 +393,29 @@ Deduplication guard — ensures each budget threshold email is sent at most once
 
 ---
 
+### 15. `contactmessages`
+
+Inbound sales/support inquiries from the **public** marketing "Contact Us" form
+(`POST /public/contact`). Distinct from `contactSessions` (widget visitors tied to an
+org/website) — these are unauthenticated and org-agnostic (Changelog 2).
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_id` | `ObjectId` | auto | Primary key |
+| `name` | `string` | ✅ | Submitter name |
+| `email` | `string` | ✅ | Submitter email (lowercased) |
+| `message` | `string` | ✅ | Message body |
+| `ipAddress` | `string` | — | First-seen IP (abuse forensics) |
+| `userAgent` | `string` | — | Submitting user agent |
+| `status` | `string` | ✅ | `new` / `read` / `archived` (default `new`) |
+| `createdAt` | `Date` | auto | |
+| `updatedAt` | `Date` | auto | |
+
+**Indexes:**
+- `{ createdAt: -1 }`
+
+---
+
 ## Entity Relationship Diagram
 
 ```mermaid

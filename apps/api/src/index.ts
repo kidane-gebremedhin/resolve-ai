@@ -83,11 +83,14 @@ async function main() {
   // Sentry's error handler must sit after every controller and before our own
   // error middleware. It only reports genuine faults: `ApiError`s below 500 are
   // expected client-side outcomes (401/404/validation) and would drown the
-  // project in noise. It stashes the event id on `res.sentry`, which
-  // `errorHandler` returns to the caller for support lookups.
+  // project in noise. Mongoose `CastError`s are malformed client input (a
+  // non-ObjectId `:id`) that `errorHandler` turns into a 400 — also not a fault.
+  // It stashes the event id on `res.sentry`, which `errorHandler` returns to the
+  // caller for support lookups.
   Sentry.setupExpressErrorHandler(app, {
     shouldHandleError: (error) =>
-      !(error instanceof ApiError) || error.status >= 500,
+      (error as { name?: string }).name !== "CastError" &&
+      (!(error instanceof ApiError) || error.status >= 500),
   });
 
   app.use(errorHandler);

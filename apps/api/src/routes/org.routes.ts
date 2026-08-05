@@ -19,6 +19,7 @@ import {
 } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { enforceTeamMemberQuota } from "../middleware/plan-limit.middleware.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../utils/errors.js";
 import { getPineconeIndex } from "../config/pinecone.js";
@@ -33,7 +34,7 @@ router.get("/current", requireAuth, requireOrg, async (req: Request, res: Respon
   res.json(org);
 });
 
-router.patch("/current", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/current", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const body = (req.body ?? {}) as { name?: unknown; settings?: unknown };
   const allowed: { name?: string; settings?: Record<string, unknown> } = {};
   if (typeof body.name === "string") allowed.name = body.name;

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { randomBytes } from "node:crypto";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { Agent, Connection, ToolDefinition } from "../models/index.js";
 import { getAdapter, listAdapters } from "../services/integrations/adapters/index.js";
 import { encrypt, decrypt } from "../services/security/crypto.service.js";
@@ -331,7 +332,7 @@ function normalizeWebhookInputSchema(input: unknown): Record<string, unknown> {
 }
 
 // ---- GET /integrations ---- list providers catalog + installed connections
-router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
 
   const [connections, adapters, agents, toolDefs, oauthApps] = await Promise.all([
@@ -509,7 +510,7 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
 // Powers the agent editor's project dropdown so operators can only choose a
 // project that actually exists (free-text let them save e.g. "PTKA" when only
 // "KAN" exists, which failed ticket creation).
-router.get("/jira/projects", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/jira/projects", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const conn = await Connection.findOne({ organizationId: req.orgId, provider: "jira", status: "active" });
   if (!conn) {
     // Jira is only "connected" per-environment; the active env may be the one that
@@ -609,7 +610,7 @@ async function verifyWebhookReachable(
 }
 
 // ---- POST /integrations/:provider/connect ---- start OAuth or store API key
-router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.post("/:provider/connect", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const provider = String(req.params.provider);
   const {
@@ -826,7 +827,7 @@ router.post("/:provider/connect", requireAuth, requireOrg, async (req: Request, 
 // Read this org's OAuth app config for one environment. Returns the (public) client_id
 // + whether a secret is stored — never the secret. Sandbox and production are separate
 // apps, so the modal reads/writes one environment at a time.
-router.get("/:provider/oauth-app", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/:provider/oauth-app", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const provider = String(req.params.provider);
   if (!isOAuthProvider(provider)) {
     res.status(400).json({ error: `${provider} is not an OAuth provider.` });
@@ -850,7 +851,7 @@ router.get("/:provider/oauth-app", requireAuth, requireOrg, async (req: Request,
 // one environment (`sandbox` in the body). The operator brings their own registered
 // OAuth app; the client_secret is encrypted at rest. A blank secret keeps the stored
 // one (so they can edit the id/redirect only).
-router.put("/:provider/oauth-app", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.put("/:provider/oauth-app", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const provider = String(req.params.provider);
   if (!isOAuthProvider(provider)) {
     res.status(400).json({ error: `${provider} is not an OAuth provider.` });
@@ -978,7 +979,7 @@ router.get("/:provider/callback", async (req: Request, res: Response) => {
 
 // ---- PATCH /integrations/tools/:toolDefId/guardrails ---- set per-tool guardrails
 // Operator-defined limits enforced server-side by the dispatcher (see guardrails.ts).
-router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const {
     maxAmount, maxDaysSincePurchase, requireIdentityVerification, allowedContactEmails,
@@ -1022,7 +1023,7 @@ router.patch("/tools/:toolDefId/guardrails", requireAuth, requireOrg, async (req
 // ---- PATCH /integrations/tools/:toolDefId/registry ---- rename a tool, give it a
 // custom description (fed to the AI so it calls the right tool), and choose which
 // agents can access it.
-router.patch("/tools/:toolDefId/registry", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/tools/:toolDefId/registry", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const { displayName, description, enabledAgentIds } = req.body as Record<string, unknown>;
   const $set: Record<string, unknown> = {};
   if (typeof displayName === "string" && displayName.trim()) $set.displayName = displayName.trim().slice(0, 100);
@@ -1047,7 +1048,7 @@ router.patch("/tools/:toolDefId/registry", requireAuth, requireOrg, async (req: 
 });
 
 // ---- PATCH /integrations/:connectionId ---- update name/sandbox/enabledAgentIds
-router.patch("/:connectionId", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/:connectionId", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const { name, description, sandbox, enabledAgentIds, rateLimitPerSession, rateLimitPerConnection, rateLimitWindowMs } =
     req.body as Record<string, unknown>;
@@ -1172,7 +1173,7 @@ router.patch("/:connectionId", requireAuth, requireOrg, async (req: Request, res
 // operator can drop e.g. a test account while keeping production live. Without the
 // query param — or when only one environment is connected — the whole connection is
 // soft-revoked and its tools deactivated.
-router.delete("/:connectionId", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.delete("/:connectionId", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const conn = await Connection.findOne({ _id: req.params.connectionId, organizationId: orgId }).lean();
   if (!conn) {
@@ -1234,7 +1235,7 @@ router.delete("/:connectionId", requireAuth, requireOrg, async (req: Request, re
 // (key/name/schema) is shared across environments; only the URL + method + auth
 // differ, so this stores just those into the target environment's slot. Adding the
 // missing environment is what lets a webhook be switched sandbox<->production.
-router.post("/:connectionId/webhook-endpoint", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.post("/:connectionId/webhook-endpoint", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const { sandbox, webhookUrl, webhookMethod, authHeader, authValue } = req.body as {
     sandbox?: boolean; webhookUrl?: string; webhookMethod?: string; authHeader?: string; authValue?: string;
   };
@@ -1293,7 +1294,7 @@ router.post("/:connectionId/webhook-endpoint", requireAuth, requireOrg, async (r
 // header/value, the input JSON schema, and the tool's display name/description.
 // Applies to the CURRENTLY-active environment. The auth value is a secret — omit
 // it (or send blank) to keep the stored one; send a new value to replace it.
-router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const {
     webhookUrl, webhookMethod, authHeader, authValue, inputSchema, toolName, toolDescription,
   } = req.body as {
@@ -1397,7 +1398,7 @@ router.patch("/:connectionId/webhook-config", requireAuth, requireOrg, async (re
 // ids — which is what prevents the "no plans configured" failure. Price/product ids are
 // integration config, not secrets (they appear in client-side checkout). The path keeps its
 // legacy `paddle-catalog` name but serves BOTH billing providers.
-router.get("/:connectionId/paddle-catalog", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/:connectionId/paddle-catalog", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const conn = await Connection.findOne({
     _id: req.params.connectionId,
     organizationId: req.orgId,
@@ -1427,7 +1428,7 @@ router.get("/:connectionId/paddle-catalog", requireAuth, requireOrg, async (req:
   }
 });
 
-router.put("/:connectionId/paddle-plans", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.put("/:connectionId/paddle-plans", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const conn = await Connection.findOne({
     _id: req.params.connectionId,
     organizationId: req.orgId,
@@ -1451,7 +1452,7 @@ router.put("/:connectionId/paddle-plans", requireAuth, requireOrg, async (req: R
 // credentials (refreshing an OAuth token first if it's near expiry). This gives
 // OAuth connections the same "is this actually working?" check that api-key
 // connections get at connect time, and lets an operator re-test any connection.
-router.post("/:connectionId/verify", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.post("/:connectionId/verify", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const conn = await Connection.findOne({ _id: req.params.connectionId, organizationId: req.orgId });
   if (!conn) {
     res.status(404).json({ error: "Connection not found." });
@@ -1623,7 +1624,7 @@ router.post("/stripe/webhook/:connectionId", async (req: Request, res: Response)
 // ---- PUT /integrations/:connectionId/webhook-secret ---- store the signing secret
 // the operator copies from their Paddle/Stripe notification-destination setup, into
 // the ACTIVE environment's credential blob. Returns the callback URL to register.
-router.put("/:connectionId/webhook-secret", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.put("/:connectionId/webhook-secret", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const conn = await Connection.findOne({
     _id: req.params.connectionId,
     organizationId: req.orgId,

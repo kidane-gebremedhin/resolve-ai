@@ -10,10 +10,13 @@ import { z } from "zod";
 import { Agent, WidgetSettings } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// Widget appearance/behaviour is workspace configuration — admin+ to change.
+router.use(requireOrgRole("admin"));
 
 // Whitelist: anything outside these keys is silently dropped. Every field here
 // is persisted by the WidgetSettings schema and surfaced to the widget via the

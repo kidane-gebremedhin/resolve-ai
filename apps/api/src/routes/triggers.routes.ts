@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { ProactiveTrigger } from "../models/index.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 
@@ -26,7 +27,7 @@ const triggerBodySchema = z.object({
 const triggerPatchSchema = triggerBodySchema.partial().omit({ agentId: true });
 
 // GET /triggers?agentId=
-router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const agentId = req.query.agentId as string | undefined;
   const filter: Record<string, unknown> = { organizationId: orgId };
@@ -36,14 +37,14 @@ router.get("/", requireAuth, requireOrg, async (req: Request, res: Response) => 
 });
 
 // POST /triggers
-router.post("/", requireAuth, requireOrg, validateBody(triggerBodySchema), async (req: Request, res: Response) => {
+router.post("/", requireAuth, requireOrg, requireOrgRole("admin"), validateBody(triggerBodySchema), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const trigger = await ProactiveTrigger.create({ ...req.body, organizationId: orgId });
   res.status(201).json({ trigger });
 });
 
 // PATCH /triggers/:id
-router.patch("/:id", requireAuth, requireOrg, validateBody(triggerPatchSchema), async (req: Request, res: Response) => {
+router.patch("/:id", requireAuth, requireOrg, requireOrgRole("admin"), validateBody(triggerPatchSchema), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const trigger = await ProactiveTrigger.findOneAndUpdate(
     { _id: req.params.id, organizationId: orgId },
@@ -55,7 +56,7 @@ router.patch("/:id", requireAuth, requireOrg, validateBody(triggerPatchSchema), 
 });
 
 // DELETE /triggers/:id
-router.delete("/:id", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.delete("/:id", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const orgId = req.orgId;
   const result = await ProactiveTrigger.deleteOne({ _id: req.params.id, organizationId: orgId });
   if (!result.deletedCount) { res.status(404).json({ error: "Not found" }); return; }

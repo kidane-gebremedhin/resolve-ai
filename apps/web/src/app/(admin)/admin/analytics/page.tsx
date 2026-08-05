@@ -30,14 +30,15 @@ async function loadAnalytics() {
   try {
     const [stats, subs, signupsTs, conversationsTs, messagesTs] = await Promise.all([
       api.get<AdminStats>("/admin/stats"),
-      api.get<AdminSubscription[]>("/admin/subscriptions"),
+      // /admin/subscriptions returns a paginated envelope ({ items, … }); unwrap it.
+      api.get<{ items: AdminSubscription[] }>("/admin/subscriptions"),
       api.get<TimeSeriesResponse>("/admin/timeseries?metric=signups&days=30"),
       api.get<TimeSeriesResponse>("/admin/timeseries?metric=conversations&days=30"),
       api.get<TimeSeriesResponse>("/admin/timeseries?metric=messages&days=30"),
     ]);
     return {
       stats,
-      subs,
+      subs: subs.items,
       signupsTs: signupsTs.points,
       conversationsTs: conversationsTs.points,
       messagesTs: messagesTs.points,

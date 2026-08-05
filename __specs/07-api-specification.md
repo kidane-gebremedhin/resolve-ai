@@ -381,6 +381,32 @@ Delete KB source and its Pinecone vectors.
 
 ---
 
+## Public Platform Routes
+
+Unauthenticated, non-sensitive endpoints under `/api/v1/public` (see
+`apps/api/src/routes/public.routes.ts`).
+
+### `GET /api/v1/public/demo-agent`
+Returns `{ agentId }` — the most-recently-created active agent, for the marketing
+site's embedded widget. Cached 60 s.
+
+### `GET /api/v1/public/theming`
+Returns `{ fontSans, fontDisplay }` for the web root layout. Cached 60 s.
+
+### `POST /api/v1/public/contact`
+Public marketing "Contact Us" submission (Changelog 2).
+
+| Field | Value |
+|-------|-------|
+| Auth | None (public) |
+| Rate limit | 5 / hour / IP (`429` on exceed) |
+| Body | `{ name: string(1..120), email: email, message: string(1..5000) }` |
+| Behaviour | Persists a `ContactMessage`; best-effort emails `CONTACT_INBOX_EMAIL` (never blocks the response) |
+| Response `201` | `{ ok: true, id }` |
+| Response `400` | Validation error |
+
+---
+
 ## Widget Routes (Public)
 
 ### `POST /api/v1/widget/sessions`

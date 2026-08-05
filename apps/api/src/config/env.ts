@@ -89,6 +89,10 @@ export const env = {
     secure: process.env.SMTP_SECURE === "true",
     from: process.env.SMTP_FROM,
   },
+  // Where public marketing "Contact Us" submissions are forwarded. When unset the
+  // inquiry is still persisted (POST /public/contact) — only the notification email
+  // is skipped.
+  contactInboxEmail: process.env.CONTACT_INBOX_EMAIL,
   // Widget rate limiting (per contact session, in-memory + optional Redis).
   widgetRateLimit: {
     max: Number(optional("WIDGET_RATE_LIMIT_MAX", "30")),

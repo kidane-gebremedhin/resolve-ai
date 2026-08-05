@@ -67,3 +67,5 @@ test-data.md
 
 # apps.sh runtime dir (PIDs + logs)
 .run/
+
+.playwright-mcp

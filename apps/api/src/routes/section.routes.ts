@@ -7,10 +7,13 @@ import { z } from "zod";
 import { Agent, Section } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// Widget sections are configuration — admin+ to change; anyone may read.
+router.use(requireOrgRole("admin"));
 
 const sectionCreateSchema = z.object({
   title: z.string().min(1).max(120),

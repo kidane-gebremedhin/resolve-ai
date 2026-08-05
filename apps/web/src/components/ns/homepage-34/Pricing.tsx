@@ -14,6 +14,16 @@ const CheckIcon = ({ className }: { className?: string }) => (
 
 const featureLabels = ['Websites', 'Knowledge sources', 'Team members', 'Priority support'];
 
+// Format a USD amount for display: thousands separators, and cents only when the
+// amount isn't whole (so $588 stays "$588" but $1671.6 renders "$1,671.60" rather
+// than the raw "$1671.6").
+function formatUsd(amount: number): string {
+  return `$${amount.toLocaleString('en-US', {
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 const pricingPlans = [
   {
     id: 'pro',
@@ -151,17 +161,17 @@ const Pricing = ({ catalog = [] }: { catalog?: CatalogPlan[] }) => {
                 let displayPrice: string;
                 if (billingInterval === 'year') {
                   displayPrice = override?.priceYearlyUsd != null
-                    ? `$${override.priceYearlyUsd}`
+                    ? formatUsd(override.priceYearlyUsd)
                     : plan.yearlyPrice;
                 } else {
                   displayPrice = override?.priceMonthlyUsd != null
-                    ? `$${override.priceMonthlyUsd}`
+                    ? formatUsd(override.priceMonthlyUsd)
                     : plan.monthlyPrice;
                 }
                 const cadence = billingInterval === 'year' ? '/yr' : '/mo';
                 const perMonthNote = billingInterval === 'year'
                   ? (override?.priceYearlyUsd != null
-                    ? `$${(override.priceYearlyUsd / 12).toFixed(0)}/mo billed annually`
+                    ? `${formatUsd(Math.round(override.priceYearlyUsd / 12))}/mo billed annually`
                     : `${plan.yearlyPerMonth}/mo billed annually`)
                   : null;
 

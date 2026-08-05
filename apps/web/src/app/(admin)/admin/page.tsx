@@ -30,13 +30,21 @@ import { Sparkline } from "@/components/charts";
 
 async function loadOverview() {
   try {
+    // The admin list endpoints return a paginated envelope ({ items, total, … }),
+    // not a bare array — unwrap `.items` (matches the agents/organizations pages).
     const [stats, users, subs, signupsSeries] = await Promise.all([
       api.get<AdminStats>("/admin/stats"),
-      api.get<AdminUser[]>("/admin/users?limit=10"),
-      api.get<AdminSubscription[]>("/admin/subscriptions"),
+      api.get<{ items: AdminUser[] }>("/admin/users?limit=10"),
+      api.get<{ items: AdminSubscription[] }>("/admin/subscriptions"),
       api.get<TimeSeriesResponse>("/admin/timeseries?metric=signups&days=30"),
     ]);
-    return { stats, users, subs, signupsSeries: signupsSeries.points, error: null as string | null };
+    return {
+      stats,
+      users: users.items,
+      subs: subs.items,
+      signupsSeries: signupsSeries.points,
+      error: null as string | null,
+    };
   } catch (err) {
     const message = err instanceof ApiError ? err.message : "Failed to load admin data";
     return {

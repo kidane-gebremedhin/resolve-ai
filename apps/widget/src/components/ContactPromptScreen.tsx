@@ -76,10 +76,11 @@ export function ContactPromptScreen({
     >
       <div className="w-full rounded-t-2xl bg-white p-4 shadow-xl sm:m-4 sm:rounded-2xl dark:bg-neutral-900">
         <h3 className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-          Want updates on this conversation?
+          How can we reach you?
         </h3>
         <p className="mt-1 text-xs text-neutral-500 dark:text-neutral-400">
-          Leave your email and we&apos;ll let you know when there&apos;s a reply.
+          Add an email or phone to continue — we&apos;ll use it to follow up on this
+          conversation.
         </p>
 
         <div className="mt-3 space-y-2">

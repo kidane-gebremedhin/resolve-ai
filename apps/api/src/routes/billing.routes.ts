@@ -3,6 +3,7 @@ import express from "express";
 import { z } from "zod";
 import { Organization, Subscription } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import {
   handlePaddleEvent,
@@ -51,7 +52,7 @@ router.post(
   },
 );
 
-router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/subscription", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const sub = await Subscription.findOne({ organizationId: req.orgId });
   const org = await Organization.findById(req.orgId).select("plan").lean();
   // `active` is the gate signal: a real subscription in an entitled state. When
@@ -85,7 +86,7 @@ router.get("/subscription", requireAuth, requireOrg, async (req: Request, res: R
   });
 });
 
-router.get("/usage", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/usage", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const org = await Organization.findById(req.orgId).select("plan").lean();
   const limits = limitsForPlan(org?.plan);
   const start = new Date();
@@ -131,7 +132,7 @@ router.post(
   },
 );
 
-router.post("/portal", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.post("/portal", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const result = await createCustomerPortalSession({ organizationId: req.orgId! });
   res.json(result);
 });
@@ -180,7 +181,7 @@ router.post(
 // Daily time-series usage for the current org. Returns the last `days` days
 // (max 180). Each point includes the day's message count and the count of
 // knowledge sources whose ingestion finalized that day (lastSyncedAt).
-router.get("/usage/daily", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/usage/daily", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const rawDays = (req.query.days as string | undefined) ?? "30";
   const days = Math.min(Math.max(Number(rawDays) || 30, 1), 180);
 
@@ -216,7 +217,7 @@ function currentPeriod(): string {
 }
 
 // Current-month USD spending summary for the org + per-plan budget limits.
-router.get("/usage/cost", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/usage/cost", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const org = await Organization.findById(req.orgId).select("plan").lean();
   const period = currentPeriod();
   const orgOid = new mongoose.Types.ObjectId(req.orgId!);
@@ -238,7 +239,7 @@ router.get("/usage/cost", requireAuth, requireOrg, async (req: Request, res: Res
 });
 
 // Per-website USD spending breakdown for the current month.
-router.get("/usage/cost/websites", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/usage/cost/websites", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const period = currentPeriod();
   const orgOid = new mongoose.Types.ObjectId(req.orgId!);
   const org = await Organization.findById(req.orgId).select("plan").lean();
@@ -272,7 +273,7 @@ router.get("/usage/cost/websites", requireAuth, requireOrg, async (req: Request,
 });
 
 // Daily USD cost time series for the current org (last N days).
-router.get("/usage/cost/daily", requireAuth, requireOrg, async (req: Request, res: Response) => {
+router.get("/usage/cost/daily", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
   const rawDays = (req.query.days as string | undefined) ?? "30";
   const days = Math.min(Math.max(Number(rawDays) || 30, 1), 180);
   const since = new Date();

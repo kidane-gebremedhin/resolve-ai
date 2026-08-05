@@ -1,6 +1,7 @@
 import RevealAnimation from '../animation/RevealAnimation';
 import LinkButton from '../ui/button/LinkButton';
 import { APP_NAME } from '@/lib/app-config';
+import ContactForm from './ContactForm';
 
 // Branding-bound contact details. The email host stays in sync with the app slug; the phone
 // and postal address are shown ONLY when the operator provides real values via env, so the
@@ -91,33 +92,7 @@ const Contact = () => {
 
             <RevealAnimation delay={0.4}>
               <div className="md:p-[42px] p-7 bg-white dark:bg-background-6 rounded-[20px] lg:max-w-[605px] flex-1">
-                <form action="#" method="post">
-                  <fieldset className="w-full flex flex-col gap-2 items-start justify-start md:mb-8 mb-5">
-                    <label htmlFor="fullName" className="text-tagline-1 text-foreground font-medium">Full Name</label>
-                    <input type="text" name="fullName" id="fullName" required placeholder="Enter your name" className="rounded-full placeholder:text-tagline-1 border border-stroke-3 dark:border-stroke-7 dark:bg-background-6 dark:placeholder:text-foreground/60 dark:text-foreground w-full px-[18px] py-3 focus-visible:outline focus-visible:outline-primary-500 placeholder:font-normal font-normal" />
-                  </fieldset>
-                  <fieldset className="w-full flex flex-col gap-2 items-start justify-start md:mb-8 mb-5">
-                    <label htmlFor="emailAddress" className="text-tagline-1 text-foreground font-medium">Email address</label>
-                    <input type="email" required name="emailAddress" id="emailAddress" placeholder="Enter your email" className="rounded-full placeholder:text-tagline-1 border border-stroke-3 dark:border-stroke-7 dark:bg-background-6 dark:placeholder:text-foreground/60 dark:text-foreground w-full px-[18px] py-3 focus-visible:outline focus-visible:outline-primary-500 placeholder:font-normal font-normal" />
-                  </fieldset>
-                  <fieldset className="w-full flex flex-col gap-2 items-start justify-start mb-4">
-                    <label htmlFor="messages" className="text-tagline-1 text-foreground font-medium">Message</label>
-                    <textarea name="messages" id="messages" required placeholder="Enter your message" className="rounded-xl placeholder:text-tagline-1 border border-stroke-3 dark:border-stroke-7 dark:bg-background-6 dark:placeholder:text-foreground/60 dark:text-foreground w-full px-[18px] py-3 min-h-[120px] resize-none focus-visible:outline focus-visible:outline-primary-500 placeholder:font-normal font-normal" />
-                  </fieldset>
-                  <fieldset className="flex items-center gap-2 mb-4">
-                    <label htmlFor="agree-terms" className="flex items-center gap-x-3">
-                      <input id="agree-terms" type="checkbox" className="sr-only peer" required />
-                      <span className="size-4 rounded-full border border-stroke-3 dark:border-stroke-7 relative after:absolute after:size-2.5 after:bg-primary-500 after:rounded-full after:top-1/2 after:left-1/2 after:-translate-x-1/2 after:-translate-y-1/2 after:opacity-0 peer-checked:after:opacity-100 peer-checked:border-primary-500 cursor-pointer" />
-                    </label>
-                    <label htmlFor="agree-terms" className="text-tagline-3 cursor-pointer text-foreground/70">
-                      I agree with the{' '}
-                      <a href="/terms" className="text-primary-500 underline text-tagline-3">terms and conditions</a>
-                    </label>
-                  </fieldset>
-                  <button type="submit" className="btn btn-secondary dark:btn-accent btn-md w-full before:content-none first-letter:uppercase hover:btn-green">
-                    Submit
-                  </button>
-                </form>
+                <ContactForm />
               </div>
             </RevealAnimation>
           </div>

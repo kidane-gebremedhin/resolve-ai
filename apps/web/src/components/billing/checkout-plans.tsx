@@ -305,7 +305,13 @@ export function CheckoutPlans({
           const highlighted = p.plan === defaultHighlight;
           const priceUsd = billingInterval === "year" ? p.priceYearlyUsd : p.priceMonthlyUsd;
           const cadence = billingInterval === "year" ? "/yr" : "/mo";
-          const priceLabel = priceUsd == null ? "Custom" : `$${priceUsd}`;
+          const priceLabel =
+            priceUsd == null
+              ? "Custom"
+              : `$${priceUsd.toLocaleString("en-US", {
+                  minimumFractionDigits: Number.isInteger(priceUsd) ? 0 : 2,
+                  maximumFractionDigits: 2,
+                })}`;
           const activePriceId = billingInterval === "year" ? (p.priceIdYearly ?? p.priceId) : p.priceId;
           return (
             <div

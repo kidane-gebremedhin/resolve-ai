@@ -28,3 +28,4 @@ export { OAuthAppConfig, type OAuthAppConfigDocType } from "./OAuthAppConfig.js"
 export { ToolCallLog, type ToolCallLogDocType } from "./ToolCallLog.js";
 export { KnowledgeGap, type KnowledgeGapDocType } from "./KnowledgeGap.js";
 export { ProactiveTrigger, type ProactiveTriggerDocType } from "./ProactiveTrigger.js";
+export { ContactMessage, type ContactMessageDocType } from "./ContactMessage.js";

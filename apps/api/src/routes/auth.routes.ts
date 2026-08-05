@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -23,9 +24,22 @@ import { UnauthorizedError, NotFoundError, ValidationError } from "../utils/erro
 
 const router = Router();
 
+// Password-strength policy — the API is the source of truth. Mirrors the rules the
+// signup UI shows (≥8 chars, one lower, one upper, one number, one special) so a
+// client hitting the API directly can't set a weaker password than the form allows.
+// `login` intentionally keeps `min(1)` (it only compares against the stored hash).
+const strongPassword = z
+  .string()
+  .min(8, "Password must be at least 8 characters.")
+  .max(200)
+  .regex(/[a-z]/, "Password must contain a lowercase letter.")
+  .regex(/[A-Z]/, "Password must contain an uppercase letter.")
+  .regex(/[0-9]/, "Password must contain a number.")
+  .regex(/[^A-Za-z0-9]/, "Password must contain a special character.");
+
 const registerSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(8).max(200),
+  password: strongPassword,
   name: z.string().min(1).max(120),
   organizationName: z.string().min(1).max(120),
   referralCode: z.string().min(1).max(64).optional(),
@@ -37,24 +51,51 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+// Abuse throttles for unauthenticated auth endpoints (per client IP — the app
+// runs behind a trusted proxy, so req.ip is the real caller). Successful logins
+// don't count against the limit, so a legitimate user typing a wrong password a
+// few times isn't locked out by their own eventual success.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: {
+    error: { code: "rate_limited", message: "Too many login attempts. Please try again later." },
+  },
+});
+
+// Password-reset requests trigger an outbound email — throttle harder to prevent
+// using the endpoint to bomb a victim's inbox.
+const forgotLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: { code: "rate_limited", message: "Too many requests. Please try again later." },
+  },
+});
+
 router.post("/register", validateBody(registerSchema), async (req: Request, res: Response) => {
   const result = await registerUser(req.body);
   res.status(201).json(result);
 });
 
-router.post("/login", validateBody(loginSchema), async (req: Request, res: Response) => {
+router.post("/login", loginLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
   const result = await loginWithCredentials(req.body.email, req.body.password);
   res.json(result);
 });
 
 // ---- Password reset -------------------------------------------------------
 const forgotSchema = z.object({ email: z.string().email() });
-const resetSchema = z.object({ token: z.string().min(1), password: z.string().min(8).max(200) });
+const resetSchema = z.object({ token: z.string().min(1), password: strongPassword });
 
 // Always returns 200 with the same message whether or not the email exists — never
 // reveal which addresses are registered (account enumeration). When it does match a
 // credentials account we email a one-hour reset link.
-router.post("/forgot-password", validateBody(forgotSchema), async (req: Request, res: Response) => {
+router.post("/forgot-password", forgotLimiter, validateBody(forgotSchema), async (req: Request, res: Response) => {
   const result = await requestPasswordReset(req.body.email);
   if (result) {
     const link = `${env.webBaseUrl}/reset-password?token=${result.token}`;

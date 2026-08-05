@@ -6,6 +6,7 @@ import { KnowledgeSource, Agent } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceKnowledgeQuota } from "../middleware/plan-limit.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { ConflictError, NotFoundError, ValidationError } from "../utils/errors.js";
 import { ingestSource, purgeSourceVectors } from "../services/kb/ingestion.service.js";
 import { startCrawl } from "../services/kb/firecrawl.service.js";
@@ -16,6 +17,8 @@ import type { Server as IoServer } from "socket.io";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// Knowledge curation is agent-level work; viewers are read-only.
+router.use(requireOrgRole("agent"));
 
 // 25 MB upload cap aligns with __specs/04-pinecone-firecrawl.md per-plan limits.
 const upload = multer({

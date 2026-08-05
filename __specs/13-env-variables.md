@@ -95,6 +95,7 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 | `SMTP_PASS` | ✅ | — | SMTP password (for Gmail, a 16-char App Password) |
 | `SMTP_FROM` | ✅ | — | Default "from" address (e.g., `noreply@yourdomain.com`) |
 | `SMTP_SECURE` | — | `false` | Implicit TLS. Port `465` **always** uses TLS regardless of this flag (Changelog 6) |
+| `CONTACT_INBOX_EMAIL` | — | — | Where public "Contact Us" submissions (`POST /public/contact`) are forwarded. When unset the inquiry is still persisted; only the notification email is skipped (Changelog 2) |
 
 > **Changelog 6 — the mailer reads these.** `mailer.service.ts` prefers the admin panel's
 > `PlatformSetting.smtp`, but now **falls back to these `SMTP_*` env vars** when it isn't

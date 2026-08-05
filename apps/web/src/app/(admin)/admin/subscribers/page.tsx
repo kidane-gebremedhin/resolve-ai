@@ -23,8 +23,9 @@ import {
 
 async function loadSubscribers(): Promise<{ subs: AdminSubscription[]; error: string | null }> {
   try {
-    const subs = await api.get<AdminSubscription[]>("/admin/subscriptions");
-    return { subs, error: null };
+    // /admin/subscriptions returns a paginated envelope ({ items, total, mrr, … }); unwrap it.
+    const { items } = await api.get<{ items: AdminSubscription[] }>("/admin/subscriptions");
+    return { subs: items, error: null };
   } catch (err) {
     const message = err instanceof ApiError ? err.message : "Failed to load subscriptions";
     return { subs: [], error: message };

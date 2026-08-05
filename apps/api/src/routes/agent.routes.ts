@@ -3,12 +3,15 @@ import { z } from "zod";
 import { Agent, Website } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { ConflictError, NotFoundError } from "../utils/errors.js";
 import { env } from "../config/env.js";
 import { logAuditFromReq } from "../services/audit.service.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// AI agent configuration is an admin concern — reads open to all members.
+router.use(requireOrgRole("admin"));
 
 // The effective model-tuning defaults (from env). An agent's own fields override
 // these at runtime (agent.model ?? env.ai.model, etc.); the dashboard reads this

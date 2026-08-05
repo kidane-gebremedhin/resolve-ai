@@ -4,12 +4,16 @@ import { Website } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceWebsiteQuota } from "../middleware/plan-limit.middleware.js";
+import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
 import { ensureWebsiteAgent } from "../services/agent-provisioning.js";
 import { logAuditFromReq } from "../services/audit.service.js";
 
 const router = Router();
 router.use(requireAuth, requireOrg);
+// Websites are workspace configuration — only owners/admins may create, edit, or
+// delete them. Reads stay open to all members (guard is method-aware).
+router.use(requireOrgRole("admin"));
 
 // A bare hostname: labels of letters/digits/hyphens separated by dots, ending in
 // a 2+ letter TLD. No scheme, path, whitespace, or other special characters.
