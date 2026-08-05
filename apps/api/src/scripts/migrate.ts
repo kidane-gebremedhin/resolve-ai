@@ -1,4 +1,4 @@
-// Single migration entrypoint (`pnpm db:migrate`). Runs in two phases:
+// Single migration entrypoint. Runs in two phases:
 //   1. Index sync — Mongoose auto-creates indexes when autoIndex is true (dev). In
 //      production autoIndex is off, so we `syncIndexes()` every registered model here.
 //      Idempotent, so it runs every time.
@@ -6,11 +6,16 @@
 //      SchemaMigration ledger, in order, recording each after it succeeds. Re-running only
 //      applies what's new. Add a migration by dropping a module in src/migrations and
 //      appending it to src/migrations/index.ts — no new package script needed.
+//
+// This lives under src/ (not scripts/) so it is COMPILED into dist and can run in the
+// production image with plain `node dist/scripts/migrate.js` — the container entrypoint
+// runs it on every deploy before starting the server (see apps/api/docker-entrypoint.sh).
+// `pnpm db:migrate` runs the same file via tsx in dev.
 import mongoose from "mongoose";
-import { connectDb, disconnectDb } from "../src/config/db.js";
-import "../src/models/index.js";
-import { SchemaMigration } from "../src/models/index.js";
-import { migrations } from "../src/migrations/index.js";
+import { connectDb, disconnectDb } from "../config/db.js";
+import "../models/index.js";
+import { SchemaMigration } from "../models/index.js";
+import { migrations } from "../migrations/index.js";
 
 /* eslint-disable no-console */
 async function main() {

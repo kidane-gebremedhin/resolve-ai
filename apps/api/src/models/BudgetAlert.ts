@@ -7,7 +7,7 @@ const budgetAlertSchema = new Schema(
     entityType: { type: String, enum: ["org", "website"], required: true },
     entityId: { type: Schema.Types.ObjectId, required: true },
     period: { type: String, required: true }, // YYYY-MM
-    threshold: { type: Number, enum: [75, 100], required: true },
+    threshold: { type: Number, enum: [50, 75, 100], required: true },
     sentAt: { type: Date, default: () => new Date() },
   },
   { timestamps: false },

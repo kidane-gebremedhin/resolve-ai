@@ -3,6 +3,7 @@ import type { Server as IoServer } from "socket.io";
 import { z } from "zod";
 import { Conversation, Message, ContactSession, ToolCallLog } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { enforceOrgBudget } from "../middleware/budget-limit.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
@@ -165,7 +166,7 @@ router.patch(
 // ---------- GET /:id/suggestions ----------
 // Operator-facing quick-reply suggestions. Always returns exactly 3 strings —
 // see suggestions.service.ts for the LLM/fallback shape.
-router.get("/:id/suggestions", async (req: Request, res: Response) => {
+router.get("/:id/suggestions", enforceOrgBudget, async (req: Request, res: Response) => {
   const conversation = await Conversation.findOne({
     _id: req.params.id,
     organizationId: req.orgId,

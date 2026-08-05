@@ -2,6 +2,34 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import { Organization, ContactSession, UsageRecord } from "../models/index.js";
 import { budgetLimitsForPlan } from "../config/plans.js";
+import { orgBudgetStatus, checkAndSendBudgetAlerts } from "../services/budget-alert.service.js";
+
+// Fire the (idempotent, deduped) budget-alert check whenever we BLOCK a request.
+// Alerts are normally sent as a side-effect of recording usage, but once an org
+// is over budget its widget messages are blocked before any usage is recorded —
+// so without this the owner would never be notified that the wall was hit (esp.
+// when a limit is set/lowered below existing spend). Fire-and-forget: never delays
+// the 402, and BudgetAlert's unique guard means repeated blocks don't re-send.
+//
+// checkAndSendBudgetAlerts runs several queries, so we throttle per org+website+
+// period to avoid a query storm when a busy over-budget site keeps getting blocked
+// (the DB-level dedup still prevents duplicate SENDS; this just skips redundant
+// checks between throttle windows).
+const alertCheckThrottle = new Map<string, number>();
+const ALERT_CHECK_THROTTLE_MS = 60_000;
+
+function triggerBudgetAlert(
+  organizationId: string,
+  websiteId: string | null,
+  period: string,
+): void {
+  const key = `${organizationId}:${websiteId ?? "org"}:${period}`;
+  const now = Date.now();
+  const last = alertCheckThrottle.get(key) ?? 0;
+  if (now - last < ALERT_CHECK_THROTTLE_MS) return;
+  alertCheckThrottle.set(key, now);
+  void checkAndSendBudgetAlerts({ organizationId, websiteId, period }).catch(() => undefined);
+}
 
 function currentPeriod(): string {
   const now = new Date();
@@ -59,6 +87,7 @@ export async function enforceBudgetLimit(
   if (budgetLimits.orgMonthlyLimitUsd > 0) {
     const spent = await monthlySpend({ organizationId: orgId }, period);
     if (spent >= budgetLimits.orgMonthlyLimitUsd) {
+      triggerBudgetAlert(req.orgId, null, period);
       budgetExceededResponse(res, "org", spent, budgetLimits.orgMonthlyLimitUsd);
       return;
     }
@@ -73,11 +102,43 @@ export async function enforceBudgetLimit(
       const websiteId = new mongoose.Types.ObjectId(String(session.websiteId));
       const websiteSpent = await monthlySpend({ websiteId }, period);
       if (websiteSpent >= budgetLimits.websiteMonthlyLimitUsd) {
+        triggerBudgetAlert(req.orgId, String(session.websiteId), period);
         budgetExceededResponse(res, "website", websiteSpent, budgetLimits.websiteMonthlyLimitUsd);
         return;
       }
     }
   }
 
+  next();
+}
+
+// Operator/KB-facing budget gate. Blocks internal AI actions (reply suggestions,
+// draft enhance, KB embedding jobs) when the ORG is over its monthly budget, so
+// spend can't keep climbing after the cap. Requires req.orgId (operator JWT).
+// Returns a clear, operator-facing message (unlike the widget path, which shows
+// customers a generic error).
+export async function enforceOrgBudget(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (!req.orgId) return next();
+  const status = await orgBudgetStatus(req.orgId);
+  if (status.exceeded) {
+    triggerBudgetAlert(req.orgId, null, currentPeriod());
+    res.status(402).json({
+      error: {
+        code: "budget_limit_exceeded",
+        message:
+          "AI features are paused — your organization has reached its monthly AI spending budget. " +
+          "They'll resume next month, or upgrade your plan / raise the limit to continue now.",
+        kind: "org",
+        spentUsd: parseFloat(status.spent.toFixed(6)),
+        limitUsd: status.limit,
+        upgradeUrl: "/app/billing",
+      },
+    });
+    return;
+  }
   next();
 }
