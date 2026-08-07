@@ -30,6 +30,8 @@ import {
 import Link from "next/link";
 import { clientApi, ApiError } from "@/lib/api";
 import { WIDGET_URL } from "@/lib/app-urls";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 
 export type Agent = {
   _id: string;
@@ -140,6 +142,8 @@ function Card({
 
 // ------------------------------------------------------------ Agent tab
 function AgentTab({ initialAgent }: { initialAgent: Agent | null }) {
+  // agent.routes mounts requireOrgRole("admin") on the whole router.
+  const canManage = useCan("manageAgents");
   const [agent, setAgent] = useState<Agent | null>(initialAgent);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -259,21 +263,25 @@ function AgentTab({ initialAgent }: { initialAgent: Agent | null }) {
         </div>
       </Card>
 
+      <ReadOnlyNotice capability="manageAgents" />
+
       <div className="flex items-center justify-end gap-2">
         {saved && (
           <span className="inline-flex items-center gap-1 text-xs text-success">
             <Check className="h-3.5 w-3.5" /> Saved
           </span>
         )}
-        <Button onClick={save} disabled={busy}>
-          {busy ? (
-            <>
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Saving…
-            </>
-          ) : (
-            "Save changes"
-          )}
-        </Button>
+        {canManage && (
+          <Button onClick={save} disabled={busy}>
+            {busy ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Saving…
+              </>
+            ) : (
+              "Save changes"
+            )}
+          </Button>
+        )}
       </div>
     </>
   );
@@ -361,6 +369,9 @@ function WidgetTab() {
 
 // ------------------------------------------------------------ Team tab
 function TeamTab({ initialMembers }: { initialMembers: Member[] }) {
+  // org.routes gates invite / role-change / revoke behind assertCanManageMembers
+  // (owner or admin). Members stay listable for everyone.
+  const canManage = useCan("manageMembers");
   const [members, setMembers] = useState<Member[]>(initialMembers);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"admin" | "agent" | "viewer">("agent");
@@ -426,6 +437,8 @@ function TeamTab({ initialMembers }: { initialMembers: Member[] }) {
   return (
     <>
       {error && <ErrorBanner message={error} />}
+      <ReadOnlyNotice capability="manageMembers" />
+      {canManage && (
       <Card
         title="Invite a teammate"
         desc="They&apos;ll receive an invite to join this workspace."
@@ -450,6 +463,7 @@ function TeamTab({ initialMembers }: { initialMembers: Member[] }) {
           </Button>
         </div>
       </Card>
+      )}
 
       <Card title="Team members" desc={`${active.length} active`}>
         <table className="w-full text-sm">
@@ -462,7 +476,13 @@ function TeamTab({ initialMembers }: { initialMembers: Member[] }) {
               </tr>
             )}
             {active.map((m) => (
-              <MemberRow key={m.membershipId} member={m} onRole={changeRole} onRevoke={revoke} />
+              <MemberRow
+                key={m.membershipId}
+                member={m}
+                canManage={canManage}
+                onRole={changeRole}
+                onRevoke={revoke}
+              />
             ))}
           </tbody>
         </table>
@@ -490,10 +510,12 @@ function TeamTab({ initialMembers }: { initialMembers: Member[] }) {
 
 function MemberRow({
   member,
+  canManage,
   onRole,
   onRevoke,
 }: {
   member: Member;
+  canManage: boolean;
   onRole: (m: Member, role: Member["role"]) => void;
   onRevoke: (m: Member) => void;
 }) {
@@ -526,8 +548,8 @@ function MemberRow({
         </div>
       </td>
       <td className="py-3 text-right">
-        {member.role === "owner" ? (
-          <span className="text-xs text-muted-foreground">Owner</span>
+        {member.role === "owner" || !canManage ? (
+          <span className="text-xs capitalize text-muted-foreground">{member.role}</span>
         ) : (
           <select
             value={member.role}
@@ -541,7 +563,7 @@ function MemberRow({
         )}
       </td>
       <td className="py-3 text-right">
-        {member.role !== "owner" && (
+        {canManage && member.role !== "owner" && (
           <Button
             size="sm"
             variant="ghost"

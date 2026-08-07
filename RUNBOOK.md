@@ -107,15 +107,72 @@ so re-running only applies what's new. **Run it on every deploy.** To add a migr
 drop a module in `apps/api/src/migrations/` (`NNN-name.ts` exporting a `Migration`) and
 append it to `src/migrations/index.ts` — no new package script.
 
-The database starts empty — there is no demo seed data. Create your first
-account through the dashboard sign-up flow (or `POST /auth/register` on the API),
-then add a website and agent from the UI. To start over from a clean database,
-wipe the infra volumes and re-run the migration:
+The database starts empty. Create your first account through the dashboard
+sign-up flow (or `POST /auth/register` on the API), then add a website and agent
+from the UI. To start over from a clean database, wipe the infra volumes and
+re-run the migration:
 
 ```bash
 pnpm dev:infra:reset   # drop Docker volumes (including Mongo) and restart
 pnpm db:migrate
 ```
+
+### 5.1 Seed manual-QA accounts (optional)
+
+For manual testing you usually want one login per role plus a workspace that is
+already on a paid plan. `db:seed` creates exactly that:
+
+```bash
+pnpm db:seed
+```
+
+It writes, idempotently (re-running upserts and **resets every seeded password**,
+so the printed credentials are always the live ones):
+
+| Account | Platform role | Org role | Organization |
+|---------|---------------|----------|--------------|
+| `owner@acme.test` | `user` | `owner` | Acme Support Co (**business** plan) |
+| `admin@acme.test` | `user` | `admin` | Acme Support Co |
+| `agent@acme.test` | `user` | `agent` | Acme Support Co |
+| `viewer@acme.test` | `user` | `viewer` | Acme Support Co |
+| `platformadmin@acme.test` | `platform_admin` | `owner` | Platform HQ (**business** plan) |
+
+Shared password: `Test1234!` (override with `--password=...`; it must satisfy the
+API's strength policy — ≥8 chars with lower, upper, number, and special).
+
+Alongside the accounts it creates an `active` **business** `Subscription`,
+mirrors `plan` onto the Organization (so plan gates and quota middleware pass),
+and provisions a Website + its Agent + WidgetSettings so the widget is testable
+immediately.
+
+Notes:
+
+- The platform admin gets its own **Platform HQ** org on purpose. The admin app
+  only needs the `platform_admin` role, but without a membership the JWT carries
+  no `organizationId` and every `/app` route 403s with "No organization context
+  in token." Platform HQ is subscribed for the same reason: `/app` is a hard
+  subscription gate, so an unpaid workspace redirects to `/checkout` and the
+  account lands on the plan picker instead of the dashboard.
+- The Paddle identifiers are **synthetic**. Plan gating, quotas, and the billing
+  summary all read from Mongo and work; anything that calls Paddle live
+  (customer portal, upgrade/downgrade, cancel) will fail for the seeded orgs. Run
+  a real sandbox checkout if you need to exercise those paths — see
+  [§13](#13-paddle-billing--sandbox-vs-production).
+- Use these accounts to exercise **role gating**: the dashboard hides write
+  actions the caller's membership role can't perform (see
+  [`apps/web/src/lib/permissions.ts`](apps/web/src/lib/permissions.ts)). Signed in
+  as `agent@acme.test` there is no "Add website" button; as `viewer@acme.test`
+  the Inbox composer is replaced by a read-only notice.
+- The connection string comes from `MONGODB_URI` (env or `.env`), or pass
+  `--uri=<url>` to target another database, e.g. a shared staging cluster:
+  `pnpm db:seed -- --uri="mongodb+srv://…"`.
+- **`mongodb+srv://` URI hangs or fails with `querySrv ECONNREFUSED`?** Node
+  resolves SRV records through its own resolver (`dns.getServers()`), not the OS
+  one, so a host whose Node resolver is a stub (e.g. `127.0.0.1`) can't look up
+  Atlas even when `nslookup` works. Use the non-SRV seed-list form instead —
+  read the shard hosts from the `_mongodb._tcp.<cluster>` SRV record and
+  `replicaSet`/`authSource` from the cluster's TXT record:
+  `mongodb://<user>:<pass>@<shard-00>:27017,<shard-01>:27017,<shard-02>:27017/<db>?ssl=true&replicaSet=<rs>&authSource=admin`.
 
 ## 6. Start the apps
 

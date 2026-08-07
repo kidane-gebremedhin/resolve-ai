@@ -14,6 +14,8 @@ import { useSession } from "next-auth/react";
 import { Bot, ChevronDown, ChevronRight, Download, FileText, Paperclip, Send, Sparkles, Undo2, User2, Wrench, X } from "lucide-react";
 import { Button, Textarea } from "@csb/ui";
 import { clientApi, API_BASE_URL } from "@/lib/api";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 import { getOperatorSocket } from "@/lib/socket";
 import { SuggestionsPanel } from "./suggestions-panel";
 import type {
@@ -327,6 +329,7 @@ export function InboxThread({
   const [originalDraft, setOriginalDraft] = useState<string | null>(null);
   const [enhancing, setEnhancing] = useState(false);
   const [sending, setSending] = useState(false);
+  const canReply = useCan("handleConversations");
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<Attachment[]>([]);
@@ -676,6 +679,9 @@ export function InboxThread({
                 </button>
               </div>
             </div>
+            {/* Assignment and status changes are PATCHes on conversation.routes
+                (requireOrgRole("agent")) — export is a GET, so viewers keep it. */}
+            {canReply && (
             <Button
               size="sm"
               variant="outline"
@@ -684,7 +690,8 @@ export function InboxThread({
             >
               {isAssignedToMe ? "Assigned" : "Assign to me"}
             </Button>
-            {conversation.status === "escalated" && (
+            )}
+            {canReply && conversation.status === "escalated" && (
               <Button
                 size="sm"
                 variant="outline"
@@ -694,24 +701,25 @@ export function InboxThread({
                 Re-open
               </Button>
             )}
-            {conversation.status === "resolved" ? (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => updateStatus("active")}
-                disabled={updatingStatus}
-              >
-                Re-open
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={() => updateStatus("resolved")}
-                disabled={updatingStatus}
-              >
-                Mark resolved
-              </Button>
-            )}
+            {canReply &&
+              (conversation.status === "resolved" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => updateStatus("active")}
+                  disabled={updatingStatus}
+                >
+                  Re-open
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  onClick={() => updateStatus("resolved")}
+                  disabled={updatingStatus}
+                >
+                  Mark resolved
+                </Button>
+              ))}
           </div>
         </div>
 
@@ -744,7 +752,13 @@ export function InboxThread({
           </div>
         )}
 
-        {/* Composer */}
+        {/* Composer — hidden for viewers: message.routes and conversation.routes
+            both mount requireOrgRole("agent"), so a viewer's reply would 403. */}
+        {!canReply ? (
+          <div className="border-t border-border bg-background p-4">
+            <ReadOnlyNotice capability="handleConversations" />
+          </div>
+        ) : (
         <div className="border-t border-border bg-background p-4">
           <div className="rounded-xl border border-border bg-card">
             <Textarea
@@ -845,6 +859,7 @@ export function InboxThread({
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Right side panel */}

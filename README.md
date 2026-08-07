@@ -50,12 +50,16 @@ A [pnpm](https://pnpm.io) + [Turborepo](https://turborepo.com) monorepo — **4 
 pnpm install
 cp .env.example .env      # then fill in secrets — see __specs/13-env-variables.md
 pnpm dev:infra            # MongoDB, Redis, MailHog, MinIO via Docker
-pnpm db:migrate           # sync Mongoose indexes (DB starts empty — no seed data)
+pnpm db:migrate           # sync Mongoose indexes (DB starts empty)
+pnpm db:seed              # optional — manual-QA logins, one per role, on a paid plan
 pnpm dev                  # run all 4 apps via Turborepo
 ```
 
 Then open the dashboard at [http://localhost:3000](http://localhost:3000) and register an
-account (there is no demo seed data — onboard via the sign-up flow).
+account through the sign-up flow — or skip straight to `owner@acme.test` /
+`Test1234!` if you ran `db:seed`. See
+[RUNBOOK §5.1](RUNBOOK.md#51-seed-manual-qa-accounts-optional) for the full
+account list and caveats.
 
 > **Full setup, ports, verification, production build, and troubleshooting:** [RUNBOOK.md](RUNBOOK.md).
 
@@ -68,6 +72,7 @@ account (there is no demo seed data — onboard via the sign-up flow).
 | `pnpm build` | Production build (all workspaces) |
 | `pnpm test` · `pnpm lint` · `pnpm type-check` | Test / lint / typecheck across the monorepo |
 | `pnpm db:migrate` | Sync MongoDB indexes |
+| `pnpm db:seed` | Seed manual-QA accounts (all roles + a paid org) |
 | `pnpm verify:env` · `pnpm verify:assets` | Validate env vars / landing-page assets |
 
 ---

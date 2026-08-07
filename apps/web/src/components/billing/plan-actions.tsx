@@ -4,6 +4,13 @@ import { useState } from "react";
 import { Button } from "@csb/ui";
 import { clientApi } from "@/lib/api";
 import { isPaddleConfigured, openCheckout } from "@/lib/paddle";
+import { useCan } from "@/hooks/use-permissions";
+import { deniedReason } from "@/lib/permissions";
+
+// Every mutating billing call (POST /billing/checkout, /change-plan, /portal) is
+// requireOrgRole("admin") on the API. Reads stay open, so agents and viewers can
+// still SEE the plan they're on — they just get no purchase controls.
+const BILLING_DENIED = deniedReason("manageBilling");
 
 type Plan = {
   id: "pro" | "business" | "enterprise";
@@ -24,16 +31,20 @@ export function ChoosePlanButton({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const canManage = useCan("manageBilling");
   const paddleReady = isPaddleConfigured();
-  const disabled = !paddleReady || !plan.priceId || !organizationId || busy || isCurrent;
+  const disabled =
+    !canManage || !paddleReady || !plan.priceId || !organizationId || busy || isCurrent;
 
-  const tooltip = !paddleReady
-    ? "Paddle not configured"
-    : !plan.priceId
-      ? `Set NEXT_PUBLIC_PADDLE_PRICE_${plan.id.toUpperCase()}`
-      : !organizationId
-        ? "Sign in required"
-        : undefined;
+  const tooltip = !canManage
+    ? BILLING_DENIED
+    : !paddleReady
+      ? "Paddle not configured"
+      : !plan.priceId
+        ? `Set NEXT_PUBLIC_PADDLE_PRICE_${plan.id.toUpperCase()}`
+        : !organizationId
+          ? "Sign in required"
+          : undefined;
 
   async function handleClick(): Promise<void> {
     if (!plan.priceId || !organizationId) return;
@@ -92,7 +103,8 @@ export function ChangePlanButton({
   const [scheduled, setScheduled] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const disabled = !priceId || !organizationId || busy || isCurrent;
+  const canManage = useCan("manageBilling");
+  const disabled = !canManage || !priceId || !organizationId || busy || isCurrent;
 
   async function handleClick(): Promise<void> {
     if (!priceId || !organizationId || isCurrent) return;
@@ -124,6 +136,7 @@ export function ChangePlanButton({
         variant={isCurrent ? "outline" : "default"}
         disabled={disabled}
         onClick={handleClick}
+        title={canManage ? undefined : BILLING_DENIED}
       >
         {isCurrent ? "Current plan" : busy ? "Scheduling…" : `Switch to ${planName}`}
       </Button>
@@ -141,6 +154,7 @@ export function ManageSubscriptionButton({
   variant?: "default" | "outline" | "ghost";
   label?: string;
 }) {
+  const canManage = useCan("manageBilling");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -162,9 +176,15 @@ export function ManageSubscriptionButton({
       <Button
         size="sm"
         variant={variant}
-        disabled={!hasPaddleCustomer || busy}
+        disabled={!canManage || !hasPaddleCustomer || busy}
         onClick={handleClick}
-        title={hasPaddleCustomer ? undefined : "Subscribe first to access the customer portal"}
+        title={
+          !canManage
+            ? BILLING_DENIED
+            : hasPaddleCustomer
+              ? undefined
+              : "Subscribe first to access the customer portal"
+        }
       >
         {busy ? "Opening…" : label}
       </Button>

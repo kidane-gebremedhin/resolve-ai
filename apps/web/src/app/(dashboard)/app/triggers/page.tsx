@@ -12,6 +12,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Zap, Plus, Trash2, ToggleLeft, ToggleRight, Loader2, Pencil, X } from "lucide-react";
 import { API_URL } from "@/lib/app-urls";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 
 async function getAccessToken(): Promise<string | undefined> {
   const res = await fetch("/api/session-token", { cache: "no-store" });
@@ -109,6 +111,8 @@ const DEFAULT_FORM: FormState = {
 };
 
 export default function TriggersPage() {
+  // triggers.routes gates POST/PATCH/DELETE behind requireOrgRole("admin").
+  const canManage = useCan("manageTriggers");
   const [triggers, setTriggers] = useState<ProactiveTrigger[]>([]);
   const [agentId, setAgentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -292,14 +296,18 @@ export default function TriggersPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={openCreate}
-          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-foreground px-4 py-1.5 text-sm font-medium text-background transition hover:opacity-90"
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-          Add trigger
-        </button>
+        {canManage && (
+          <button
+            onClick={openCreate}
+            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-foreground px-4 py-1.5 text-sm font-medium text-background transition hover:opacity-90"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+            Add trigger
+          </button>
+        )}
       </div>
+
+      <ReadOnlyNotice capability="manageTriggers" className="mb-4" />
 
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-400">
@@ -502,7 +510,8 @@ export default function TriggersPage() {
               <button
                 onClick={() => void toggleTrigger(t._id, !t.isActive)}
                 aria-label={t.isActive ? "Disable trigger" : "Enable trigger"}
-                className="mt-0.5 shrink-0 text-muted-foreground transition hover:text-foreground"
+                disabled={!canManage}
+                className="mt-0.5 shrink-0 text-muted-foreground transition hover:text-foreground disabled:pointer-events-none disabled:opacity-60"
               >
                 {t.isActive ? (
                   <ToggleRight className="h-5 w-5 text-green-600" />
@@ -518,20 +527,24 @@ export default function TriggersPage() {
                 </p>
                 <p className="mt-1 truncate text-xs italic text-foreground/70">&ldquo;{t.message}&rdquo;</p>
               </div>
-              <button
-                onClick={() => openEdit(t)}
-                aria-label="Edit trigger"
-                className="shrink-0 text-muted-foreground transition hover:text-foreground"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => void deleteTrigger(t._id)}
-                aria-label="Delete trigger"
-                className="shrink-0 text-muted-foreground transition hover:text-red-600"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              {canManage && (
+                <>
+                  <button
+                    onClick={() => openEdit(t)}
+                    aria-label="Edit trigger"
+                    className="shrink-0 text-muted-foreground transition hover:text-foreground"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </button>
+                  <button
+                    onClick={() => void deleteTrigger(t._id)}
+                    aria-label="Delete trigger"
+                    className="shrink-0 text-muted-foreground transition hover:text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </>
+              )}
             </div>
           ))}
         </div>

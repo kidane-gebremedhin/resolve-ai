@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { Plug, CheckCircle2, AlertCircle, XCircle, ExternalLink } from "lucide-react";
 import { API_URL } from "@/lib/app-urls";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 
 async function getAccessToken(): Promise<string | undefined> {
   const res = await fetch("/api/session-token", { cache: "no-store" });
@@ -1096,7 +1098,15 @@ function WebhookReceiverSection({
   );
 }
 
-function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: AgentOption[] }) {
+function ConnectorCard({
+  info,
+  agents = [],
+  canManage,
+}: {
+  info: ProviderInfo;
+  agents?: AgentOption[];
+  canManage: boolean;
+}) {
   const [connecting, setConnecting] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [showKeyForm, setShowKeyForm] = useState(false);
@@ -1582,6 +1592,37 @@ function ConnectorCard({ info, agents = [] }: { info: ProviderInfo; agents?: Age
           ? sandboxConnected
           : productionConnected;
 
+  // Every mutating integrations route is requireOrgRole("admin"), and connecting
+  // one means handing over third-party credentials — so for agents and viewers we
+  // render a status-only card instead of the full connect/disconnect surface.
+  // Placed after all hooks so the hook order stays stable across roles.
+  if (!canManage) {
+    return (
+      <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Plug className="h-5 w-5 text-neutral-500" />
+            <div>
+              <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">{label}</h3>
+              {connectionExists && info.connection!.name && info.connection!.name !== info.provider && (
+                <p className="text-[11px] text-neutral-400 dark:text-neutral-500">
+                  {info.connection!.name}
+                </p>
+              )}
+            </div>
+          </div>
+          {connectionExists ? (
+            <StatusBadge status={info.connection!.status} />
+          ) : (
+            <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+              <XCircle className="h-3 w-3" /> Not connected
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-5 dark:border-neutral-800 dark:bg-neutral-900">
       <div className="mb-3 flex items-start justify-between gap-2">
@@ -1989,6 +2030,7 @@ export function IntegrationsClient({
   providers: ProviderInfo[];
   agents?: AgentOption[];
 }) {
+  const canManage = useCan("manageIntegrations");
   return (
     <div className="mx-auto max-w-5xl space-y-6 p-6">
       <div>
@@ -2006,12 +2048,19 @@ export function IntegrationsClient({
         </div>
       </div>
 
+      <ReadOnlyNotice capability="manageIntegrations" />
+
       {providers.length === 0 ? (
         <p className="text-sm text-neutral-500">No integrations available. Check your API configuration.</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {providers.map((p) => (
-            <ConnectorCard key={p.cardId ?? p.provider} info={p} agents={agents} />
+            <ConnectorCard
+              key={p.cardId ?? p.provider}
+              info={p}
+              agents={agents}
+              canManage={canManage}
+            />
           ))}
         </div>
       )}

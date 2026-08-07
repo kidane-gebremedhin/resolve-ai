@@ -36,6 +36,8 @@ import {
   Textarea,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 
 export type Agent = {
   _id: string;
@@ -139,6 +141,9 @@ export function WidgetStudioClient({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // widget-settings.routes and agent.routes both mount requireOrgRole("admin"),
+  // so agents/viewers can preview the studio but not persist changes.
+  const canManage = useCan("manageWidget");
 
   if (!agent || !draft || !baseline) {
     return <NoAgentState />;
@@ -187,16 +192,20 @@ export function WidgetStudioClient({
           <Badge variant="secondary" className="gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-success" /> {agent.name}
           </Badge>
-          {dirty && (
+          {canManage && dirty && (
             <Button size="sm" variant="outline" onClick={reset} disabled={busy}>
               Discard
             </Button>
           )}
-          <Button size="sm" onClick={save} disabled={!dirty || busy}>
-            {busy ? "Saving…" : "Save changes"}
-          </Button>
+          {canManage && (
+            <Button size="sm" onClick={save} disabled={!dirty || busy}>
+              {busy ? "Saving…" : "Save changes"}
+            </Button>
+          )}
         </div>
       </div>
+
+      <ReadOnlyNotice capability="manageWidget" className="mt-4" />
 
       {error && (
         <div className="mt-4 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">

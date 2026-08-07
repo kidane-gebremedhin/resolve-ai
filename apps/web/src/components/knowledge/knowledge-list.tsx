@@ -28,6 +28,8 @@ import {
 } from "lucide-react";
 import { Button } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 import { getOperatorSocket } from "@/lib/socket";
 import { StatusBadge } from "./status-badge";
 import { AddKnowledgeDialog } from "./add-knowledge-dialog";
@@ -110,7 +112,10 @@ export function KnowledgeList({
   const router = useRouter();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [addOpen, setAddOpen] = useState(false);
-  const canAdd = Boolean(agentId);
+  // kb.routes mounts requireOrgRole("agent"), so viewers are read-only here
+  // while agents and above can curate sources. Still needs a scoped website.
+  const canManage = useCan("manageKnowledge");
+  const canAdd = canManage && Boolean(agentId);
   const [busyId, setBusyId] = useState<string | null>(null);
   // Local mirror of the prop so the operator socket can patch rows in-place
   // when the API broadcasts a `knowledge:updated` event. The server-component
@@ -224,21 +229,25 @@ export function KnowledgeList({
               : "Knowledge is per website. Pick a website in the sidebar switcher to add or scope sources."}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button type="button" variant="outline" size="sm">
-            <Sparkles className="mr-1.5 h-3.5 w-3.5 text-primary" /> Suggest gaps
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => setAddOpen(true)}
-            disabled={!canAdd}
-            title={canAdd ? undefined : "Select a website in the sidebar switcher first"}
-          >
-            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add knowledge
-          </Button>
-        </div>
+        {canManage && (
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm">
+              <Sparkles className="mr-1.5 h-3.5 w-3.5 text-primary" /> Suggest gaps
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setAddOpen(true)}
+              disabled={!canAdd}
+              title={canAdd ? undefined : "Select a website in the sidebar switcher first"}
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add knowledge
+            </Button>
+          </div>
+        )}
       </div>
+
+      <ReadOnlyNotice capability="manageKnowledge" className="mt-4" />
 
       <div className="mt-6 flex flex-wrap gap-2">
         {FILTERS.map((f) => {
@@ -271,18 +280,22 @@ export function KnowledgeList({
           <FileText className="mx-auto h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
           <div className="mt-3 font-display text-base font-semibold">No knowledge sources yet</div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add text, upload a document, or crawl a website to train your agent.
+            {canManage
+              ? "Add text, upload a document, or crawl a website to train your agent."
+              : "Nothing has been added yet. Ask an agent or admin to train this workspace."}
           </p>
-          <Button
-            type="button"
-            size="sm"
-            className="mt-4"
-            onClick={() => setAddOpen(true)}
-            disabled={!canAdd}
-            title={canAdd ? undefined : "Select a website in the sidebar switcher first"}
-          >
-            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add your first source
-          </Button>
+          {canManage && (
+            <Button
+              type="button"
+              size="sm"
+              className="mt-4"
+              onClick={() => setAddOpen(true)}
+              disabled={!canAdd}
+              title={canAdd ? undefined : "Select a website in the sidebar switcher first"}
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add your first source
+            </Button>
+          )}
         </div>
       ) : (
         <div className="mt-6 overflow-x-auto rounded-xl border border-border bg-card">
@@ -329,29 +342,33 @@ export function KnowledgeList({
                             <ExternalLink className="h-3.5 w-3.5" />
                           </Link>
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy || s.embeddingStatus === "deleting"}
-                          onClick={() => reingest(s._id)}
-                          title="Re-ingest"
-                        >
-                          {busy ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <RefreshCcw className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => remove(s._id, s.title)}
-                          className="text-destructive hover:text-destructive"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {canManage && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy || s.embeddingStatus === "deleting"}
+                              onClick={() => reingest(s._id)}
+                              title="Re-ingest"
+                            >
+                              {busy ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <RefreshCcw className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={busy}
+                              onClick={() => remove(s._id, s.title)}
+                              className="text-destructive hover:text-destructive"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

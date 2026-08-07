@@ -11,6 +11,7 @@
     "test": "vitest run",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:wipe": "tsx scripts/wipe-all-data.ts",
+    "db:seed": "tsx scripts/seed-test-accounts.ts",
     "kb:reembed": "tsx scripts/reembed.ts",
     "gen:cred-key": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
     "clean": "rm -rf dist .turbo node_modules"

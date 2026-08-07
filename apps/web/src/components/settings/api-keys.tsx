@@ -19,6 +19,8 @@ import {
 } from "@csb/ui";
 import { AlertCircle, Check, Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
 import { clientApi, ApiError } from "@/lib/api";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 
 export interface ApiKeyRow {
   _id: string;
@@ -36,6 +38,8 @@ interface CreateResponse extends ApiKeyRow {
 }
 
 export function ApiKeys({ initial }: { initial: ApiKeyRow[] }) {
+  // api-keys.routes gates create/revoke behind assertCanManageKeys (owner|admin).
+  const canManage = useCan("manageApiKeys");
   const [keys, setKeys] = useState<ApiKeyRow[]>(initial);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -121,10 +125,14 @@ export function ApiKeys({ initial }: { initial: ApiKeyRow[] }) {
             header.
           </p>
         </div>
-        <Button size="sm" onClick={() => setOpenDialog(true)} className="gap-1.5">
-          <Plus className="h-3.5 w-3.5" /> Create key
-        </Button>
+        {canManage && (
+          <Button size="sm" onClick={() => setOpenDialog(true)} className="gap-1.5">
+            <Plus className="h-3.5 w-3.5" /> Create key
+          </Button>
+        )}
       </div>
+
+      <ReadOnlyNotice capability="manageApiKeys" className="mt-4" />
 
       {error && (
         <div className="mt-4 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -163,14 +171,18 @@ export function ApiKeys({ initial }: { initial: ApiKeyRow[] }) {
                     {k.createdAt ? new Date(k.createdAt).toLocaleDateString() : "—"}
                   </td>
                   <td className="py-3 text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="gap-1.5 text-destructive hover:text-destructive"
-                      onClick={() => revoke(k._id)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Revoke
-                    </Button>
+                    {canManage ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="gap-1.5 text-destructive hover:text-destructive"
+                        onClick={() => revoke(k._id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Revoke
+                      </Button>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

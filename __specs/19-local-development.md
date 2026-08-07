@@ -200,6 +200,7 @@ docker compose -f docker-compose.full.yml up --build
     "format": "prettier --write .",
 
     "db:migrate": "pnpm --filter @csb/api db:migrate",
+    "db:seed": "pnpm --filter @csb/api db:seed",
 
     "verify:assets": "node scripts/verify-assets.mjs",
     "verify:env": "node scripts/verify-env.mjs",
@@ -214,6 +215,7 @@ docker compose -f docker-compose.full.yml up --build
 | `pnpm dev` | Hot-reload all four apps (after `dev:infra`) |
 | `pnpm dev:full` | Build and run all four apps as containers — pre-push validation |
 | `pnpm db:migrate` | Sync Mongoose indexes on all models |
+| `pnpm db:seed` | Seed manual-QA accounts — every role + a paid org (see §6.1) |
 | `pnpm verify:assets` | Fail-fast check that every file in `apps/web/public/` is referenced |
 | `pnpm verify:env` | Validate `.env` matches `.env.example` and required vars are set |
 
@@ -244,8 +246,11 @@ cp .env.example .env
 # 6. Start infrastructure
 pnpm dev:infra
 
-# 7. Sync database indexes (database starts empty — no seed data)
+# 7. Sync database indexes (database starts empty)
 pnpm db:migrate
+
+# 7b. Optional — seed manual-QA logins (all roles + a paid org). See §6.1.
+pnpm db:seed
 
 # 8. Start apps
 pnpm dev
@@ -267,8 +272,8 @@ Visit:
 
 ## 6. Database State
 
-There is **no seed data**. A fresh database is empty; `pnpm db:migrate` only
-syncs Mongoose indexes. Onboard the same way a real user would:
+A fresh database is empty; `pnpm db:migrate` only syncs Mongoose indexes. Onboard
+the same way a real user would:
 
 1. Register an account at `http://localhost:3000/register` (or `POST /auth/register`).
 2. Create a website, then an agent, from the dashboard.
@@ -280,6 +285,34 @@ To start from a clean database, drop the Docker volumes and re-sync indexes:
 ```bash
 pnpm dev:infra:reset && pnpm db:migrate
 ```
+
+### 6.1 Manual-QA seed (opt-in)
+
+`pnpm db:seed` ([`apps/api/scripts/seed-test-accounts.ts`](../apps/api/scripts/seed-test-accounts.ts))
+exists so role- and plan-dependent behaviour can be exercised without clicking
+through sign-up five times. It is **never** run automatically — `db:migrate`
+stays seed-free, and production deploys only run migrations.
+
+It upserts (idempotently, resetting the seeded passwords on every run):
+
+- **Acme Support Co** — an org on the **business** plan with an `active`
+  `Subscription` and `plan` mirrored onto the Organization, holding one
+  credentials account per membership role: `owner@acme.test`, `admin@acme.test`,
+  `agent@acme.test`, `viewer@acme.test`.
+- **Platform HQ** — a second org, also on the business plan, owned by
+  `platformadmin@acme.test` (`role: platform_admin`). The extra org is
+  deliberate: the admin app only checks the platform role, but a JWT with no
+  `organizationId` 403s on every `/app` route, so the account would be unusable
+  in the web app without it. It is subscribed because `apps/web`'s `/app` layout
+  is a hard subscription gate — an unpaid workspace is redirected to `/checkout`,
+  which put the platform admin on the plan picker rather than the dashboard.
+- A Website + its Agent + WidgetSettings inside the paid org, mirroring what
+  `POST /websites` provisions, so the widget works on first login.
+
+Shared password `Test1234!` (override with `--password=`), target database from
+`MONGODB_URI` or `--uri=`. The Paddle IDs are synthetic — Mongo-backed plan
+gating and quotas behave correctly, but live Paddle calls (portal, plan change,
+cancel) will fail for the seeded org.
 
 ---
 

@@ -9,10 +9,17 @@ import { signOut } from "next-auth/react";
 import { Check, Loader2 } from "lucide-react";
 import { Button, Input, Label } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { usePermissions } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 import type { Org } from "./tab-inlines";
 
 export function GeneralInline({ org }: { org: Org | null }): React.ReactElement {
   const router = useRouter();
+  // PATCH /orgs/current is requireOrgRole("admin"); DELETE /orgs/current checks
+  // for the owner role explicitly and refuses everyone else.
+  const { can } = usePermissions();
+  const canEditOrg = can("manageOrgProfile");
+  const canDeleteOrg = can("deleteOrganization");
   const [name, setName] = useState(org?.name ?? "");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -88,6 +95,7 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
           <Input
             id="org-name"
             value={name}
+            disabled={!canEditOrg}
             onChange={(e) => {
               setName(e.target.value);
               setSaved(false);
@@ -95,13 +103,16 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
           />
         </div>
         {error && <p className="mt-3 text-xs text-destructive">{error}</p>}
-        <div className="mt-4 flex items-center gap-3">
-          <Button type="submit" size="sm" disabled={saving || name.trim() === (org?.name ?? "")}>
-            {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-            Save
-          </Button>
-          {saved && <span className="text-xs text-emerald-600">Saved</span>}
-        </div>
+        <ReadOnlyNotice capability="manageOrgProfile" className="mt-4" />
+        {canEditOrg && (
+          <div className="mt-4 flex items-center gap-3">
+            <Button type="submit" size="sm" disabled={saving || name.trim() === (org?.name ?? "")}>
+              {saving && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+              Save
+            </Button>
+            {saved && <span className="text-xs text-emerald-600">Saved</span>}
+          </div>
+        )}
       </form>
 
       {/* Privacy & Compliance */}
@@ -131,7 +142,7 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
                 type="button"
                 role="switch"
                 aria-checked={piiRedaction}
-                disabled={savingPii}
+                disabled={savingPii || !canEditOrg}
                 onClick={() => void savePiiRedaction(!piiRedaction)}
                 className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50 ${piiRedaction ? "bg-primary" : "bg-muted-foreground/30"}`}
               >
@@ -161,6 +172,7 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
         </div>
       </div>
 
+      {canDeleteOrg && (
       <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-6">
         <h2 className="font-display text-base font-semibold text-destructive">Danger zone</h2>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -191,6 +203,7 @@ export function GeneralInline({ org }: { org: Org | null }): React.ReactElement 
           Delete my account
         </Button>
       </div>
+      )}
     </div>
   );
 }

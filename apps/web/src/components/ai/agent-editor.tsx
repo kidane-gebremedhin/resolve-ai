@@ -10,6 +10,8 @@ import { Label } from "@csb/ui";
 import { Slider } from "@csb/ui";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 import { API_URL } from "@/lib/app-urls";
 
 export type AgentDoc = {
@@ -79,6 +81,7 @@ export function CreateAgentForm({ websiteId }: { websiteId: string }): React.Rea
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const canCreate = useCan("manageAgents");
 
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -162,15 +165,19 @@ export function CreateAgentForm({ websiteId }: { websiteId: string }): React.Rea
         </p>
       )}
 
+      <ReadOnlyNotice capability="manageAgents" className="mt-5" />
+
       <div className="mt-5 flex items-center justify-end gap-3">
-        <Button type="submit" disabled={submitting} className="gap-1.5">
-          {submitting ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Plus className="h-3.5 w-3.5" />
-          )}
-          {submitting ? "Creating…" : "Create agent"}
-        </Button>
+        {canCreate && (
+          <Button type="submit" disabled={submitting} className="gap-1.5">
+            {submitting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            {submitting ? "Creating…" : "Create agent"}
+          </Button>
+        )}
       </div>
     </form>
   );
@@ -201,6 +208,9 @@ export function AgentEditor({
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // agent.routes mounts requireOrgRole("admin") — agents/viewers may inspect the
+  // configuration but not persist it.
+  const canManage = useCan("manageAgents");
   const [jiraProjectKey, setJiraProjectKey] = useState(agent.jiraProjectKey ?? "");
   // Real Jira projects for the pick-list (so operators can't save a key that
   // doesn't exist). Falls back to a free-text field if the list can't load.
@@ -732,14 +742,18 @@ export function AgentEditor({
         )}
       </TabsContent>
 
+      <ReadOnlyNotice capability="manageAgents" className="mt-6" />
+
       <div className="mt-6 flex items-center justify-end gap-3">
         {error && <span className="text-xs text-destructive">{error}</span>}
         {savedAt && !error && (
           <span className="text-xs text-success">Saved.</span>
         )}
-        <Button onClick={save} disabled={saving} className="gap-1.5">
-          <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save changes"}
-        </Button>
+        {canManage && (
+          <Button onClick={save} disabled={saving} className="gap-1.5">
+            <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : "Save changes"}
+          </Button>
+        )}
       </div>
     </Tabs>
   );

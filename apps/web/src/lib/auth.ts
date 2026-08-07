@@ -6,6 +6,14 @@ import Google from "next-auth/providers/google";
 import { API_INTERNAL_URL as apiUrl } from "./app-urls";
 
 type Role = "owner" | "admin" | "agent" | "viewer" | "platform_admin";
+// The API models two independent roles and returns BOTH from /auth/login and
+// /auth/google: `role` is platform-level (user | platform_admin) and drives the
+// admin app, while `membershipRole` (owner | admin | agent | viewer) is the
+// caller's rank inside the active organization and is what every tenant route
+// authorizes against. They must stay separate here — collapsing them into one
+// `role` field left the dashboard with no idea of the org rank, so it rendered
+// owner-only actions to agents and viewers who then got a 403 on click.
+type MembershipRole = "owner" | "admin" | "agent" | "viewer";
 
 declare module "next-auth" {
   interface Session {
@@ -13,6 +21,7 @@ declare module "next-auth" {
       id: string;
       organizationId?: string;
       role?: Role;
+      membershipRole?: MembershipRole;
     } & DefaultSession["user"];
     accessToken?: string;
     error?: "RefreshAccessTokenError";
@@ -20,6 +29,7 @@ declare module "next-auth" {
   interface User {
     organizationId?: string;
     role?: Role;
+    membershipRole?: MembershipRole;
     accessToken?: string;
     refreshToken?: string;
     expiresIn?: number;
@@ -102,6 +112,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             name: string;
             image?: string;
             role?: Role;
+            membershipRole?: MembershipRole;
             organizationId?: string;
           };
           accessToken: string;
@@ -115,6 +126,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           image: body.user.image ?? null,
           organizationId: body.user.organizationId,
           role: body.user.role,
+          membershipRole: body.user.membershipRole,
           accessToken: body.accessToken,
           refreshToken: body.refreshToken,
           expiresIn: body.expiresIn,
@@ -129,6 +141,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.sub = user.id ?? token.sub;
         t.organizationId = user.organizationId;
         t.role = user.role;
+        t.membershipRole = user.membershipRole;
         t.accessToken = user.accessToken;
         t.refreshToken = user.refreshToken;
         t.accessTokenExpires = expiresAtFrom(user.expiresIn);
@@ -161,7 +174,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           throw new Error(`Google sign-in exchange failed (${res.status})`);
         }
         const body = (await res.json()) as {
-          user: { id: string; role?: Role; organizationId?: string };
+          user: {
+            id: string;
+            role?: Role;
+            membershipRole?: MembershipRole;
+            organizationId?: string;
+          };
           accessToken: string;
           refreshToken?: string;
           expiresIn?: number;
@@ -169,6 +187,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.sub = body.user.id;
         t.organizationId = body.user.organizationId;
         t.role = body.user.role;
+        t.membershipRole = body.user.membershipRole;
         t.accessToken = body.accessToken;
         t.refreshToken = body.refreshToken;
         t.accessTokenExpires = expiresAtFrom(body.expiresIn);
@@ -194,6 +213,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (token.sub) session.user.id = token.sub;
       session.user.organizationId = (t.organizationId as string | undefined) ?? undefined;
       session.user.role = (t.role as Role | undefined) ?? undefined;
+      session.user.membershipRole = (t.membershipRole as MembershipRole | undefined) ?? undefined;
       session.accessToken = (t.accessToken as string | undefined) ?? undefined;
       session.error = (t.error as "RefreshAccessTokenError" | undefined) ?? undefined;
       return session;

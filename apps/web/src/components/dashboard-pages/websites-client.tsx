@@ -29,6 +29,8 @@ import {
   DialogFooter,
 } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
+import { useCan } from "@/hooks/use-permissions";
+import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 
 export type Website = {
   _id: string;
@@ -56,6 +58,9 @@ export function WebsitesClient({
   apiBaseUrl?: string;
 }) {
   const router = useRouter();
+  // Websites are workspace configuration — the API mounts requireOrgRole("admin")
+  // on the whole router, so agents and viewers can list sites but not mutate them.
+  const canManage = useCan("manageWebsites");
   const [sites, setSites] = useState<Website[]>(initialWebsites);
   const [query, setQuery] = useState("");
   const [dialog, setDialog] = useState<DialogState>({ kind: "closed" });
@@ -107,15 +112,19 @@ export function WebsitesClient({
             Domains where your widget runs. Register each site so the embed script is allowed to load.
           </p>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          className="gap-2"
-          onClick={() => setDialog({ kind: "add" })}
-        >
-          <Plus className="h-4 w-4" /> Add website
-        </Button>
+        {canManage && (
+          <Button
+            type="button"
+            size="sm"
+            className="gap-2"
+            onClick={() => setDialog({ kind: "add" })}
+          >
+            <Plus className="h-4 w-4" /> Add website
+          </Button>
+        )}
       </div>
+
+      <ReadOnlyNotice capability="manageWebsites" className="mt-4" />
 
       {error && (
         <div className="mt-4 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -144,16 +153,20 @@ export function WebsitesClient({
           <Globe className="mx-auto h-8 w-8 text-muted-foreground" />
           <div className="mt-3 font-display text-base font-semibold">No websites yet</div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Add the first domain where your AI widget should load.
+            {canManage
+              ? "Add the first domain where your AI widget should load."
+              : "An owner or admin needs to register the first domain before the widget can load."}
           </p>
-          <Button
-            type="button"
-            size="sm"
-            className="mt-4 gap-2"
-            onClick={() => setDialog({ kind: "add" })}
-          >
-            <Plus className="h-4 w-4" /> Add website
-          </Button>
+          {canManage && (
+            <Button
+              type="button"
+              size="sm"
+              className="mt-4 gap-2"
+              onClick={() => setDialog({ kind: "add" })}
+            >
+              <Plus className="h-4 w-4" /> Add website
+            </Button>
+          )}
         </div>
       ) : (
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -188,14 +201,16 @@ export function WebsitesClient({
               </div>
 
               <div className="mt-5 flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5"
-                  onClick={() => setDialog({ kind: "edit", website: s })}
-                >
-                  <Pencil className="h-3.5 w-3.5" /> Edit
-                </Button>
+                {canManage && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => setDialog({ kind: "edit", website: s })}
+                  >
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </Button>
+                )}
                 <a
                   href={`https://${s.domain}`}
                   target="_blank"
@@ -204,14 +219,16 @@ export function WebsitesClient({
                 >
                   <ExternalLink className="h-3.5 w-3.5" /> Visit
                 </a>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="ml-auto text-destructive hover:text-destructive"
-                  onClick={() => handleDelete(s)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
+                {canManage && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="ml-auto text-destructive hover:text-destructive"
+                    onClick={() => handleDelete(s)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
               </div>
             </div>
           ))}
