@@ -206,6 +206,16 @@ async function request<T>(
   const json = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
 
   if (!res.ok) {
+    // Budget cap hit (402). NEVER surface the server's budget wording/amounts to
+    // the customer — show a neutral, generic message. The org owner is notified
+    // separately (email + in-app notification); the visitor just sees a soft error.
+    if (res.status === 402) {
+      throw new ApiError(
+        "Sorry, I encountered some issues, please try again later.",
+        res.status,
+        json,
+      );
+    }
     const message =
       (json && typeof json === "object" && "error" in json && typeof (json as { error?: unknown }).error === "string"
         ? ((json as { error?: string }).error as string)

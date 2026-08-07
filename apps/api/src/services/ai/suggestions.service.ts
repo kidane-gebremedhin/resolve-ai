@@ -6,6 +6,7 @@
 import { Conversation, Message } from "../../models/index.js";
 import { logger } from "../../config/logger.js";
 import { env } from "../../config/env.js";
+import { recordUsage } from "../openrouter-usage.service.js";
 
 const OPENROUTER_URL =
   process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
@@ -15,7 +16,7 @@ type LlmChoice = {
   message?: { role?: string; content?: string | null };
   finish_reason?: string;
 };
-type LlmResponse = { choices?: LlmChoice[] };
+type LlmResponse = { choices?: LlmChoice[]; id?: string };
 
 const FALLBACKS = [
   "Could you tell me more?",
@@ -132,6 +133,17 @@ export async function generateSuggestions(args: {
       return clampSuggestions([...FALLBACKS]);
     }
     const json = (await res.json()) as LlmResponse;
+    // Meter the tokens this suggestion call spent, attributed to the org.
+    if (json.id) {
+      void recordUsage({
+        feature: "suggestions",
+        organizationId: args.organizationId,
+        conversationId: conversation._id,
+        websiteId: conversation.websiteId ?? null,
+        model,
+        generationIds: [json.id],
+      }).catch(() => undefined);
+    }
     const content = json.choices?.[0]?.message?.content ?? null;
     if (!content) return clampSuggestions([...FALLBACKS]);
 

@@ -1,5 +1,6 @@
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
+import { recordUsage } from "../openrouter-usage.service.js";
 
 const OPENROUTER_URL =
   process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
@@ -34,6 +35,9 @@ function render(lines: TranscriptLine[]): string {
 export async function buildIssueScopedTranscript(args: {
   lines: TranscriptLine[];
   issueSummary?: string;
+  // Org/conversation for usage metering (support-ticket AI spend).
+  organizationId?: string;
+  conversationId?: string | null;
 }): Promise<string> {
   const { lines, issueSummary } = args;
   if (lines.length === 0) return "";
@@ -76,7 +80,18 @@ export async function buildIssueScopedTranscript(args: {
     if (!res.ok) throw new Error(`transcript LLM ${res.status}`);
     const body = (await res.json()) as {
       choices?: { message?: { content?: string } }[];
+      id?: string;
     };
+    // Meter the tokens this issue-scoping call spent, attributed to the org.
+    if (body.id && args.organizationId) {
+      void recordUsage({
+        feature: "ticket_summary",
+        organizationId: args.organizationId,
+        conversationId: args.conversationId ?? null,
+        model: TRANSCRIPT_MODEL,
+        generationIds: [body.id],
+      }).catch(() => undefined);
+    }
     const raw = body.choices?.[0]?.message?.content ?? "";
     // The model may wrap the array in prose or a code fence — extract the array.
     const match = raw.match(/\[[\s\S]*?\]/);

@@ -7,6 +7,7 @@ import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
+import { enforceOrgBudget } from "../middleware/budget-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { enhanceDraft } from "../services/ai/enhance.service.js";
 import { env } from "../config/env.js";
@@ -117,6 +118,7 @@ const enhanceSchema = z.object({
 router.post(
   "/enhance",
   enhanceLimiter,
+  enforceOrgBudget,
   validateBody(enhanceSchema),
   async (req: Request, res: Response) => {
     let customerLastMessage: string | undefined;
@@ -138,6 +140,8 @@ router.post(
     const result = await enhanceDraft({
       draft: req.body.draft,
       customerLastMessage,
+      organizationId: req.orgId,
+      conversationId: req.body.conversationId ?? null,
     });
     res.json({ enhanced: result.enhanced, original: req.body.draft });
   },

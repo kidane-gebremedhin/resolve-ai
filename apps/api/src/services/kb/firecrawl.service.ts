@@ -7,6 +7,7 @@ import { embed } from "../ai/embedding.service.js";
 import { getPineconeIndex } from "../../config/pinecone.js";
 import { logger } from "../../config/logger.js";
 import { hashContent, emitKnowledgeUpdate } from "./ingestion.service.js";
+import { orgBudgetStatus } from "../budget-alert.service.js";
 
 const baseUrl = process.env.FIRECRAWL_BASE_URL ?? "https://api.firecrawl.dev/v1";
 const apiKey = process.env.FIRECRAWL_API_KEY;
@@ -128,7 +129,22 @@ export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): 
     return;
   }
 
-  const vectors = await embed(taggedChunks.map((c) => c.text));
+  // Budget gate: skip embedding a crawl when the org is over its monthly AI
+  // budget (see ingestion.service for the same guard).
+  const budget = await orgBudgetStatus(source.organizationId.toString());
+  if (budget.exceeded) {
+    source.embeddingStatus = "error";
+    source.embeddingError =
+      "AI budget reached — knowledge indexing is paused until next month or a plan upgrade.";
+    await source.save();
+    emitKnowledgeUpdate(source);
+    logger.warn("[kb] crawl embedding skipped — org over budget", { sourceId });
+    return;
+  }
+
+  const vectors = await embed(taggedChunks.map((c) => c.text), {
+    organizationId: source.organizationId.toString(),
+  });
   const pinecone = getPineconeIndex();
   const previousIds = source.pineconeIds ?? [];
   const ids = taggedChunks.map((c) => `${source._id.toString()}:${c.index}`);

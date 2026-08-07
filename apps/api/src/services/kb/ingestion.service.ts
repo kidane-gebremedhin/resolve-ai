@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { KnowledgeSource } from "../../models/index.js";
 import { chunkText } from "../../utils/chunker.js";
 import { embed } from "../ai/embedding.service.js";
+import { orgBudgetStatus } from "../budget-alert.service.js";
 import { getPineconeIndex } from "../../config/pinecone.js";
 import { logger } from "../../config/logger.js";
 import { getIoServer } from "../../socket/index.js";
@@ -122,10 +123,26 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
       return;
     }
 
+    // Budget gate: don't spend on embeddings when the org is over its monthly AI
+    // budget. Park the source in "error" with a clear reason (a retry after the
+    // budget resets, or a plan upgrade, will pick it up and succeed).
+    const budget = await orgBudgetStatus(source.organizationId.toString());
+    if (budget.exceeded) {
+      source.embeddingStatus = "error";
+      source.embeddingError =
+        "AI budget reached — knowledge indexing is paused until next month or a plan upgrade.";
+      await source.save();
+      emitKnowledgeUpdate(source);
+      logger.warn("[kb] ingestion skipped — org over budget", { sourceId });
+      return;
+    }
+
     // Large sources take a while (embed + upsert are batched and run
     // sequentially); log so progress is observable in the server logs.
     logger.info("[kb] embedding source", { sourceId, chunks: taggedChunks.length, pages: pages.length });
-    const vectors = await embed(taggedChunks.map((c) => c.text));
+    const vectors = await embed(taggedChunks.map((c) => c.text), {
+      organizationId: source.organizationId.toString(),
+    });
     const pinecone = getPineconeIndex();
     const previousIds = source.pineconeIds ?? [];
     const ids = taggedChunks.map((c) => `${source._id.toString()}:${c.index}`);

@@ -21,6 +21,7 @@ import integrations from "./integrations.routes.js";
 import analytics from "./analytics.routes.js";
 import triggers from "./triggers.routes.js";
 import voice from "./voice.routes.js";
+import notifications from "./notification.routes.js";
 import debug from "./debug.routes.js";
 
 const router = Router();
@@ -52,5 +53,6 @@ router.use("/integrations", integrations);
 router.use("/analytics", analytics);
 router.use("/triggers", triggers);
 router.use("/voice", voice);
+router.use("/notifications", notifications);
 
 export default router;

@@ -345,6 +345,8 @@ export async function dispatchToolCall(
                 (args as { summary?: unknown }).summary ??
                 "",
             ),
+            organizationId: String(ctx.organizationId),
+            conversationId: ctx.conversationId ? String(ctx.conversationId) : null,
           });
           if (transcript) enrichedArgs = { ...enrichedArgs, _transcript: transcript };
         } catch (err) {

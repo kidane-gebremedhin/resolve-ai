@@ -9,7 +9,7 @@
     "lint": "eslint src",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate": "tsx src/scripts/migrate.ts",
     "db:wipe": "tsx scripts/wipe-all-data.ts",
     "db:seed": "tsx scripts/seed-test-accounts.ts",
     "kb:reembed": "tsx scripts/reembed.ts",

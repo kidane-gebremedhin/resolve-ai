@@ -57,31 +57,50 @@ function currentPeriod(): string {
   return `${now.getFullYear()}-${mm}`;
 }
 
-// Called fire-and-forget after each generateAiReply invocation.
-// Fetches cost data for all LLM calls in the turn, aggregates them, persists a
-// UsageRecord, then triggers budget alert checks.
-export async function recordConversationUsage(opts: {
-  generationIds: string[];
+export type UsageFeature =
+  | "widget_reply"
+  | "suggestions"
+  | "enhance"
+  | "ticket_summary"
+  | "embedding";
+
+// General usage recorder — meters EVERY AI/token spend, whatever the feature. Two ways to supply
+// cost: (1) `generationIds` (chat calls) → per-generation cost fetched from OpenRouter's
+// /generation endpoint; (2) direct `promptTokens`/`completionTokens`/`costUsd` (e.g. embeddings,
+// which OpenRouter's /generation endpoint doesn't price). Persists a UsageRecord tagged with the
+// feature, then runs budget-alert checks. Fire-and-forget; never throws to the caller.
+export async function recordUsage(opts: {
+  feature: UsageFeature;
   organizationId: string | mongoose.Types.ObjectId;
   websiteId?: string | mongoose.Types.ObjectId | null;
   conversationId?: string | mongoose.Types.ObjectId | null;
   model: string;
+  generationIds?: string[];
+  promptTokens?: number;
+  completionTokens?: number;
+  costUsd?: number;
 }): Promise<void> {
-  const { generationIds, organizationId, websiteId, conversationId, model } = opts;
+  const { feature, organizationId, websiteId, conversationId, model } = opts;
+  const generationIds = opts.generationIds ?? [];
 
-  if (generationIds.length === 0) return;
+  let promptTokens = opts.promptTokens ?? 0;
+  let completionTokens = opts.completionTokens ?? 0;
+  let costUsd = opts.costUsd ?? 0;
 
-  // Fetch cost for each generation in parallel.
-  const results = await Promise.all(generationIds.map((id) => fetchGeneration(id)));
+  if (generationIds.length > 0) {
+    // Fetch cost for each generation in parallel (OpenRouter chat calls).
+    const results = await Promise.all(generationIds.map((id) => fetchGeneration(id)));
+    for (const data of results) {
+      if (!data) continue;
+      promptTokens += data.tokens_prompt ?? 0;
+      completionTokens += data.tokens_completion ?? 0;
+      costUsd += data.total_cost ?? 0;
+    }
+  }
 
-  let promptTokens = 0;
-  let completionTokens = 0;
-  let costUsd = 0;
-  for (const data of results) {
-    if (!data) continue;
-    promptTokens += data.tokens_prompt ?? 0;
-    completionTokens += data.tokens_completion ?? 0;
-    costUsd += data.total_cost ?? 0;
+  // Nothing to record (no generations, no tokens) — skip.
+  if (generationIds.length === 0 && promptTokens === 0 && completionTokens === 0 && costUsd === 0) {
+    return;
   }
 
   const period = currentPeriod();
@@ -91,6 +110,7 @@ export async function recordConversationUsage(opts: {
       organizationId,
       websiteId: websiteId ?? null,
       conversationId: conversationId ?? null,
+      feature,
       generationIds,
       model,
       promptTokens,
@@ -100,7 +120,7 @@ export async function recordConversationUsage(opts: {
       period,
     });
   } catch (err) {
-    logger.error("[usage] failed to save UsageRecord", { err: (err as Error).message });
+    logger.error("[usage] failed to save UsageRecord", { feature, err: (err as Error).message });
     return;
   }
 
@@ -114,4 +134,16 @@ export async function recordConversationUsage(opts: {
   } catch (err) {
     logger.error("[usage] budget alert check failed", { err: (err as Error).message });
   }
+}
+
+// Back-compat wrapper for the widget agent turn (tool-loop + final reply combined).
+export async function recordConversationUsage(opts: {
+  generationIds: string[];
+  organizationId: string | mongoose.Types.ObjectId;
+  websiteId?: string | mongoose.Types.ObjectId | null;
+  conversationId?: string | mongoose.Types.ObjectId | null;
+  model: string;
+}): Promise<void> {
+  if (opts.generationIds.length === 0) return;
+  await recordUsage({ feature: "widget_reply", ...opts });
 }
