@@ -33,6 +33,7 @@ import { ReadOnlyNotice } from "@/components/layouts/read-only-notice";
 import { getOperatorSocket } from "@/lib/socket";
 import { StatusBadge } from "./status-badge";
 import { AddKnowledgeDialog } from "./add-knowledge-dialog";
+import { KnowledgeGapsDialog } from "./knowledge-gaps-dialog";
 import type { KbType, KnowledgeSource } from "./types";
 
 type KnowledgeUpdatedPayload = {
@@ -112,6 +113,9 @@ export function KnowledgeList({
   const router = useRouter();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [addOpen, setAddOpen] = useState(false);
+  const [gapsOpen, setGapsOpen] = useState(false);
+  // Set when the operator picks a gap to answer — seeds the Add-knowledge title.
+  const [gapPrefill, setGapPrefill] = useState<string | undefined>(undefined);
   // kb.routes mounts requireOrgRole("agent"), so viewers are read-only here
   // while agents and above can curate sources. Still needs a scoped website.
   const canManage = useCan("manageKnowledge");
@@ -231,7 +235,13 @@ export function KnowledgeList({
         </div>
         {canManage && (
           <div className="flex gap-2">
-            <Button type="button" variant="outline" size="sm">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setGapsOpen(true)}
+              title="Questions customers asked that your knowledge base couldn't answer"
+            >
               <Sparkles className="mr-1.5 h-3.5 w-3.5 text-primary" /> Suggest gaps
             </Button>
             <Button
@@ -380,8 +390,32 @@ export function KnowledgeList({
       )}
 
       {agentId && (
-        <AddKnowledgeDialog open={addOpen} onOpenChange={setAddOpen} agentId={agentId} />
+        <AddKnowledgeDialog
+          open={addOpen}
+          onOpenChange={(o) => {
+            setAddOpen(o);
+            if (!o) setGapPrefill(undefined);
+          }}
+          agentId={agentId}
+          initialTitle={gapPrefill}
+        />
       )}
+
+      {/* Gaps are readable by any member; only agent+ sees the write actions. */}
+      <KnowledgeGapsDialog
+        open={gapsOpen}
+        onOpenChange={setGapsOpen}
+        agentId={agentId}
+        canManage={canManage}
+        onWriteAnswer={(question) => {
+          // Hand off: close the worklist, open Add-knowledge titled with the
+          // customer's exact wording so the answer is written against the real
+          // question rather than a paraphrase.
+          setGapsOpen(false);
+          setGapPrefill(question);
+          setAddOpen(true);
+        }}
+      />
     </div>
   );
 }

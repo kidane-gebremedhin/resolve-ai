@@ -33,6 +33,7 @@ export default function ReferralsPage() {
   const [data, setData] = useState<ReferralData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
 
   useEffect(() => {
     clientApi
@@ -46,11 +47,33 @@ export default function ReferralsPage() {
       ? `${window.location.origin}/register?ref=${data.code}`
       : "";
 
+  // navigator.clipboard is undefined on insecure origins (plain http on a LAN
+  // host) and can reject when the document isn't focused. Both used to surface
+  // as an unhandled rejection and a button that silently did nothing, so fall
+  // back to a hidden textarea + execCommand and only then report failure.
   async function copy() {
     if (!shareUrl) return;
-    await navigator.clipboard.writeText(shareUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    setCopyError(null);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = shareUrl;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (!ok) throw new Error("copy rejected");
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopyError("Couldn't copy automatically — select the link and copy it manually.");
+    }
   }
 
   if (error) {
@@ -91,6 +114,13 @@ export default function ReferralsPage() {
             {copied ? "Copied" : "Copy"}
           </Button>
         </div>
+        {copyError && <p className="mt-2 text-xs text-destructive">{copyError}</p>}
+        <p className="mt-3 text-xs text-muted-foreground">
+          Your code is <code className="rounded bg-muted px-1 py-0.5">{data.code}</code>. Anyone who
+          signs up through this link is attributed to you — the referral appears below as{" "}
+          <strong>Pending</strong> straight away, and flips to <strong>Earned</strong> with a
+          commission once they start a paid plan.
+        </p>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

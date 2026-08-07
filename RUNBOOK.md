@@ -198,6 +198,30 @@ pnpm --filter @csb/widget dev
 pnpm --filter @csb/embed dev    # embed loader on http://localhost:3002
 ```
 
+## 6.1 Visitor console (fastest way to create a conversation)
+
+[`test-visitor.html`](test-visitor.html) is a dependency-free page that talks to
+the **same public widget endpoints the real widget uses** (`POST /widget/init` →
+`POST /widget/conversations` → `POST /widget/conversations/:id/messages`), but
+with a plain input box instead of an iframe. Serve it over HTTP alongside
+[`test-widget.html`](test-widget.html) and open it.
+
+Use it when you want to exercise the operator side without fighting the embed:
+
+- Conversations it creates are **real** — they appear in the dashboard Inbox.
+- It polls every 2s, so **AI answers and operator replies from the Inbox appear
+  inline**, colour-coded (you / ai + confidence / operator).
+- The conversation and session ids are printed at the top, so you can find the
+  exact thread in the Inbox.
+- **New visitor** starts a fresh session + conversation — each browser visitor is
+  a separate thread, so a reply to one conversation never shows in another.
+- **Save contact → Leads** fills in the `ContactSession`, so the visitor also
+  shows up under Leads.
+
+Agent ID and API base are editable fields at the top; they default to the
+seeded agent. The API must allow the page's origin — `CORS_ORIGINS` has to
+include e.g. `http://localhost:8080`.
+
 ## 7. Try the embed widget on a test page
 
 The embed loader (`apps/embed`, port 3002) injects the chat widget into any host

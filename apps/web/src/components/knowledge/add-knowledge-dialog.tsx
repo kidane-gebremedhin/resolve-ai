@@ -6,7 +6,7 @@
 //   - Upload uses a raw FormData fetch because we can't extend clientApi
 //     from outside `apps/web/src/lib/api.ts`.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, FileText, Upload, Globe } from "lucide-react";
 import {
@@ -33,17 +33,33 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   /** The agent this knowledge is added to (knowledge is keyed by (org, agentId)). */
   agentId: string;
+  /**
+   * Seeds the Text tab's title. Used by the knowledge-gaps worklist so
+   * "Write answer" lands the operator on a form already titled with the
+   * customer's own question — they only have to type the answer.
+   */
+  initialTitle?: string;
 };
 
-export function AddKnowledgeDialog({ open, onOpenChange, agentId }: Props) {
+export function AddKnowledgeDialog({ open, onOpenChange, agentId, initialTitle }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<"text" | "file" | "website">("text");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Text tab state
-  const [textTitle, setTextTitle] = useState("");
+  const [textTitle, setTextTitle] = useState(initialTitle ?? "");
   const [textBody, setTextBody] = useState("");
+
+  // Adopt a new prefill each time the dialog is opened from a gap. Keyed on
+  // `open` too, so re-opening for a DIFFERENT gap replaces the stale title
+  // rather than keeping the first one for the life of the component.
+  useEffect(() => {
+    if (open && initialTitle) {
+      setTextTitle(initialTitle);
+      setTab("text");
+    }
+  }, [open, initialTitle]);
 
   // File tab state
   const [fileTitle, setFileTitle] = useState("");
