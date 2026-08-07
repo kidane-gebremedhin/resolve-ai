@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Visitor console — widget API test harness</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --border: #e3e6ea; --fg: #14171a;
+    --muted: #6b7280; --accent: #4f46e5; --ai: #f1f2f6; --err: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#171a21; --border:#2a2f3a; --fg:#e7e9ee;
+            --muted:#9aa1ad; --ai:#232833; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 40px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .card { background:var(--card); border:1px solid var(--border);
+          border-radius:12px; padding:14px; margin-bottom:14px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .ids { font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted); }
+  .ids b { color: var(--fg); font-weight:600; }
+  button { font:inherit; padding:8px 14px; border-radius:8px; cursor:pointer;
+           border:1px solid var(--border); background:var(--card); color:var(--fg); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.55; cursor:not-allowed; }
+  input, textarea { font:inherit; padding:9px 11px; border:1px solid var(--border);
+                    border-radius:8px; background:var(--card); color:var(--fg); }
+  #log { height: 46vh; min-height: 280px; overflow-y:auto; display:flex;
+         flex-direction:column; gap:10px; padding:4px; }
+  .msg { max-width:80%; padding:9px 13px; border-radius:14px; white-space:pre-wrap;
+         word-wrap:break-word; }
+  .customer { align-self:flex-end; background:var(--accent); color:#fff;
+              border-bottom-right-radius:4px; }
+  .ai       { align-self:flex-start; background:var(--ai); border-bottom-left-radius:4px; }
+  .operator { align-self:flex-start; background:#0d9488; color:#fff;
+              border-bottom-left-radius:4px; }
+  .system   { align-self:center; background:transparent; color:var(--muted); font-size:12px; }
+  .meta { font-size:11px; color:var(--muted); margin:2px 4px 0; }
+  .customer + .meta { text-align:right; }
+  .composer { display:flex; gap:8px; margin-top:12px; }
+  .composer input { flex:1; }
+  .chips { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .chip { font-size:12px; padding:5px 10px; border-radius:999px;
+          border:1px solid var(--border); background:transparent; color:var(--muted); }
+  .err { color:var(--err); font-size:13px; margin-top:8px; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%;
+         background:#16a34a; margin-right:5px; }
+  label { font-size:12px; color:var(--muted); display:block; margin-bottom:3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Visitor console</h1>
+  <div class="sub">
+    Talks to the widget's public API directly — same endpoints the real widget uses, no iframe.
+    Everything sent here creates a <strong>real conversation</strong> visible in the dashboard Inbox,
+    and operator replies show up below within ~2s.
+  </div>
+
+  <!-- Same three values as the embed snippet's data-* attributes. -->
+  <div class="card">
+    <div class="row">
+      <div style="flex:1; min-width:220px">
+        <label for="agent">Agent ID</label>
+        <input id="agent" style="width:100%" value="6a75d0ee7d31d913a7bc81cc" />
+      </div>
+      <div style="flex:1; min-width:220px">
+        <label for="api">API base</label>
+        <input id="api" style="width:100%" value="https://back.chataxis.pro/api/v1" />
+      </div>
+      <div style="align-self:flex-end">
+        <button id="restart">New visitor</button>
+      </div>
+    </div>
+    <div class="ids" id="ids" style="margin-top:10px">Connecting…</div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <!-- Optional: fills in ContactSession so the visitor also shows up under Leads. -->
+  <div class="card">
+    <div class="row">
+      <div style="flex:1; min-width:150px">
+        <label for="cname">Name</label><input id="cname" style="width:100%" placeholder="Dana Prospect" />
+      </div>
+      <div style="flex:1; min-width:170px">
+        <label for="cemail">Email</label><input id="cemail" style="width:100%" placeholder="dana@example.com" />
+      </div>
+      <div style="align-self:flex-end"><button id="savecontact">Save contact → Leads</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <!-- Kept OUTSIDE #log: the poller re-renders #log wholesale, which would
+         otherwise wipe the welcome line on the first tick. -->
+    <div id="welcome"></div>
+    <div id="log"></div>
+    <div class="chips" id="chips"></div>
+    <div class="composer">
+      <input id="text" placeholder="Type a message and hit Enter…" autocomplete="off" />
+      <button class="primary" id="send">Send</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let apiBase, token, sessionId, convId, pollTimer;
+// Message _ids already rendered, so polling only appends what's new. AI replies
+// stream in, so content can CHANGE after first render — we re-render on any diff.
+let lastSignature = "";
+
+function setErr(m) { $("err").textContent = m || ""; }
+
+async function call(path, { method = "GET", body } = {}) {
+  const res = await fetch(apiBase + path, {
+    method,
+    headers: {
+      ...(body ? { "Content-Type": "application/json" } : {}),
+      ...(token ? { "X-Session-Token": token } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+  return data;
+}
+
+function render(items) {
+  // Re-render wholesale: cheap at this size, and it picks up streamed AI edits.
+  const log = $("log");
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  log.innerHTML = "";
+  for (const m of items) {
+    const div = document.createElement("div");
+    div.className = "msg " + m.role;
+    // A streaming AI reply lands as " " before the text arrives.
+    div.textContent = (m.content || "").trim() || "…";
+    log.appendChild(div);
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const who = m.role === "customer" ? "you (visitor)"
+              : m.role === "operator" ? "operator (from Inbox)" : m.role;
+    const conf = typeof m.confidence === "number" ? ` · confidence ${m.confidence}` : "";
+    meta.textContent = `${who}${conf} · ${new Date(m.createdAt).toLocaleTimeString()}`;
+    log.appendChild(meta);
+  }
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+async function poll() {
+  if (!convId) return;
+  try {
+    const data = await call(`/widget/conversations/${convId}/messages`);
+    const items = data.items ?? [];
+    // Include content in the signature so streamed AI text re-renders.
+    const sig = items.map((m) => m._id + ":" + (m.content || "").length).join("|");
+    if (sig !== lastSignature) { lastSignature = sig; render(items); }
+  } catch (e) { setErr(e.message); }
+}
+
+async function start() {
+  clearInterval(pollTimer);
+  setErr("");
+  $("log").innerHTML = ""; $("welcome").innerHTML = ""; $("chips").innerHTML = "";
+  lastSignature = "";
+  apiBase = $("api").value.trim().replace(/\/$/, "");
+  const agentId = $("agent").value.trim();
+  token = null; convId = null;
+  $("ids").textContent = "Connecting…";
+  try {
+    const init = await call("/widget/init", { method: "POST", body: { agentId } });
+    token = init.sessionToken; sessionId = init.sessionId;
+
+    const conv = await call("/widget/conversations", { method: "POST", body: {} });
+    convId = conv.conversation._id;
+
+    $("ids").innerHTML =
+      `<span class="dot"></span><b>${init.agent.name}</b> · ` +
+      `conversation <b>${convId}</b> · session <b>${sessionId}</b>`;
+
+    // The welcome message is agent config, not a stored message — show it as context.
+    if (init.agent.welcomeMessage) {
+      const d = document.createElement("div");
+      d.className = "msg system";
+      d.textContent = init.agent.welcomeMessage + "  (agent welcome — not a stored message)";
+      $("welcome").appendChild(d);
+    }
+    for (const q of init.agent.suggestedQuestions ?? []) {
+      const b = document.createElement("button");
+      b.className = "chip"; b.textContent = q;
+      b.onclick = () => { $("text").value = q; send(); };
+      $("chips").appendChild(b);
+    }
+    pollTimer = setInterval(poll, 2000);
+  } catch (e) {
+    $("ids").textContent = "Not connected.";
+    setErr("Could not start a session: " + e.message);
+  }
+}
+
+async function send() {
+  const input = $("text");
+  const content = input.value.trim();
+  if (!content || !convId) return;
+  input.value = ""; $("send").disabled = true; setErr("");
+  try {
+    await call(`/widget/conversations/${convId}/messages`, { method: "POST", body: { content } });
+    await poll();
+  } catch (e) {
+    setErr(e.message); input.value = content;
+  } finally {
+    $("send").disabled = false; input.focus();
+  }
+}
+
+$("send").onclick = send;
+$("text").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+$("restart").onclick = start;
+$("savecontact").onclick = async () => {
+  if (!sessionId) return;
+  const body = {};
+  if ($("cname").value.trim()) body.name = $("cname").value.trim();
+  if ($("cemail").value.trim()) body.email = $("cemail").value.trim();
+  if (!Object.keys(body).length) return setErr("Enter a name or email first.");
+  try {
+    await call(`/widget/sessions/${sessionId}/contact`, { method: "POST", body });
+    setErr(""); alert("Contact saved — check Leads in the dashboard.");
+  } catch (e) { setErr(e.message); }
+};
+
+start();
+</script>
+</body>
+</html>

@@ -12,7 +12,7 @@
 // the answer (prefilled straight into the Add-knowledge dialog), or dismiss it.
 // Source of truth is GET/PATCH /analytics/knowledge-gaps.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
   Dialog,
@@ -73,31 +73,38 @@ export function KnowledgeGapsDialog({
   const [gaps, setGaps] = useState<KnowledgeGap[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Bumped by "Try again" to re-run the fetch effect. Effects must not reset
+  // state synchronously (react-hooks/set-state-in-effect), so a retry is
+  // modelled as a new input rather than an in-effect reset.
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const load = useCallback(async () => {
-    setError(null);
-    setGaps(null);
-    try {
-      const params = new URLSearchParams({ limit: "50", days: "90" });
-      if (agentId) params.set("agentId", agentId);
-      const data = await clientApi.get<{ items: KnowledgeGap[] }>(
-        `/analytics/knowledge-gaps?${params.toString()}`,
-      );
-      setGaps(data.items ?? []);
-    } catch (err) {
-      // Leave `gaps` null on failure. Setting it to [] would render the
-      // "No gaps right now" empty state next to the error banner, telling the
-      // operator their knowledge base is complete when we simply never got an
-      // answer — the opposite of the truth.
-      setError(err instanceof ApiError ? err.message : "Failed to load knowledge gaps.");
-    }
-  }, [agentId]);
-
-  // Refetch on every open — gaps accrue continuously from live conversations, so
-  // a cached list goes stale the moment a customer asks something new.
+  // Gaps accrue continuously from live conversations, so this component is
+  // mounted only while the dialog is open (see the `open &&` guard at the call
+  // site) and fetches once per mount — no cached, stale list.
   useEffect(() => {
-    if (open) void load();
-  }, [open, load]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const params = new URLSearchParams({ limit: "50", days: "90" });
+        if (agentId) params.set("agentId", agentId);
+        const data = await clientApi.get<{ items: KnowledgeGap[] }>(
+          `/analytics/knowledge-gaps?${params.toString()}`,
+        );
+        if (!cancelled) setGaps(data.items ?? []);
+      } catch (err) {
+        // Leave `gaps` null on failure. Setting it to [] would render the
+        // "No gaps right now" empty state next to the error banner, telling the
+        // operator their knowledge base is complete when we simply never got an
+        // answer — the opposite of the truth.
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "Failed to load knowledge gaps.");
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, reloadKey]);
 
   async function dismiss(gap: KnowledgeGap) {
     setBusyId(gap._id);
@@ -136,7 +143,14 @@ export function KnowledgeGapsDialog({
           error ? (
             // Errored before we ever had a list — offer a retry, not an empty state.
             <div className="py-8 text-center">
-              <Button size="sm" variant="outline" onClick={() => void load()}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setError(null);
+                  setReloadKey((k) => k + 1);
+                }}
+              >
                 Try again
               </Button>
             </div>

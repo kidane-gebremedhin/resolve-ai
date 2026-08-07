@@ -6,7 +6,7 @@
 //   - Upload uses a raw FormData fetch because we can't extend clientApi
 //     from outside `apps/web/src/lib/api.ts`.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, FileText, Upload, Globe } from "lucide-react";
 import {
@@ -47,19 +47,11 @@ export function AddKnowledgeDialog({ open, onOpenChange, agentId, initialTitle }
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Text tab state
+  // Text tab state. `initialTitle` seeds it once; the call site passes a React
+  // `key` derived from the prefill so choosing a DIFFERENT gap remounts this
+  // dialog with the new title, instead of syncing state from props in an effect.
   const [textTitle, setTextTitle] = useState(initialTitle ?? "");
   const [textBody, setTextBody] = useState("");
-
-  // Adopt a new prefill each time the dialog is opened from a gap. Keyed on
-  // `open` too, so re-opening for a DIFFERENT gap replaces the stale title
-  // rather than keeping the first one for the life of the component.
-  useEffect(() => {
-    if (open && initialTitle) {
-      setTextTitle(initialTitle);
-      setTab("text");
-    }
-  }, [open, initialTitle]);
 
   // File tab state
   const [fileTitle, setFileTitle] = useState("");

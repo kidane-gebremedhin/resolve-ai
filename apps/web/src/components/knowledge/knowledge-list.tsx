@@ -391,6 +391,9 @@ export function KnowledgeList({
 
       {agentId && (
         <AddKnowledgeDialog
+          // Remount when the prefill changes so a different gap's question
+          // replaces the seeded title (state-from-props without an effect).
+          key={gapPrefill ?? "blank"}
           open={addOpen}
           onOpenChange={(o) => {
             setAddOpen(o);
@@ -401,21 +404,25 @@ export function KnowledgeList({
         />
       )}
 
-      {/* Gaps are readable by any member; only agent+ sees the write actions. */}
-      <KnowledgeGapsDialog
-        open={gapsOpen}
-        onOpenChange={setGapsOpen}
-        agentId={agentId}
-        canManage={canManage}
-        onWriteAnswer={(question) => {
-          // Hand off: close the worklist, open Add-knowledge titled with the
-          // customer's exact wording so the answer is written against the real
-          // question rather than a paraphrase.
-          setGapsOpen(false);
-          setGapPrefill(question);
-          setAddOpen(true);
-        }}
-      />
+      {/* Mounted only while open so it fetches once per open — gaps accrue from
+          live conversations, so a list cached across opens would be stale.
+          Gaps are readable by any member; only agent+ sees the write actions. */}
+      {gapsOpen && (
+        <KnowledgeGapsDialog
+          open={gapsOpen}
+          onOpenChange={setGapsOpen}
+          agentId={agentId}
+          canManage={canManage}
+          onWriteAnswer={(question) => {
+            // Hand off: close the worklist, open Add-knowledge titled with the
+            // customer's exact wording so the answer is written against the real
+            // question rather than a paraphrase.
+            setGapsOpen(false);
+            setGapPrefill(question);
+            setAddOpen(true);
+          }}
+        />
+      )}
     </div>
   );
 }
