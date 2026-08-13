@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
+import { toast } from '@/lib/toast';
 import RevealAnimation from '../animation/RevealAnimation';
 import SocialAuth from './SocialAuth';
 
@@ -18,15 +19,18 @@ const LoginHero = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState<string | null>(
-    sessionExpired ? 'Your session expired. Please log in again.' : null,
-  );
   const [pending, setPending] = useState(false);
+
+  // An expired session is context for the page the user just landed on, not the
+  // result of an action they took — so it's announced once on arrival rather
+  // than sitting under the form forever.
+  useEffect(() => {
+    if (sessionExpired) toast.info('Your session expired. Please log in again.');
+  }, [sessionExpired]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
-    setError(null);
     const result = await signIn('credentials', {
       email,
       password,
@@ -34,7 +38,7 @@ const LoginHero = () => {
     });
     setPending(false);
     if (!result || result.error) {
-      setError('Invalid email or password.');
+      toast.error('Invalid email or password.');
       return;
     }
     router.push(callbackUrl);
@@ -85,11 +89,6 @@ const LoginHero = () => {
                   </button>
                 </div>
               </fieldset>
-              {error ? (
-                <p className="text-tagline-2 text-destructive mt-2" role="alert">
-                  {error}
-                </p>
-              ) : null}
               <div className="flex items-center justify-between">
                 <div>
                   <label className="inline-flex items-center gap-2 cursor-pointer">

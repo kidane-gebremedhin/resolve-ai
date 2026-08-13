@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
 import { API_URL } from '@/lib/app-urls';
 import RevealAnimation from '../animation/RevealAnimation';
+import { toastError } from '@/lib/toast';
 
 const ResetPasswordHero = () => {
   const searchParams = useSearchParams();
@@ -40,7 +41,7 @@ const ResetPasswordHero = () => {
       }
       setDone(true);
     } catch (err) {
-      setError((err as Error).message);
+      toastError(err, 'Could not reset your password.');
     } finally {
       setPending(false);
     }

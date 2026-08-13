@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { ToasterHost } from '@/components/toaster-host';
 import { ThemeProvider } from '@/components/theme-provider';
 import { parseTheme, type Theme } from '@/lib/theme';
 import { sansFont, displayFont } from './fonts';
@@ -45,7 +46,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       suppressHydrationWarning
     >
       <body suppressHydrationWarning>
-        <ThemeProvider initialTheme={initialTheme}>{children}</ThemeProvider>
+        <ThemeProvider initialTheme={initialTheme}>
+          {children}
+          {/* Global toast host — see the note in apps/web's root layout. */}
+          <ToasterHost />
+        </ThemeProvider>
       </body>
     </html>
   );

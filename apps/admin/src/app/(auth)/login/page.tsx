@@ -5,6 +5,7 @@ import { signIn } from 'next-auth/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Input, Label } from '@csb/ui';
 import { Logo } from '@/components/site/Logo';
+import { toast } from '@/lib/toast';
 
 const SSO_ERROR_MESSAGES: Record<string, string> = {
   AccessDenied: 'Access denied. This portal is restricted to platform administrators.',
@@ -26,17 +27,15 @@ export default function AdminLoginPage() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError(null);
     setPending(true);
     const res = await signIn('credentials', { email, password, redirect: false });
     setPending(false);
     if (res?.error) {
-      setError('Invalid email or password.');
+      toast.error('Invalid email or password.');
       return;
     }
     router.push('/');
@@ -84,7 +83,6 @@ export default function AdminLoginPage() {
               autoComplete="current-password"
             />
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
           <Button type="submit" className="w-full" disabled={pending}>
             {pending ? 'Signing in…' : 'Sign in'}
           </Button>

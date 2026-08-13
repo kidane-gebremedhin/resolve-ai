@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from 'react';
 import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import { toast } from '@/lib/toast';
 import { Eye, EyeOff, Check, X } from 'lucide-react';
 import RevealAnimation from '../animation/RevealAnimation';
 import SocialAuth from './SocialAuth';
@@ -85,14 +86,14 @@ const SignupHero = () => {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setError(body?.error?.message ?? 'Could not create your account.');
+        toast.error(body?.error?.message ?? 'Could not create your account.');
         setPending(false);
         return;
       }
       const signInResult = await signIn('credentials', { email, password, redirect: false });
       setPending(false);
       if (signInResult?.error) {
-        setError('Account created, but auto-login failed. Please log in.');
+        toast.warning('Account created, but auto-login failed. Please log in.');
         router.push('/login');
         return;
       }
@@ -104,7 +105,7 @@ const SignupHero = () => {
         : '/checkout';
       router.push(checkoutUrl);
     } catch {
-      setError('Network error. Try again.');
+      toast.error('Network error. Try again.');
       setPending(false);
     }
   }

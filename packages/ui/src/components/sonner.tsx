@@ -1,6 +1,10 @@
 "use client";
 
-import { Toaster as Sonner } from "sonner";
+import { Toaster as Sonner, toast } from "sonner";
+
+// Re-exported so consuming apps call toasts through @csb/ui rather than each
+// taking its own direct dependency on sonner — the version stays in one place.
+export { toast };
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 

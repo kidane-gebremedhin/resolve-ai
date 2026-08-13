@@ -3,17 +3,16 @@
 import { useState, type FormEvent } from 'react';
 import { API_URL } from '@/lib/app-urls';
 import RevealAnimation from '../animation/RevealAnimation';
+import { toast } from '@/lib/toast';
 
 const ForgotPasswordHero = () => {
   const [email, setEmail] = useState('');
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
-    setError(null);
     try {
       const res = await fetch(`${API_URL}/auth/forgot-password`, {
         method: 'POST',
@@ -23,7 +22,7 @@ const ForgotPasswordHero = () => {
       if (!res.ok) throw new Error('request failed');
       setSent(true);
     } catch {
-      setError('Something went wrong. Please try again.');
+      toast.error('Something went wrong. Please try again.');
     } finally {
       setPending(false);
     }
@@ -67,11 +66,6 @@ const ForgotPasswordHero = () => {
                     placeholder="Email address"
                   />
                 </fieldset>
-                {error ? (
-                  <p className="text-tagline-2 text-destructive mb-2" role="alert">
-                    {error}
-                  </p>
-                ) : null}
                 <button
                   type="submit"
                   disabled={pending}

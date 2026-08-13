@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
+import { ToasterHost } from '@/components/toaster-host';
 import { ThemeProvider } from '@/components/theme-provider';
 import { AttributionCapture } from '@/components/marketing/attribution-capture';
 import { parseTheme, type Theme } from '@/lib/theme';
@@ -74,7 +75,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body suppressHydrationWarning>
         <AttributionCapture />
-        <ThemeProvider initialTheme={initialTheme}>{children}</ThemeProvider>
+        <ThemeProvider initialTheme={initialTheme}>
+          {children}
+          {/* Global toast host. Action failures (login rejected, save failed)
+              surface here instead of as text wedged under a form. `richColors`
+              gives error/success their own palette; `closeButton` matters
+              because an error people need to read shouldn't time out on them. */}
+          <ToasterHost />
+        </ThemeProvider>
       </body>
     </html>
   );
