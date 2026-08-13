@@ -22,11 +22,19 @@ type RedeemResponse = { success: boolean; tierGranted?: string; message: string 
 export function CouponRedemption({
   currentPlan,
   canRedeem,
+  redirectTo,
 }: {
   /** The org's current plan; null when unsubscribed. */
   currentPlan: string | null;
   /** False for agents/viewers — the API refuses them with 403. */
   canRedeem: boolean;
+  /**
+   * Where to send the user after a successful redemption. Used by /checkout,
+   * where the whole point of redeeming is to leave that page — a bare refresh
+   * would re-render the plan picker for a split second before the server
+   * component noticed the new subscription and bounced them.
+   */
+  redirectTo?: string;
 }) {
   const router = useRouter();
   const [code, setCode] = useState("");
@@ -87,7 +95,11 @@ export function CouponRedemption({
       setCode("");
       // The new plan is read from the database on every request (the dashboard
       // does not cache the tier in a token), so a refresh is enough to reflect it.
-      router.refresh();
+      if (redirectTo) {
+        router.push(redirectTo);
+      } else {
+        router.refresh();
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not redeem that code.");
     } finally {

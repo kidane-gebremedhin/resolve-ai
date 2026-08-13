@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { api, ApiError } from "@/lib/api";
 import { CheckoutPlans } from "@/components/billing/checkout-plans";
+import { CouponRedemption } from "@/components/billing/coupon-redemption";
+import { can } from "@/lib/permissions";
 import { Logo } from "@/components/site/Logo";
 
 async function safeGet<T>(path: string): Promise<T | null> {
@@ -44,10 +46,31 @@ export default async function CheckoutPage({
         <div className="mx-auto max-w-3xl text-center">
           <h1 className="font-display text-2xl font-semibold tracking-tight">Complete your subscription</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Choose a plan to activate your workspace. You can change or cancel anytime from Billing.
+            Redeem a lifetime deal code or choose a plan to activate your workspace. You can change
+            or cancel anytime from Billing.
           </p>
         </div>
+        {/* Lifetime-deal redemption belongs HERE, not only on /app/billing.
+            An LTD buyer arrives with a code and no subscription, and /app is
+            behind the subscription gate — so the one page they can reach is
+            this one. Without this, the people coupons exist for could never
+            reach the redemption form at all. */}
         <div className="mx-auto mt-8 max-w-4xl">
+          <CouponRedemption
+            currentPlan={null}
+            canRedeem={can(session?.user?.membershipRole, "manageBilling")}
+            redirectTo="/app"
+          />
+        </div>
+
+        <div className="mx-auto mt-8 max-w-4xl">
+          <div className="mb-4 flex items-center gap-3">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              or choose a plan
+            </span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
           <CheckoutPlans
             organizationId={organizationId}
             customerEmail={email}

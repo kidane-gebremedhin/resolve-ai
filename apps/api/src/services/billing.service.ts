@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { Organization, Subscription, ProcessedWebhook, User, Membership } from "../models/index.js";
 import { logger } from "../config/logger.js";
-import { NotFoundError } from "../utils/errors.js";
+import { ApiError, NotFoundError } from "../utils/errors.js";
 import { planByPriceId, loadPlanCatalog, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans.js";
 import { recordEarnedCommissionForOrg } from "./affiliate.service.js";
 import {
@@ -352,11 +352,51 @@ export async function createCustomerPortalSession(args: {
   if (!org.paddleCustomerId) {
     throw new NotFoundError("No active Paddle customer for this organization.");
   }
-  const result = (await paddleFetch(`/customers/${org.paddleCustomerId}/portal-sessions`, {
-    method: "POST",
-    body: JSON.stringify({}),
-  })) as { data?: { urls?: { general?: { overview?: string } } } };
+  // A failure here is Paddle's, not ours — an unknown/deleted customer id, a
+  // revoked API key, or a provider outage. Letting the raw error bubble turned
+  // all of those into a bare "Internal server error." with no way for the
+  // operator to tell what to do about it. Translate to a 502 that names the
+  // cause, and keep the real reason in the log.
+  let result: { data?: { urls?: { general?: { overview?: string } } } };
+  try {
+    result = (await paddleFetch(`/customers/${org.paddleCustomerId}/portal-sessions`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    })) as typeof result;
+  } catch (err) {
+    const detail = (err as Error).message;
+    logger.error("[billing] paddle portal session failed", {
+      organizationId: args.organizationId,
+      paddleCustomerId: org.paddleCustomerId,
+      err: detail,
+    });
+    // 404 from Paddle means this org's customer id isn't a real Paddle object —
+    // typically a seeded/imported org, or a customer deleted on Paddle's side.
+    if (/\s404:/.test(detail)) {
+      throw new ApiError(
+        502,
+        "paddle_customer_unknown",
+        "This workspace isn't linked to a live Paddle customer, so the billing portal can't be opened. " +
+          "This happens for accounts whose plan was granted directly (seeded or coupon-redeemed) rather than bought through checkout.",
+      );
+    }
+    throw new ApiError(
+      502,
+      "paddle_unavailable",
+      "Could not reach the billing provider. Please try again in a moment.",
+    );
+  }
+
   const url = result.data?.urls?.general?.overview;
-  if (!url) throw new Error("Paddle portal session returned no URL.");
+  if (!url) {
+    logger.error("[billing] paddle portal session returned no URL", {
+      organizationId: args.organizationId,
+    });
+    throw new ApiError(
+      502,
+      "paddle_unavailable",
+      "The billing provider did not return a portal link. Please try again in a moment.",
+    );
+  }
   return { url };
 }

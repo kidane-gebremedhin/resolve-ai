@@ -75,10 +75,6 @@ const PASSWORD_RULES: Array<[RegExp, string]> = [
 const PAID_ORG = { name: "Acme Support Co", slug: "acme-support-co" } as const;
 const PAID_PLAN = "business" as const;
 
-// Synthetic Paddle identifiers. They are NOT real Paddle objects — see the
-// caveat printed at the end of the run.
-const PADDLE_CUSTOMER_ID = "ctm_seed_acme_support_co";
-const PADDLE_SUBSCRIPTION_ID = "sub_seed_acme_support_co";
 
 // The platform admin's own workspace. It exists so the account has an org
 // context at all (see the note by PLATFORM_ADMIN), and it is subscribed for the
@@ -86,8 +82,6 @@ const PADDLE_SUBSCRIPTION_ID = "sub_seed_acme_support_co";
 // no active plan is redirected to /checkout, so an unpaid Platform HQ dumped the
 // platform admin on the plan picker instead of the dashboard.
 const ADMIN_ORG = { name: "Platform HQ", slug: "platform-hq" } as const;
-const ADMIN_PADDLE_CUSTOMER_ID = "ctm_seed_platform_hq";
-const ADMIN_PADDLE_SUBSCRIPTION_ID = "sub_seed_platform_hq";
 
 type SeedUser = {
     email: string;
@@ -163,11 +157,16 @@ async function upsertMembership(
     );
 }
 
-async function seedPaidSubscription(
-    organizationId: mongoose.Types.ObjectId,
-    paddleSubscriptionId = PADDLE_SUBSCRIPTION_ID,
-    paddleCustomerId = PADDLE_CUSTOMER_ID,
-) {
+// Seeded subscriptions carry NO Paddle identifiers.
+//
+// They used to be given synthetic ones ("ctm_seed_…"), which made
+// `hasPaddleCustomer` true on the billing page — so "Manage subscription" and
+// "Cancel subscription" rendered as working buttons, then failed against Paddle
+// because no such customer exists. Leaving the ids unset makes the UI tell the
+// truth: those buttons are disabled for a seeded workspace, exactly as they are
+// for a coupon-granted one. Marked `source: "coupon"` for the same reason —
+// this entitlement was granted directly, not bought through checkout.
+async function seedPaidSubscription(organizationId: mongoose.Types.ObjectId) {
     const now = new Date();
     const periodEnd = new Date(now);
     periodEnd.setMonth(periodEnd.getMonth() + 1);
@@ -176,19 +175,31 @@ async function seedPaidSubscription(
         { organizationId },
         {
             $set: {
-                paddleSubscriptionId,
-                paddleCustomerId,
                 plan: PAID_PLAN,
                 status: "active",
+                source: "coupon",
                 currentPeriodStart: now,
                 currentPeriodEnd: periodEnd,
                 billingInterval: "month",
             },
-            // A previous run (or a cancel test) may have left these set; clear them
-            // so the org reads as cleanly active.
-            $unset: { canceledAt: 1, cancelScheduledAt: 1, trialEndAt: 1 },
+            // Clear cancellation state from a previous run AND any synthetic
+            // Paddle ids left by older versions of this script.
+            $unset: {
+                canceledAt: 1,
+                cancelScheduledAt: 1,
+                trialEndAt: 1,
+                paddleSubscriptionId: 1,
+                paddleCustomerId: 1,
+                paddleData: 1,
+            },
         },
         { upsert: true, setDefaultsOnInsert: true },
+    );
+
+    // Older runs mirrored the fake customer id onto the Organization too.
+    await Organization.updateOne(
+        { _id: organizationId },
+        { $unset: { paddleCustomerId: 1, paddleSubscriptionId: 1 } },
     );
 }
 
@@ -250,11 +261,7 @@ async function main() {
     const passwordHash = await bcrypt.hash(PASSWORD, BCRYPT_COST);
 
     // --- Paid org ---------------------------------------------------------
-    const paidOrg = await upsertOrg(PAID_ORG, {
-        plan: PAID_PLAN,
-        paddleCustomerId: PADDLE_CUSTOMER_ID,
-        paddleSubscriptionId: PADDLE_SUBSCRIPTION_ID,
-    });
+    const paidOrg = await upsertOrg(PAID_ORG, { plan: PAID_PLAN });
     console.log(`🏢 Organization "${paidOrg.name}" (${PAID_PLAN}) — ${paidOrg._id}`);
 
     await seedPaidSubscription(paidOrg._id);
@@ -267,12 +274,8 @@ async function main() {
     }
 
     // --- Platform admin ---------------------------------------------------
-    const adminOrg = await upsertOrg(ADMIN_ORG, {
-        plan: PAID_PLAN,
-        paddleCustomerId: ADMIN_PADDLE_CUSTOMER_ID,
-        paddleSubscriptionId: ADMIN_PADDLE_SUBSCRIPTION_ID,
-    });
-    await seedPaidSubscription(adminOrg._id, ADMIN_PADDLE_SUBSCRIPTION_ID, ADMIN_PADDLE_CUSTOMER_ID);
+    const adminOrg = await upsertOrg(ADMIN_ORG, { plan: PAID_PLAN });
+    await seedPaidSubscription(adminOrg._id);
     const adminUser = await upsertUser(PLATFORM_ADMIN, passwordHash);
     await upsertMembership(adminUser._id, adminOrg._id, "owner");
     console.log(`👤 ${PLATFORM_ADMIN.email.padEnd(26)} platform_admin (owner of "${adminOrg.name}")`);
@@ -295,9 +298,11 @@ async function main() {
     console.log(`  Plan: ${PAID_PLAN} · websiteId: ${website._id} · agentId: ${agent._id}`);
     console.log("────────────────────────────────────────────────────────────");
     console.log(
-        "\n⚠️  The Paddle IDs are synthetic. Plan gating, quotas and the billing\n" +
-        "    summary read from Mongo and work; anything that calls Paddle live\n" +
-        "    (customer portal, upgrade/downgrade, cancel) will fail for this org.\n",
+        "\n⚠️  These plans are granted directly, with NO Paddle customer behind them.\n" +
+        "    Plan gating, quotas and the billing summary all read from Mongo and work.\n" +
+        "    The customer portal / upgrade / cancel buttons are disabled for these orgs\n" +
+        "    because there is nothing on Paddle's side to open — run a real sandbox\n" +
+        "    checkout if you need to exercise those flows.\n",
     );
 
     await mongoose.disconnect();
