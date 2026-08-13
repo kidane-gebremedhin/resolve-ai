@@ -4,6 +4,8 @@ import { api, ApiError } from "@/lib/api";
 import { auth } from "@/lib/auth";
 import { ManageSubscriptionButton } from "@/components/billing/plan-actions";
 import { BillingPlansGrid, type BillingCatalogEntry } from "@/components/billing/billing-plans-grid";
+import { CouponRedemption } from "@/components/billing/coupon-redemption";
+import { can } from "@/lib/permissions";
 
 type Subscription = {
   plan: "pro" | "business" | "enterprise" | null;
@@ -103,6 +105,15 @@ async function Page() {
           </div>
         </div>
       )}
+
+      {/* Lifetime-deal redemption. Self-hides at the top tier and for members
+          who can't change billing, so no dead control is ever rendered. */}
+      <div className="mt-6">
+        <CouponRedemption
+          currentPlan={plan}
+          canRedeem={can(session?.user?.membershipRole, "manageBilling")}
+        />
+      </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_320px]">
         <div className="rounded-xl border border-border bg-card p-5">

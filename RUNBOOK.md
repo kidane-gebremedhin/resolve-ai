@@ -198,6 +198,33 @@ pnpm --filter @csb/widget dev
 pnpm --filter @csb/embed dev    # embed loader on http://localhost:3002
 ```
 
+### 5.2 Seed LTD coupons (optional)
+
+`pnpm db:seed:coupons` creates eight lifetime-deal coupons covering every
+business-rule state, so redemption can be tested by hand without editing the
+database. Run `pnpm db:migrate` first — the coupon indexes (and the
+`Subscription.paddleSubscriptionId` rebuild to `unique + sparse`) come from it.
+
+| Code | Grants | What it exercises |
+|------|--------|-------------------|
+| `SEED-HAPPY-BIZ` | business | succeeds |
+| `SEED-HAPPY-PRO` | pro | succeeds on an unpaid org; refused on business/enterprise (no downgrade) |
+| `SEED-HAPPY-ENT` | enterprise | upgrades an org already on business |
+| `SEED-INACTIVE` | business | "This coupon is no longer active" |
+| `SEED-FUTURE` | business | "This coupon is not yet valid" |
+| `SEED-EXPIRED` | business | "This coupon has expired" |
+| `SEED-SOLDOUT` | business | "This coupon has reached its maximum number of uses" |
+| `SEED-LASTSLOT` | enterprise | one slot only — race two redemptions, exactly one wins |
+
+Redeem at **/app/billing** as an **owner or admin**. Agents and viewers get 403:
+a coupon changes what the workspace pays for, so it sits behind the same guard as
+every other billing route. Manage codes at **LTD Coupons** in the admin app
+(port 3003, under Revenue).
+
+Re-running restores every coupon to its intended state and clears the seeded
+codes' redemption history, so a manual pass can be repeated. See
+[`__specs/36-ltd-coupons.md`](__specs/36-ltd-coupons.md) for the design.
+
 ## 6.1 Visitor console (fastest way to create a conversation)
 
 [`test-visitor.html`](test-visitor.html) is a dependency-free page that talks to

@@ -3,8 +3,20 @@ import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 const subscriptionSchema = new Schema(
   {
     organizationId: { type: Schema.Types.ObjectId, ref: "Organization", required: true, unique: true },
-    paddleSubscriptionId: { type: String, required: true, unique: true },
-    paddleCustomerId: { type: String, required: true },
+    // Paddle identifiers are absent for coupon-granted (lifetime-deal)
+    // subscriptions, which never touch the payment provider — hence optional and
+    // a SPARSE unique index, so many coupon subscriptions can coexist without
+    // colliding on a null `paddleSubscriptionId`. Paddle-sourced rows always set
+    // both (see billing.service).
+    paddleSubscriptionId: { type: String, unique: true, sparse: true },
+    paddleCustomerId: { type: String },
+    // How this subscription came to exist. Drives the billing UI: a "coupon" row
+    // has no Paddle object behind it, so the customer portal / upgrade / cancel
+    // actions must not be offered for it.
+    source: { type: String, enum: ["paddle", "coupon"], required: true, default: "paddle" },
+    // Provenance for a coupon-granted subscription (null for Paddle rows).
+    couponId: { type: Schema.Types.ObjectId, ref: "Coupon" },
+    couponCode: { type: String },
     plan: { type: String, enum: ["pro", "business", "enterprise"], required: true },
     status: {
       type: String,

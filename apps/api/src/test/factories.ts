@@ -51,7 +51,10 @@ export async function createOrgWithOwner(
   input: RegisterInput = {},
 ): Promise<RegisteredOwner> {
   const email = input.email ?? `${unique("user")}@example.com`;
-  const password = input.password ?? "password1234";
+  // Must satisfy `strongPassword` in auth.routes.ts (>=8 chars, lower, upper,
+  // number, special). The old default ("password1234") predated that policy and
+  // made every factory-backed test fail at registration with a 400.
+  const password = input.password ?? "Password1234!";
   const name = input.name ?? "Test User";
   const organizationName = input.organizationName ?? unique("Org");
 

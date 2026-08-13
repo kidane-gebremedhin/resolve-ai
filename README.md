@@ -73,6 +73,7 @@ account list and caveats.
 | `pnpm test` · `pnpm lint` · `pnpm type-check` | Test / lint / typecheck across the monorepo |
 | `pnpm db:migrate` | Sync MongoDB indexes |
 | `pnpm db:seed` | Seed manual-QA accounts (all roles + a paid org) |
+| `pnpm db:seed:coupons` | Seed LTD coupons in every rule state (see RUNBOOK §5.2) |
 | `pnpm verify:env` · `pnpm verify:assets` | Validate env vars / landing-page assets |
 
 ---

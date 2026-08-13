@@ -76,6 +76,11 @@ router.get("/subscription", requireAuth, requireOrg, requireOrgRole("admin"), as
     plan: sub?.plan ?? org?.plan ?? null,
     status: sub?.status ?? "none",
     active,
+    // How the entitlement was obtained. A "coupon" subscription has no Paddle
+    // object behind it, so the billing UI must not offer portal/cancel for it
+    // (the paddleCustomerId below is null for those, which already drives that).
+    source: sub?.source ?? "paddle",
+    couponCode: sub?.couponCode ?? null,
     billingInterval,
     paddleSubscriptionId: sub?.paddleSubscriptionId ?? null,
     paddleCustomerId: sub?.paddleCustomerId ?? null,

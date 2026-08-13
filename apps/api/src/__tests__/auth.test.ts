@@ -17,7 +17,7 @@ describe("auth flow", () => {
   it("POST /auth/register creates user + org + membership and returns tokens", async () => {
     const res = await request(app).post("/api/v1/auth/register").send({
       email: "owner@example.com",
-      password: "supersecret",
+      password: "Supersecret1!",
       name: "Owner One",
       organizationName: "Owner Org",
     });
@@ -41,7 +41,7 @@ describe("auth flow", () => {
     await createOrgWithOwner(app, { email: "dup@example.com" });
     const res = await request(app).post("/api/v1/auth/register").send({
       email: "dup@example.com",
-      password: "anothersecret",
+      password: "Anothersecret1!",
       name: "Dup User",
       organizationName: "Dup Org",
     });
@@ -52,7 +52,7 @@ describe("auth flow", () => {
   it("POST /auth/login with wrong password → 401", async () => {
     await createOrgWithOwner(app, {
       email: "loginer@example.com",
-      password: "correctpass1",
+      password: "Correctpass1!",
     });
     const res = await request(app).post("/api/v1/auth/login").send({
       email: "loginer@example.com",
@@ -65,11 +65,11 @@ describe("auth flow", () => {
   it("POST /auth/login with correct password issues fresh tokens", async () => {
     await createOrgWithOwner(app, {
       email: "ok@example.com",
-      password: "rightpass1",
+      password: "Rightpass1!",
     });
     const res = await request(app).post("/api/v1/auth/login").send({
       email: "ok@example.com",
-      password: "rightpass1",
+      password: "Rightpass1!",
     });
     expect(res.status).toBe(200);
     expect(typeof res.body.accessToken).toBe("string");

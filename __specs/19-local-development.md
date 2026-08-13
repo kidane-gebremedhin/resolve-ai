@@ -201,6 +201,7 @@ docker compose -f docker-compose.full.yml up --build
 
     "db:migrate": "pnpm --filter @csb/api db:migrate",
     "db:seed": "pnpm --filter @csb/api db:seed",
+    "db:seed:coupons": "pnpm --filter @csb/api db:seed:coupons",
 
     "verify:assets": "node scripts/verify-assets.mjs",
     "verify:env": "node scripts/verify-env.mjs",
@@ -216,6 +217,7 @@ docker compose -f docker-compose.full.yml up --build
 | `pnpm dev:full` | Build and run all four apps as containers — pre-push validation |
 | `pnpm db:migrate` | Sync Mongoose indexes on all models |
 | `pnpm db:seed` | Seed manual-QA accounts — every role + a paid org (see §6.1) |
+| `pnpm db:seed:coupons` | Seed LTD coupons in every rule state (see [36-ltd-coupons](36-ltd-coupons.md)) |
 | `pnpm verify:assets` | Fail-fast check that every file in `apps/web/public/` is referenced |
 | `pnpm verify:env` | Validate `.env` matches `.env.example` and required vars are set |
 

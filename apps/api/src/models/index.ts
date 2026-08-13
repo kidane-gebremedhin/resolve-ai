@@ -30,3 +30,5 @@ export { ToolCallLog, type ToolCallLogDocType } from "./ToolCallLog.js";
 export { KnowledgeGap, type KnowledgeGapDocType } from "./KnowledgeGap.js";
 export { ProactiveTrigger, type ProactiveTriggerDocType } from "./ProactiveTrigger.js";
 export { ContactMessage, type ContactMessageDocType } from "./ContactMessage.js";
+export { Coupon, type CouponDocType } from "./Coupon.js";
+export { CouponRedemption, type CouponRedemptionDocType } from "./CouponRedemption.js";

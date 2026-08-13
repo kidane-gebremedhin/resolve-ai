@@ -23,6 +23,8 @@ import triggers from "./triggers.routes.js";
 import voice from "./voice.routes.js";
 import notifications from "./notification.routes.js";
 import debug from "./debug.routes.js";
+import coupons from "./coupon.routes.js";
+import adminCoupons from "./admin-coupons.routes.js";
 
 const router = Router();
 
@@ -44,7 +46,11 @@ router.use("/widget", widget);
 router.use("/widget-settings", widgetSettings);
 router.use("/sections", section);
 router.use("/contacts", contact);
+// Mounted BEFORE the general admin router so /admin/coupons resolves to the
+// dedicated coupon router rather than falling through admin.routes' handlers.
+router.use("/admin/coupons", adminCoupons);
 router.use("/admin", admin);
+router.use("/coupons", coupons);
 router.use("/billing", billing);
 router.use("/tts", tts);
 router.use("/api-keys", apiKeys);

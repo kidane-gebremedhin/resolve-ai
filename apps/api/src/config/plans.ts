@@ -5,6 +5,25 @@
 
 export type Plan = "pro" | "business" | "enterprise";
 
+// The plan keys as a runtime array, for schema enums and validators that must
+// not drift from the `Plan` union. Typed so adding a Plan without adding it here
+// is a compile error.
+export const PLAN_KEYS = ["pro", "business", "enterprise"] as const satisfies readonly Plan[];
+
+// Ordering used wherever "is this an upgrade?" has to be decided — plan changes
+// in billing.service and the coupon rule that redeeming must never downgrade an
+// organization. An org with no plan ranks 0, below every purchasable tier.
+//
+// Always compare through `planRank()`; never chain `if` comparisons on plan
+// strings, and never compare against a value outside `Plan`.
+export const PLAN_RANK: Record<Plan, number> = { pro: 1, business: 2, enterprise: 3 };
+
+/** Rank of a plan value; 0 for null/undefined/unrecognised (i.e. unsubscribed). */
+export function planRank(plan: string | null | undefined): number {
+  if (!plan) return 0;
+  return PLAN_RANK[plan as Plan] ?? 0;
+}
+
 // Internal key → display name mapping (used by admin utils + subscription table).
 export const PLAN_DISPLAY_NAMES: Record<Plan, string> = {
   pro: "Pro",
