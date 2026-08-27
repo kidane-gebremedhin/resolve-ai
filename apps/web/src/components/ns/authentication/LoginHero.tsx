@@ -19,6 +19,10 @@ const LoginHero = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  // Revealed only after the API says this account has 2FA. Asking every user
+  // for a code up front would confuse the large majority who have none.
+  const [totpRequired, setTotpRequired] = useState(false);
+  const [code, setCode] = useState('');
   const [pending, setPending] = useState(false);
 
   // An expired session is context for the page the user just landed on, not the
@@ -34,9 +38,24 @@ const LoginHero = () => {
     const result = await signIn('credentials', {
       email,
       password,
+      code,
       redirect: false,
     });
     setPending(false);
+
+    if (result?.code === 'totp_required') {
+      // Password was correct — this is a prompt, not a failure, so it must not
+      // read like one.
+      setTotpRequired(true);
+      toast.info('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
+    if (result?.code === 'invalid_totp') {
+      setTotpRequired(true);
+      setCode('');
+      toast.error('That code is not valid. Try again, or use a recovery code.');
+      return;
+    }
     if (!result || result.error) {
       toast.error('Invalid email or password.');
       return;
@@ -89,6 +108,35 @@ const LoginHero = () => {
                   </button>
                 </div>
               </fieldset>
+              {totpRequired && (
+                <fieldset className="mb-4">
+                  <label
+                    htmlFor="totp-code"
+                    className="block text-tagline-2 font-medium text-foreground select-none"
+                  >
+                    Two-factor code
+                  </label>
+                  <input
+                    type="text"
+                    id="totp-code"
+                    name="code"
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    className="auth-form-input mt-2 tracking-[0.3em]"
+                    placeholder="123456"
+                    // Pulls the code straight from an SMS/authenticator autofill
+                    // and brings up the numeric keypad on mobile.
+                    autoComplete="one-time-code"
+                    inputMode="numeric"
+                    maxLength={32}
+                    autoFocus
+                    required
+                  />
+                  <p className="mt-1.5 text-tagline-3 text-secondary/60">
+                    Open your authenticator app, or enter one of your recovery codes.
+                  </p>
+                </fieldset>
+              )}
               <div className="flex items-center justify-between">
                 <div>
                   <label className="inline-flex items-center gap-2 cursor-pointer">
@@ -107,7 +155,7 @@ const LoginHero = () => {
                   disabled={pending}
                   className="btn btn-md btn-primary hover:btn-secondary dark:hover:btn-accent w-full before:content-none first-letter:uppercase disabled:opacity-60"
                 >
-                  {pending ? 'Logging in…' : 'Log In'}
+                  {pending ? 'Logging in…' : totpRequired ? 'Verify code' : 'Log In'}
                 </button>
               </div>
             </form>

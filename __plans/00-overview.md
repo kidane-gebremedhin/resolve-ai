@@ -33,6 +33,7 @@
 | 18 ✅ | [`18-trust-compliance-voice.md`](./18-trust-compliance-voice.md) | **Tiers 5–6.** PII redaction · Audit trail UI · Transcript export · Data residency stub · Widget rate limiting + abuse detection · Browser-mic voice · Twilio phone bridge | piiMask extensions; widgetRateLimit middleware; ToolCallLog audit UI; S3 transcript export; stt.service + tts.service; voice routes; Twilio WebSocket handler | 34 |
 
 | 19 ✅ | [`19-error-monitoring-sentry.md`](./19-error-monitoring-sentry.md) | **Ops.** Sentry SDKs for the API and web app · `/sentry-example-page` production smoke test · build-arg + Coolify wiring | instrument.ts (API, first import); setupExpressErrorHandler; debug.routes.ts; instrumentation-client.ts; sentry.{server,edge}.config.ts; global-error.tsx; withSentryConfig | 35 |
+| 20 | [`20-langgraph-refactor.md`](./20-langgraph-refactor.md) | **Architecture.** Replace the hand-rolled agent with a LangGraph `StateGraph` · LangChain tools/retriever/embeddings · LCEL side chains · single chat-model factory over OpenRouter · optional LangSmith tracing | `services/ai/{llm,retrieval,tools,graph,chains,shared}`; agent/tools/finalize nodes; input gate; engine facade; graph + gate + controls tests | 05, 13 |
 
 > **Post-v1 phases (5–12)** are independent enhancement tracks from the product backlog, not strictly sequential like Phases 0–4. Phase 8 (affiliate) benefits from Phase 7 (plan catalog) landing first.
 >

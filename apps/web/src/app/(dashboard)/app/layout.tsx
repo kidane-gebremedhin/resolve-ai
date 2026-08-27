@@ -24,13 +24,21 @@ async function safeGet<T>(path: string): Promise<T | null> {
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Hard subscription gate: no dashboard access without an active paid plan.
   // Unpaid orgs are sent to checkout (the only post-signup destination).
+  //
+  // `past_due` is deliberately let through. It is a grace state, not an unpaid
+  // one: the provider is still retrying a card that failed, and the customer
+  // has already paid for the period they are in. Bouncing them to checkout
+  // would also strand them, because the "update your payment method" banner
+  // and the billing history that explains the failure both live at
+  // /app/billing, behind this very gate. They get in, and the banner is loud.
   const sub = await safeGet<{
     active?: boolean;
     plan?: string;
     status?: string;
     cancelScheduledAt?: string | null;
   }>('/billing/subscription');
-  if (!sub?.active) {
+  const inGracePeriod = sub?.status === 'past_due';
+  if (!sub?.active && !inGracePeriod) {
     redirect('/checkout');
   }
   // A scheduled cancel-at-period-end (still active) surfaces a warning on the header plan pill.

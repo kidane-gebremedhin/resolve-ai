@@ -116,7 +116,7 @@ export function OtpBlockRenderer({
       className="w-full max-w-xs rounded-xl border border-neutral-200 bg-white p-4 shadow-sm dark:border-neutral-700 dark:bg-neutral-900"
     >
       <p className="mb-2 text-sm font-semibold text-neutral-900 dark:text-neutral-100">
-        Verify it's you
+        Verify it&apos;s you
       </p>
       <p className="mb-3 text-xs text-neutral-600 dark:text-neutral-400">
         {block.message ?? "Enter the 6-digit code we emailed you."}

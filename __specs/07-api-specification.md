@@ -491,9 +491,15 @@ Paddle webhook receiver.
 | Field | Value |
 |-------|-------|
 | Auth | Paddle signature verification |
-| Events handled | `subscription.created`, `subscription.updated`, `subscription.canceled`, `subscription.past_due`, `transaction.completed` |
-| Response `200` | `{ received: true }` |
-| Side effects | Update `subscriptions` and `organizations.plan`  |
+| Events handled | **subscription.\*** → entitlement (`subscription.created/updated/canceled/past_due/…`)<br>**transaction.\*** → payment ledger (`transaction.billed/paid/completed/payment_failed/past_due/updated`)<br>**adjustment.\*** → refunds and chargebacks (`adjustment.created/updated`) |
+| Response `204` | No content |
+| Idempotency | `ProcessedWebhook` (`eventId` unique) is claimed **before** the event family is inspected, so it is consumed exactly once per event id no matter which handler runs |
+| Side effects | Updates `subscriptions`, `organizations.plan` (subscription events only), and `payments` (transaction and adjustment events only) |
+
+> Refunds and chargebacks are **not** `transaction.*` events in Paddle Billing.
+> They arrive as `adjustment.created` / `adjustment.updated` with an `action` of
+> `refund`, `chargeback`, `chargeback_reverse` or `chargeback_warning`, and are
+> applied only when the adjustment's own `status` is `approved`.
 
 ### `GET /api/v1/billing/subscription`
 Get current org subscription status.
@@ -502,6 +508,35 @@ Get current org subscription status.
 |-------|-------|
 | Auth | Bearer JWT |
 | Response `200` | `{ subscription, plan, usage: { aiMessages, kbSources } }` |
+
+### `GET /api/v1/billing/payments`
+Billing history: one row per payment attempt at the provider, newest first.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Query | `limit` (default 50, max 200) |
+| Response `200` | `{ payments: [{ id, status, amount, currency, tax, description, occurredAt, invoiceUrl, receiptUrl, failureReason, paymentMethod: { type, last4, brand } }] }` |
+| Notes | `amount` and `tax` are in **minor units** (cents), as the provider reports them. Read-only: the ledger is written only by the webhook path |
+
+### `GET /api/v1/billing/payments/:id/invoice`
+Mint a customer-facing invoice PDF link for one payment.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (owner/admin) |
+| Response `200` | `{ url }` |
+| Errors | `400 no_invoice` when the payment never billed (failed or pending); `404` when the payment does not belong to the caller's org; `502 paddle_unavailable` |
+| Notes | The URL is minted per request and **expires after an hour**, so it is never stored on the payment row. `hasInvoice` on the list response says whether a row can produce one |
+
+### `GET /api/v1/billing/payments/latest`
+The most recent payment attempt for the org.
+
+| Field | Value |
+|-------|-------|
+| Auth | Bearer JWT (any org member) |
+| Response `200` | `{ payment: PaymentRow \| null }` |
+| Purpose | The checkout pending page polls this alongside `/billing/subscription`, so a declined card surfaces as `failed` immediately instead of spinning until the poll gives up |
 
 ### `POST /api/v1/billing/checkout`
 Generate a Paddle checkout link.
@@ -618,14 +653,12 @@ Delete a section.
 
 ## Analytics Routes (Dashboard)
 
-### `GET /api/v1/analytics/overview`
-Dashboard analytics overview.
-
-| Field | Value |
-|-------|-------|
-| Auth | Bearer JWT |
-| Query | `?websiteId=xxx&period=7d|30d|90d` |
-| Response `200` | `{ totalConversations, resolvedCount, escalatedCount, avgResponseTime, aiMessages, operatorMessages, topKBQueries: [...] }` |
+> **Corrected.** This section previously documented `GET /analytics/overview`
+> and `GET /analytics/conversations`. **Neither exists**, neither has ever been
+> implemented, and no client calls either — the dashboard is built from the
+> endpoints below. They were left in the spec long enough to be referenced from
+> four other spec files. A spec that names endpoints the code does not serve is
+> worse than an incomplete one, because it is what a regeneration builds from.
 
 ### `GET /api/v1/analytics/volume` (Changelog 3)
 Message + knowledge-source volume **scoped to the selected filters**, so the analytics
@@ -644,14 +677,157 @@ site's agents.
 > `?from&to|days` (window on `updatedAt`) and `?websiteId` (resolved to the website's
 > agent ids, since gaps are keyed by agent).
 
-### `GET /api/v1/analytics/conversations`
-Conversation analytics over time.
+### `GET /api/v1/analytics/conversations-daily`
+Conversation counts per day, server-aggregated.
 
 | Field | Value |
 |-------|-------|
 | Auth | Bearer JWT |
-| Query | `?websiteId=xxx&period=30d&granularity=day` |
-| Response `200` | `{ data: [{ date, conversations, resolved, escalated }] }` |
+| Query | `?from&to` or `?days=N`, optional `&websiteId=` / `&agentId=` |
+| Response `200` | `{ points: [{ date, total, resolved, aiResolved, escalated }], days }` |
+
+### `GET /api/v1/analytics/csat-ratings`
+Individual CSAT star ratings with comments, for the feedback detail view.
+
+| Field | Value |
+|-------|-------|
+| Query | `?from&to` or `?days=N`, optional `&websiteId=`, `&limit=` (1-300, default 100) |
+| Response `200` | `{ items: [{ _id, conversationId, stars, comment, createdAt }] }` |
+
+### `GET /api/v1/analytics/low-rated-answers`
+Most recent thumbs-down feedback, enriched with the message content.
+
+| Field | Value |
+|-------|-------|
+| Query | `?from&to` or `?days=N`, optional `&websiteId=`, `&limit=` (1-200, default 50) |
+| Response `200` | `{ items: [{ _id, messageId, conversationId, reason, createdAt, messageContent }] }` |
+
+### `GET /api/v1/analytics/tool-calls`
+Integration tool-call audit trail from `ToolCallLog`.
+
+| Field | Value |
+|-------|-------|
+| Query | `?from&to` or `?days=N`, optional `&websiteId=` / `&agentId=` |
+| Response `200` | `{ items: [...], summary: { total, byStatus } }` |
+
+---
+
+## RAG Metrics Routes (Dashboard — Private)
+
+Read-only production RAG quality, backing the **RAG Quality** page
+([`11-page-wiremap.md`](11-page-wiremap.md)) over the `RagTurnMetric` collection
+from [`39-rag-evaluation.md`](39-rag-evaluation.md).
+
+Shared across every route below:
+
+| | |
+|---|---|
+| Auth | Bearer JWT, `requireAuth` + `requireOrg` |
+| Scope | Organization is stamped from the token, **never** from the query string. `?agentId` / `?websiteId` can only NARROW that scope; an agent id belonging to another org is rejected before it reaches a `$match` |
+| Query | `?from=YYYY-MM-DD&to=YYYY-MM-DD` or `?days=N` (1-365, default 30), optional `&agentId=` or `&websiteId=` |
+| Aggregation | Server-side MongoDB pipelines only, every one index-backed. `rag-metrics.test.ts` runs the real endpoints under MongoDB's profiler and fails on a `COLLSCAN` |
+| Nulls | A metric with no data is `null`, never `0`. The two are different facts and the UI renders them differently |
+
+### `GET /api/v1/rag-metrics/summary`
+Header KPIs with a period-over-period delta against the window of equal length
+immediately before the selected one.
+
+| Field | Value |
+|-------|-------|
+| Response `200` | `{ range, previousRange, current, previous, deltas }` |
+| `current` / `previous` | `{ turns, faithfulness, faithfulnessSamples, meanConfidence, meanRetrievalConfidence, noHitRate, lowConfidenceRate, escalationRate, conflictRate, p50LatencyMs, p95LatencyMs, costPerConversation, totalCostUsd, pricedConversations }` |
+| `deltas` | `{ faithfulness, meanConfidence, noHitRate, escalationRate, p95LatencyMs, costPerConversation }`, each in the metric's own units, or `null` when either period has no data |
+
+Cost sums **priced turns only**, and the conversation denominator is built from
+the same turns, so the ratio is a cost per *priced* conversation. A turn
+OpenRouter never resolved is unknown, not free.
+
+### `GET /api/v1/rag-metrics/retrieval`
+Recall@K, Precision@K and MRR at K = 3, 5, 10, plus the score histogram.
+
+| Field | Value |
+|-------|-------|
+| Response `200` | `{ minScoreThreshold, bucketWidth, ks, scoredTurns, totalTurns, recallAtK, precisionAtK, mrr, meanTopScore, noHitRate, widenOnEmptyRate, p50LatencyMs, p95LatencyMs, distribution }` |
+| `distribution` | `[{ from, to, count }]`, 20 buckets of 0.05 over `retrieval.topScore`, bucketed by `$bucket` |
+| `minScoreThreshold` | The live `AI_KB_SEARCH_MIN_SCORE`, so the page draws its threshold line from running config rather than a hardcoded copy |
+
+Scored against the sources the reply cited, standing in for the offline
+harness's declared relevant set. Turns that cited nothing are excluded from
+`scoredTurns`, never counted as zero.
+
+### `GET /api/v1/rag-metrics/generation`
+Confidence and sampled faithfulness over time, grounding rates, thumbs, and
+unsupported-claim examples.
+
+| Field | Value |
+|-------|-------|
+| Query | plus `?examples=N` (1-50, default 10) |
+| Response `200` | `{ meanConfidence, faithfulness, faithfulnessSamples, escalationRate, citationRate, citationsPerAnswer, thumbs, daily, unsupportedExamples }` |
+| `thumbs` | `{ up, down, total, helpfulness }` from `MessageFeedback` |
+| `daily` | `[{ date, turns, confidence, faithfulness, faithfulnessSamples }]`, faithfulness `null` on days nothing was sampled |
+| `unsupportedExamples` | `[{ conversationId, messageId, query, score, createdAt, claims: [{ claim, verdict, reason }] }]` |
+
+### `GET /api/v1/rag-metrics/cost`
+Tokens, USD and end-to-end latency over time.
+
+| Field | Value |
+|-------|-------|
+| Response `200` | `{ totals: { turns, pricedTurns, promptTokens, completionTokens, costUsd, pricedShare, costPerTurn }, daily: [{ date, turns, pricedTurns, promptTokens, completionTokens, costUsd, p50LatencyMs, p95LatencyMs }] }` |
+
+`pricedShare` is reported so a suspiciously low total can be told apart from a
+window OpenRouter never resolved.
+
+### `GET /api/v1/rag-metrics/failing-queries`
+Highest-volume queries that found nothing or answered with low confidence.
+
+| Field | Value |
+|-------|-------|
+| Query | plus `?limit=N` (1-100, default 20) |
+| Response `200` | `{ items: [{ query, turns, noHits, lowConfidence, meanConfidence, meanTopScore, lastSeen, conversationId, gap }] }` |
+| `gap` | The matching `KnowledgeGap`, or `null` |
+
+The gap join runs in the API rather than as a `$lookup`: `originalQuery` is
+masked before it is persisted and `KnowledgeGap.queryUsed` is not, so joining on
+raw text would silently miss every query containing an email address or a card
+number. The gap side is masked here so the join is exact for those too.
+
+### `GET /api/v1/rag-metrics/source-health`
+Per-source retrieval, dead weight, and ingestion failures.
+
+| Field | Value |
+|-------|-------|
+| Query | plus `?limit=N` (1-200, default 50) |
+| Response `200` | `{ top, neverRetrieved, totals, ingestion }` |
+| `top` | `[{ sourceId, title, type, embeddingStatus, retrievalCount, topRankCount, meanTopScore, lastRetrieved }]` |
+| `neverRetrieved` | Sources with `embeddingStatus: "synced"` that no turn in the window retrieved |
+| `ingestion` | P8's `ingestionHealth` — a source that never indexed cannot be retrieved, and looks identical to dead weight on a relevance panel alone |
+
+`meanTopScore` averages only the turns where the source ranked **first**. The
+turn's top score belongs to the top-ranked source, so crediting every source in
+a turn with it would be wrong; excluding them is exact.
+
+### `GET /api/v1/rag-metrics/eval-runs`
+The last offline harness reports, read from `RAG_EVAL_REPORTS_DIR`.
+
+| Field | Value |
+|-------|-------|
+| Query | `?limit=N` (1-50, default 10) |
+| Response `200` | `{ available, runs: [{ file, startedAt, finishedAt, dataset, answeringModel, judgeModel, cases, errored, retrieval, generation, operational }] }` |
+
+`available: false` with an empty list when the directory is absent, which is the
+normal case for a deployment shipping only the API image. An unparseable report
+is skipped, not fatal.
+
+### `GET /api/v1/rag-metrics/definitions`
+The plain-language definition behind every tile's tooltip.
+
+| Field | Value |
+|-------|-------|
+| Response `200` | `{ definitions: { [key]: { label, definition, note?, example?, spec } } }` |
+
+Served rather than duplicated in the web app so the page and the offline report
+cannot drift. `rag-metrics.test.ts` parses the metric tables in
+[`39-rag-evaluation.md`](39-rag-evaluation.md) and fails if a word differs.
 
 ---
 

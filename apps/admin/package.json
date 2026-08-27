@@ -130,6 +130,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@csb/config": "workspace:*",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

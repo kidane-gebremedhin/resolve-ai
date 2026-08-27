@@ -33,6 +33,15 @@ export interface StorageAdapter {
    * to streaming the object through the API route.
    */
   presignGetUrl?(key: string, expirySeconds?: number): Promise<string | null>;
+  /**
+   * Delete every object under a key prefix, returning how many went.
+   *
+   * Exists for account deletion. Keys are `org/<orgId>/…` by contract, so a
+   * prefix delete is how "erase this tenant's files" is expressed — and without
+   * it, `DELETE /orgs/current` could purge the database and the vector store
+   * while leaving every uploaded attachment on disk, which is not a deletion.
+   */
+  deleteByPrefix(prefix: string): Promise<number>;
 }
 
 export { MinioAdapter } from "./minio.adapter.js";

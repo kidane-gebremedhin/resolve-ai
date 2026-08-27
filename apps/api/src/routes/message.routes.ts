@@ -9,7 +9,7 @@ import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { enforceOrgBudget } from "../middleware/budget-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
-import { enhanceDraft } from "../services/ai/enhance.service.js";
+import { enhanceDraft } from "../services/ai/chains/enhance.chain.js";
 import { env } from "../config/env.js";
 import {
   attachmentUpload,

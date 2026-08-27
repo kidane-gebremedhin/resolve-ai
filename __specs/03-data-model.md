@@ -323,6 +323,89 @@ escalated → active (operator reopens)
 
 ---
 
+### 11b. `payments`
+
+Transaction-level ledger. `subscriptions` holds the **current entitlement**;
+this holds **what the customer was actually charged**. The two are written by
+different paths on purpose: subscription events own the `organizations.plan`
+entitlement mirror, and payment events never touch it, so a declined card raises
+a dunning banner rather than revoking access the provider is still retrying.
+
+`rawPayload` stores the entire webhook event rather than a trimmed copy. When a
+charge is disputed months later, the argument is settled by what the provider
+actually sent at the time, not by our interpretation of it.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_id` | `ObjectId` | auto | Primary key |
+| `organizationId` | `ObjectId` | ✅ | Ref → `organizations` |
+| `subscriptionId` | `ObjectId` | — | Ref → `subscriptions`. Null for one-off charges, or when Paddle sends the transaction before the subscription link lands |
+| `provider` | `string` | ✅ | `paddle` |
+| `providerTransactionId` | `string` | ✅ | Paddle `txn_…`. **Unique**, and the key every write upserts on — this is what makes replayed deliveries converge on one row |
+| `providerInvoiceId` | `string` | — | Paddle `inv_…` / invoice number |
+| `status` | `string` | ✅ | `pending` / `completed` / `failed` / `refunded` / `partially_refunded` / `disputed` |
+| `amount` | `number` | ✅ | **Minor units** (cents), as the provider reports them. Never a float |
+| `currency` | `string` | ✅ | ISO 4217 |
+| `tax` | `number` | — | Minor units |
+| `discount` | `number` | — | Minor units |
+| `couponCode` | `string` | — | |
+| `billingPeriod.start` / `.end` | `Date` | — | The period this charge covers |
+| `paymentMethod.type` / `.last4` / `.brand` | `string` | — | From `data.payments[].method_details` |
+| `invoiceUrl` / `receiptUrl` | `string` | — | Provider-hosted documents |
+| `failureReason` | `string` | — | Decline code on a failure, chargeback reason on a dispute |
+| `occurredAt` | `Date` | ✅ | When the **provider** says it happened, not when we processed it. Billing history sorts on this so a delayed delivery still reads correctly |
+| `lastEventType` | `string` | — | Last event applied to this row |
+| `lastEventOccurredAt` | `Date` | — | Drives the out-of-order guard: an older event may not overwrite a newer outcome |
+| `adjustment` | `object` | — | Set when a refund or chargeback lands: `{ id, action, type, reason, amount, occurredAt, raw }`. Kept **beside** `rawPayload`, since a dispute is argued from both the original charge and the adjustment |
+| `rawPayload` | `object` | ✅ | The complete webhook event, for dispute resolution |
+| `createdAt` / `updatedAt` | `Date` | auto | |
+
+**Indexes:**
+- `{ providerTransactionId: 1 }` — unique (idempotency + upsert key)
+- `{ organizationId: 1, occurredAt: -1 }` — billing history, newest first
+- `{ organizationId: 1, status: 1 }` — dunning and reconciliation sweeps
+
+---
+
+### 11c. `kbchunks`
+
+The durable, queryable copy of every knowledge-base chunk. Two jobs, and the
+second is why the first was affordable:
+
+1. **Lexical retrieval.** A `$text` index catches exact rare tokens (order ids,
+   error codes, SKUs, clause numbers) that dense vectors have no signal for.
+2. **Chunk text stops living only in Pinecone metadata**, where it was truncated
+   at 8000 characters and served as retrieval's source of truth. A vector store
+   is an index, not a database.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_id` | `ObjectId` | auto | |
+| `organizationId` | `ObjectId` | ✅ | Ref → `organizations` |
+| `agentId` | `ObjectId` | ✅ | Ref → `agents`. Knowledge is keyed by (org, agent) and every query scopes to both |
+| `sourceId` | `ObjectId` | ✅ | Ref → `knowledgeSources` |
+| `chunkIndex` | `number` | ✅ | Position within the source |
+| `chunkId` | `string` | ✅ | `<sourceId>:<chunkIndex>`, **unique**, identical to the Pinecone vector id — this is what lets the two legs fuse without a join |
+| `text` | `string` | ✅ | The chunk as it appears in the document. **Never truncated** |
+| `headingPath` | `string[]` | — | Heading stack above the chunk, outermost first |
+| `url` | `string` | — | Per-page attribution for website sources |
+| `tokenCount` | `number` | — | Rough (4 chars ≈ 1 token), for context-budget accounting |
+| `createdAt` / `updatedAt` | `Date` | auto | |
+
+**Indexes:**
+- `{ chunkId: 1 }` — unique; the fusion join key
+- `{ text: "text", headingPath: "text" }` weighted 1 / 3 — lexical retrieval. A
+  single text index per collection is a MongoDB limit, so the heading path is
+  folded in rather than indexed separately
+- `{ organizationId: 1, agentId: 1 }` — every lexical query filters on both
+  before scoring
+- `{ sourceId: 1, chunkIndex: 1 }` — re-ingest replaces a source's chunks
+
+Deleting a source deletes its chunks: leaving them would keep a deleted document
+lexically retrievable.
+
+---
+
 ### 12. `sections`
 
 Widget navigation sections (quick links/topics).
@@ -390,6 +473,81 @@ Deduplication guard — ensures each budget threshold email is sent at most once
 **Indexes:**
 - `{ entityId: 1, period: 1, threshold: 1 }` — unique (prevents duplicate sends)
 - `{ sentAt: 1 }` — TTL index (90 days)
+
+---
+
+### 14b. `ragturnmetrics`
+
+Per-turn RAG telemetry: what retrieval found and what generation did with it.
+One document per customer turn, written fire-and-forget **after** the reply has
+been persisted and emitted.
+
+[`39-rag-evaluation.md`](39-rag-evaluation.md) scores a fixed golden set
+offline. This collection answers the question that harness structurally cannot:
+is the pipeline good *right now*, on the questions real customers are asking,
+against the knowledge base this org actually wrote. A fixture set ages the moment
+an operator uploads a document.
+
+Shaped deliberately after `toolcalllogs` — same scoping, same masked-before-
+persist rule, same `durationMs` and status enum, same `updatedAt: false`, same
+TTL. Two telemetry collections with two sets of conventions is how a dashboard
+ends up joining on nothing.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `_id` | `ObjectId` | auto | |
+| `organizationId` | `ObjectId` | ✅ | Ref → `organizations` |
+| `agentId` | `ObjectId` | ✅ | Ref → `agents` |
+| `conversationId` | `ObjectId` | ✅ | Ref → `conversations` |
+| `messageId` | `ObjectId` | ✅ | Ref → `messages`. Joins a metric to the reply it scores |
+| `originalQuery` | `string` | — | The turn's first KB search, as the customer phrased it. **Masked through `piiMask` before persisting**, unconditionally |
+| `rewrittenQuery` | `string` | — | What was actually embedded. Masked identically. Empty when the turn never searched |
+| `retrieval.topK` | `number` | — | Final context size (`AI_KB_SEARCH_TOP_K`), not stage 1's widened candidate count |
+| `retrieval.minScore` | `number` | — | The **loosest floor actually applied**, which is `0` on any search that fell through to widen-on-empty |
+| `retrieval.hitCount` | `number` | — | Passages that reached the prompt, after fusion and reranking |
+| `retrieval.topScore` / `meanScore` / `scoreSpread` | `number \| null` | — | Raw scores, always on the cosine scale: fusion keeps the best raw score per passage and reranking reorders without overwriting it |
+| `retrieval.retrievalConfidence` | `number` | — | Normalised `[0,1]`. Derived, not a raw score — formula in [`39-rag-evaluation.md`](39-rag-evaluation.md) |
+| `retrieval.widenedOnEmpty` | `boolean` | — | Stage 1 returned nothing and the no-floor retry ran |
+| `retrieval.sourceIds` | `string[]` | — | Distinct knowledge sources behind the retrieved passages |
+| `retrieval.latencyMs` | `number` | — | Every KB search this turn ran, summed |
+| `retrieval.searchCount` | `number` | — | `search_kb` calls the model made. `0` means it never searched |
+| `generation.confidence` | `number` | — | The meta pass's confidence, after any uncited-ratio penalty |
+| `generation.action` | `string` | — | `reply` / `escalate` / `resolve` |
+| `generation.citationCount` | `number` | — | Validated citations in the reply |
+| `generation.citedSourceIds` | `string[]` | — | Distinct sources the reply actually cited |
+| `generation.answerLength` | `number` | — | Characters. A shape signal, not a billing number |
+| `generation.model` | `string` | — | The answering model for this turn |
+| `generation.promptTokens` / `completionTokens` / `costUsd` | `number \| null` | — | **Null until OpenRouter resolves the generation**, then backfilled by the same call that writes the `UsageRecord`. Null means unknown; a fake `0` in a cost table reads as free |
+| `generation.latencyMs` | `number` | — | The finalize node: streamed reply and meta pass, run concurrently |
+| `flags.noHits` | `boolean` | — | Retrieval returned nothing to ground the reply in |
+| `flags.lowConfidence` | `boolean` | — | Below `AI_CONFIDENCE_THRESHOLD` |
+| `flags.escalated` | `boolean` | — | Handed to a human |
+| `flags.conflicted` | `boolean` | — | Two sources contradicted each other on the queried fact |
+| `toolTurns` | `number` | — | Agent↔tool round trips this turn spent |
+| `faithfulness.sampled` | `boolean` | — | Drawn for online judging at `RAG_FAITHFULNESS_SAMPLE_RATE` |
+| `faithfulness.score` | `number \| null` | — | Supported claims over total claims. **`sampled: true` with a null score is a distinct fact from not sampled** and must not be averaged with it |
+| `faithfulness.claimCount` | `number \| null` | — | Atomic claims the judge found in the answer |
+| `faithfulness.unsupported` | `object[]` | — | `{claim, verdict, reason}`, capped at 10. Masked: these are sentences lifted out of the reply |
+| `faithfulness.judgeModel` | `string \| null` | — | Which judge produced the score |
+| `faithfulness.judgedAt` | `Date` | — | |
+| `faithfulness.skippedReason` | `string \| null` | — | `no_passages` / `budget_exceeded` / `no_claims` / `judge_error` |
+| `status` | `string` | ✅ | `ok`, or `fallback` when the graph never produced a state and the safe reply stood |
+| `durationMs` | `number` | ✅ | The whole turn, first byte of work to persisted reply |
+| `createdAt` | `Date` | auto | No `updatedAt` |
+
+**Indexes:**
+- `{ createdAt: 1 }` — TTL, `RAG_TELEMETRY_RETENTION_DAYS` (default 90 days)
+- `{ organizationId: 1, agentId: 1, createdAt: -1 }` — the dashboard's spine
+- `{ organizationId: 1, createdAt: -1 }` — org rollups and the alert sweep's group-by
+- `{ organizationId: 1, createdAt: -1 }` **partial** on each of `flags.noHits`,
+  `flags.lowConfidence`, `flags.escalated`, `flags.conflicted`, and on
+  `faithfulness.sampled` — the drill-downs read a small subset of a large
+  collection, so a partial index scans the matching turns rather than the window
+- `{ organizationId: 1, conversationId: 1 }` — inbox drill-down, mirroring `toolcalllogs`
+
+Every query the dashboard runs is asserted to use one of these:
+`src/__tests__/rag-telemetry.test.ts` runs each through `explain()` and fails on
+a `COLLSCAN`.
 
 ---
 

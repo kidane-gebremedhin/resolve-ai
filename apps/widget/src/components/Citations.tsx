@@ -3,10 +3,37 @@
 import { useState } from "react";
 import type { MessageSource } from "../lib/api-client";
 
+/**
+ * Resolve an inline `[2]` in the reply text to its source.
+ *
+ * Exported so the message renderer can turn markers into anchors. Returns
+ * undefined for a marker with no matching source, which the renderer leaves as
+ * plain text rather than rendering a link to nowhere — though the server strips
+ * impossible markers before they get here, so this is defence in depth.
+ */
+export function resolveMarker(
+  sources: MessageSource[] | undefined,
+  marker: number,
+): MessageSource | undefined {
+  return sources?.find((s) => s.marker === marker);
+}
+
+/** Whether this message carries inline markers at all. */
+export function hasInlineMarkers(sources: MessageSource[] | undefined): boolean {
+  return Boolean(sources?.some((s) => typeof s.marker === "number"));
+}
+
 export function Citations({ sources }: { sources: MessageSource[] }) {
   const [open, setOpen] = useState(false);
 
   if (!sources || sources.length === 0) return null;
+
+  // Ordered by marker when the reply used them, so the list reads in the same
+  // order the customer met them in the text. Messages without markers keep
+  // their original order untouched.
+  const ordered = hasInlineMarkers(sources)
+    ? [...sources].sort((a, b) => (a.marker ?? 99) - (b.marker ?? 99))
+    : sources;
 
   return (
     <div className="mt-1 ml-1">
@@ -31,13 +58,13 @@ export function Citations({ sources }: { sources: MessageSource[] }) {
         >
           <path d="m9 18 6-6-6-6" />
         </svg>
-        Sources ({sources.length})
+        Sources ({ordered.length})
       </button>
       {open ? (
         <ul className="mt-1 space-y-0.5 pl-1">
-          {sources.map((s) =>
+          {ordered.map((s) =>
             s.url ? (
-              <li key={s.sourceId}>
+              <li key={s.chunkId ?? s.sourceId}>
                 <a
                   href={s.url}
                   target="_blank"
@@ -60,11 +87,16 @@ export function Citations({ sources }: { sources: MessageSource[] }) {
                     <polyline points="15 3 21 3 21 9" />
                     <line x1="10" y1="14" x2="21" y2="3" />
                   </svg>
+                  {typeof s.marker === "number" ? `[${s.marker}] ` : ""}
                   {s.sourceTitle}
                 </a>
               </li>
             ) : (
-              <li key={s.sourceId} className="text-[11px] text-neutral-400 dark:text-neutral-500">
+              <li
+                key={s.chunkId ?? s.sourceId}
+                className="text-[11px] text-neutral-400 dark:text-neutral-500"
+              >
+                {typeof s.marker === "number" ? `[${s.marker}] ` : ""}
                 {s.sourceTitle}
               </li>
             ),

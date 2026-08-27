@@ -9,7 +9,11 @@
     "start": "PORT=3001 HOSTNAME=0.0.0.0 node .next/standalone/apps/widget/server.js",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
-    "clean": "rm -rf .next .turbo node_modules"
+    "clean": "rm -rf .next .turbo node_modules",
+    "flags:vendor": "node scripts/copy-flags.mjs",
+    "predev": "node scripts/copy-flags.mjs",
+    "prebuild": "node scripts/copy-flags.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@csb/shared-types": "workspace:*",
@@ -117,6 +121,7 @@
     "@fontsource/titillium-web": "^5.2.8",
     "@fontsource/ubuntu": "^5.2.8",
     "clsx": "^2.1.1",
+    "country-flag-icons": "^1.6.17",
     "emoji-mart": "^5.6.0",
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.562.0",
@@ -133,6 +138,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@csb/config": "workspace:*",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -140,6 +146,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.8"
   }
 }

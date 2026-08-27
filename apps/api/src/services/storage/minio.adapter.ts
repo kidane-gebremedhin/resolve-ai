@@ -134,4 +134,31 @@ export class MinioAdapter implements StorageAdapter {
     const client = this.getClient();
     return client.presignedGetObject(this.bucket, key, expirySeconds);
   }
+
+  /**
+   * Delete every object under a key prefix, returning how many went.
+   *
+   * Listed and removed in batches rather than one call per object: an
+   * organization with thousands of attachments would otherwise turn account
+   * deletion into thousands of round trips.
+   */
+  async deleteByPrefix(prefix: string): Promise<number> {
+    await this.ensureBucket();
+    const client = this.getClient();
+
+    const keys = await new Promise<string[]>((resolve, reject) => {
+      const found: string[] = [];
+      const stream = client.listObjectsV2(this.bucket, prefix, true);
+      stream.on("data", (obj) => {
+        if (obj.name) found.push(obj.name);
+      });
+      stream.on("error", reject);
+      stream.on("end", () => resolve(found));
+    });
+
+    if (keys.length === 0) return 0;
+    await client.removeObjects(this.bucket, keys);
+    logger.info("[storage] deleted objects by prefix", { prefix, count: keys.length });
+    return keys.length;
+  }
 }

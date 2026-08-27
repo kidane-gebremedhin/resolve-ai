@@ -28,13 +28,63 @@ const knowledgeSourceSchema = new Schema(
     pineconeIds: { type: [String], default: [] },
     embeddingStatus: {
       type: String,
-      enum: ["pending", "processing", "synced", "error", "deleting"],
+      // `empty` is its own state, not a flavour of `synced`.
+      //
+      // A zero-chunk ingest used to report success: a scanned PDF with no text
+      // layer or an empty crawl ended as `synced` with `chunkCount: 0`, looking
+      // identical to a working source while retrieving nothing. It is a
+      // failure, it is permanent until the file changes, and the reconcile job
+      // deliberately does not retry it — retrying an image-only PDF produces an
+      // image-only PDF.
+      enum: ["pending", "processing", "synced", "empty", "error", "deleting"],
       required: true,
       default: "pending",
     },
+    /**
+     * Operator-facing failure text. NOT the raw provider message, which lives on
+     * the ingestion event.
+     *
+     * This field is overloaded: `POST /knowledge/website` stashes an in-flight
+     * crawl id here as `firecrawl:<id>` for the poll job to read back. Anything
+     * writing or clearing it must follow both readers.
+     */
     embeddingError: { type: String },
+    /** Latch so an unresolved source does not re-alert every reconcile tick. */
+    ingestAlerted: { type: Boolean, default: false },
+    /** Taxonomy code, which is what the retry loop reads to decide policy. */
+    embeddingErrorCode: { type: String },
+    /** What the operator should do about it. */
+    embeddingErrorAction: { type: String },
     lastSyncedAt: { type: Date },
     retryCount: { type: Number, default: 0 },
+    /**
+     * Operator marked this source as no longer trustworthy.
+     *
+     * Distinct from deleting it and distinct from dropping its priority: a
+     * stale source is one an operator has judged out of date but is not ready
+     * to remove, usually because nothing replaces it yet. It stays indexed and
+     * retrievable — hiding it silently would turn "this answer is out of date"
+     * into "we have no answer", which is worse — and the flag is what the
+     * knowledge-health surface sorts and filters on.
+     */
+    stale: { type: Boolean, default: false },
+    staleAt: { type: Date },
+    /**
+     * Operator-settable authority. Higher wins when two sources disagree.
+     *
+     * Separate from recency on purpose: "the newest page" and "the page we
+     * actually stand behind" are different questions, and a re-crawl of a stale
+     * archive page would otherwise outrank a hand-written policy document.
+     */
+    priority: { type: Number, default: 0 },
+    /**
+     * When the source's CONTENT last changed, not when the row was touched.
+     *
+     * `updatedAt` moves on every reingest, retry and status change, so it says
+     * nothing about which of two documents is more current. This only moves when
+     * `contentHash` does.
+     */
+    sourceUpdatedAt: { type: Date },
     version: { type: Number, required: true, default: 1 },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User" },

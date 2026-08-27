@@ -1,5 +1,6 @@
 // Platform-admin only routes.
 import { Router, type Request, type Response } from "express";
+import { sealSecret, openSecret } from "../services/security/secret-field.js";
 import mongoose from "mongoose";
 import { z } from "zod";
 import {
@@ -479,7 +480,10 @@ const smtpSchema = z
     host: z.string().max(255),
     port: z.number().int().min(1).max(65535),
     username: z.string().max(255),
-    secret: z.string().max(1024), // TODO: encrypt at rest.
+    // Sealed before storage. An empty string means "leave the stored secret
+    // alone" — the GET response never returns it, so the admin UI cannot echo
+    // it back and would otherwise wipe it on every unrelated save.
+    secret: z.string().max(1024),
     fromEmail: z.string().email().or(z.literal("")),
   })
   .partial();
@@ -677,7 +681,15 @@ router.get("/usage/websites", async (req: Request, res: Response) => {
 
 router.get("/settings", async (_req: Request, res: Response) => {
   const settings = await loadOrInitSettings();
-  res.json(settings);
+  // Never send the SMTP password back to the browser — not even to the admin
+  // who set it. `smtpSecretSet` is enough for the UI to show that one is saved.
+  const plain = (settings as unknown as { toObject?: () => Record<string, unknown> }).toObject
+    ? (settings as unknown as { toObject: () => Record<string, unknown> }).toObject()
+    : ({ ...(settings as unknown as Record<string, unknown>) });
+  const smtp = plain.smtp as Record<string, unknown> | undefined;
+  const smtpSecretSet = Boolean(smtp?.secret);
+  if (smtp) plain.smtp = { ...smtp, secret: "" };
+  res.json({ ...plain, smtpSecretSet });
 });
 
 router.patch(
@@ -697,6 +709,13 @@ router.patch(
       if (!fields || typeof fields !== "object") continue;
       for (const [key, value] of Object.entries(fields)) {
         if (value === undefined) continue;
+        if (group === "smtp" && key === "secret") {
+          // Empty = "unchanged" (see the schema comment). Anything else is a
+          // new password and is sealed before it touches the database.
+          if (typeof value !== "string" || value === "") continue;
+          $set[`${group}.${key}`] = sealSecret(value);
+          continue;
+        }
         $set[`${group}.${key}`] = value;
       }
     }
@@ -711,7 +730,11 @@ router.patch(
         : { $setOnInsert: { singleton: "global" } },
       { new: true, upsert: true, setDefaultsOnInsert: true },
     );
-    res.json(settings);
+    const plain = settings.toObject() as Record<string, unknown>;
+    const smtp = plain.smtp as Record<string, unknown> | undefined;
+    const smtpSecretSet = Boolean(smtp?.secret);
+    if (smtp) plain.smtp = { ...smtp, secret: "" };
+    res.json({ ...plain, smtpSecretSet });
   },
 );
 

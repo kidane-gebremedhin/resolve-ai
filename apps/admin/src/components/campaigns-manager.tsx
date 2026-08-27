@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { Button, Input, Label } from '@csb/ui';
 import { clientApi, ApiError } from '@/lib/api';
@@ -18,9 +18,19 @@ type Campaign = {
 const CHANNELS = ['email', 'social', 'ads', 'referral', 'content', 'other'];
 const STATUSES: Campaign['status'][] = ['active', 'paused', 'ended'];
 
-export function CampaignsManager() {
-  const [campaigns, setCampaigns] = useState<Campaign[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export function CampaignsManager({
+  initialCampaigns = null,
+  initialError = null,
+}: {
+  initialCampaigns?: Campaign[] | null;
+  initialError?: string | null;
+}) {
+  // Seeded from the server render (see the page component) rather than fetched
+  // in an effect on mount. That matches how the rest of this app loads data,
+  // removes the loading flash, and avoids the cascading render that
+  // react-hooks/set-state-in-effect flags.
+  const [campaigns, setCampaigns] = useState<Campaign[] | null>(initialCampaigns);
+  const [error, setError] = useState<string | null>(initialError);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ name: '', code: '', channel: 'other', description: '' });
   const [busy, setBusy] = useState(false);
@@ -33,10 +43,6 @@ export function CampaignsManager() {
       setError(err instanceof ApiError ? err.message : 'Failed to load campaigns');
     }
   }
-  useEffect(() => {
-    reload();
-  }, []);
-
   async function create() {
     if (!form.name.trim() || !form.code.trim()) return;
     setBusy(true);

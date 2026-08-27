@@ -5,11 +5,21 @@
   "type": "module",
   "exports": {
     "./eslint/base": "./eslint/base.js",
-    "./typescript/base.json": "./typescript/base.json"
+    "./eslint/node": "./eslint/node.js",
+    "./eslint/browser": "./eslint/browser.js",
+    "./typescript/base.json": "./typescript/base.json",
+    "./eslint/next": "./eslint/next.js"
   },
   "scripts": {
     "lint": "echo 'no-op'",
     "type-check": "echo 'no-op'",
     "clean": "rm -rf .turbo node_modules"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.39.4",
+    "globals": "^15.14.0",
+    "typescript-eslint": "^8.20.0",
+    "eslint-config-next": "^16.2.6",
+    "eslint": "^9.39.4"
   }
 }

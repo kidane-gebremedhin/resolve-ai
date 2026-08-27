@@ -6,6 +6,7 @@ import { useState } from 'react';
 import {
   Inbox,
   BarChart3,
+  Target,
   BookOpen,
   Settings,
   Bot,
@@ -54,6 +55,7 @@ type NavItem = {
     | '/app'
     | '/app/inbox'
     | '/app/analytics'
+    | '/app/analytics/rag'
     | '/app/feeds'
     | '/app/feeds/low-rated'
     | '/app/activity'
@@ -89,7 +91,8 @@ const nav: NavItem[] = [
   { href: '/app/developers', label: 'Developers', icon: Code2, group: 'Configure' },
   { href: '/app/integrations', label: 'Integrations', icon: Plug, group: 'Configure' },
   { href: '/app/triggers', label: 'Proactive Triggers', icon: Zap, group: 'Configure' },
-  { href: '/app/analytics', label: 'Analytics', icon: BarChart3, group: 'Account' },
+  { href: '/app/analytics', label: 'Analytics', icon: BarChart3, exact: true, group: 'Account' },
+  { href: '/app/analytics/rag', label: 'RAG Quality', icon: Target, group: 'Account' },
   { href: '/app/feeds', label: 'User Feedback', icon: MessageSquareHeart, exact: true, group: 'Account' },
   { href: '/app/feeds/low-rated', label: 'Low-Rated Answers', icon: ThumbsDown, group: 'Account' },
   { href: '/app/activity', label: 'Agent activity', icon: ClipboardList, group: 'Account' },

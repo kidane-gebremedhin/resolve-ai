@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Server as IoServer, Socket } from "socket.io";
 import { Conversation, Message, ContactSession, Agent } from "../../models/index.js";
 import { logger } from "../../config/logger.js";
-import { generateAiReply } from "../../services/ai/agent.service.js";
+import { generateAiReply } from "../../services/ai/index.js";
 
 export function registerMessageHandlers(io: IoServer, socket: Socket): void {
   // Customer (widget) sends a message via Socket.io.

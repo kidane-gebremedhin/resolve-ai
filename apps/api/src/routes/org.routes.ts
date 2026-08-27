@@ -16,7 +16,24 @@ import {
   Subscription,
   ApiKey,
   AuditEvent,
+  Connection,
+  ConversationRating,
+  CouponRedemption,
+  ExternalSubscription,
+  IngestionEvent,
+  KbChunk,
+  KnowledgeGap,
+  MessageFeedback,
+  Notification,
+  OAuthAppConfig,
+  Payment,
+  ProactiveTrigger,
+  RagTurnMetric,
+  ToolCallLog,
+  ToolDefinition,
+  UsageRecord,
 } from "../models/index.js";
+import { getStorage } from "../config/storage.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
@@ -91,17 +108,62 @@ router.delete("/current", requireAuth, requireOrg, async (req: Request, res: Res
     });
   }
 
+  // 1b) Purge this org's uploaded files. Keys are `org/<orgId>/…` by contract
+  // (see services/storage/index.ts), so the prefix IS the tenant. Without this
+  // the database and the vector store are erased while every attachment the
+  // customer ever uploaded stays on disk, which is not a deletion.
+  try {
+    const removed = await getStorage().deleteByPrefix(`org/${orgId}/`);
+    logger.info("[org] purged stored attachments during account delete", { orgId, removed });
+  } catch (err) {
+    logger.error("[org] storage purge during account delete failed", {
+      orgId,
+      err: (err as Error).message,
+    });
+  }
+
   // 2) Delete every org-scoped collection.
+  //
+  // EVERY one. `org-deletion.test.ts` enumerates the models that carry an
+  // `organizationId` and fails if one is missing here, because the failure mode
+  // is silent: a collection added later simply keeps its data after the customer
+  // has been told their account is gone. That is exactly what happened — sixteen
+  // collections, including the full text of every knowledge document
+  // (`KbChunk`) and encrypted third-party credentials (`Connection`), survived
+  // deletion until this list was completed.
   await Promise.all([
     KnowledgeSource.deleteMany({ organizationId: orgId }),
+    KbChunk.deleteMany({ organizationId: orgId }),
+    KnowledgeGap.deleteMany({ organizationId: orgId }),
+    IngestionEvent.deleteMany({ organizationId: orgId }),
     Conversation.deleteMany({ organizationId: orgId }),
     Message.deleteMany({ organizationId: orgId }),
+    MessageFeedback.deleteMany({ organizationId: orgId }),
+    ConversationRating.deleteMany({ organizationId: orgId }),
     ContactSession.deleteMany({ organizationId: orgId }),
     WidgetSettings.deleteMany({ organizationId: orgId }),
     Section.deleteMany({ organizationId: orgId }),
     Agent.deleteMany({ organizationId: orgId }),
     Website.deleteMany({ organizationId: orgId }),
+    ProactiveTrigger.deleteMany({ organizationId: orgId }),
+    Notification.deleteMany({ organizationId: orgId }),
+    // Integration credentials are encrypted at rest, which is not a reason to
+    // keep them after the account they belong to is gone.
+    Connection.deleteMany({ organizationId: orgId }),
+    ToolDefinition.deleteMany({ organizationId: orgId }),
+    OAuthAppConfig.deleteMany({ organizationId: orgId }),
+    ToolCallLog.deleteMany({ organizationId: orgId }),
+    RagTurnMetric.deleteMany({ organizationId: orgId }),
+    // Billing and usage. Deleted per __specs/12 §6.7 ("cascade delete all
+    // collections"). If a tax or accounting obligation requires retaining
+    // financial records beyond account deletion, that exception has to be
+    // written into §6.7 and carved out here deliberately — not left as an
+    // accident of which models someone remembered.
     Subscription.deleteMany({ organizationId: orgId }),
+    ExternalSubscription.deleteMany({ organizationId: orgId }),
+    Payment.deleteMany({ organizationId: orgId }),
+    UsageRecord.deleteMany({ organizationId: orgId }),
+    CouponRedemption.deleteMany({ organizationId: orgId }),
     ApiKey.deleteMany({ organizationId: orgId }),
     AuditEvent.deleteMany({ organizationId: orgId }),
   ]);

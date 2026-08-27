@@ -6,7 +6,7 @@
 
 import request from "supertest";
 import type { Express } from "express";
-import { Agent, Conversation, Website } from "../models/index.js";
+import { Agent, Conversation, Organization, Website } from "../models/index.js";
 import type {
   AgentDocType,
   ConversationDocType,
@@ -86,6 +86,24 @@ export async function createOrgWithOwner(
     accessToken: body.accessToken,
     refreshToken: body.refreshToken,
   };
+}
+
+/**
+ * Puts an org on a paid plan.
+ *
+ * `POST /auth/register` deliberately leaves an org with no plan, and an
+ * unsubscribed org has a quota of ZERO for messages, websites, knowledge
+ * sources and seats — the product paywalls from the first message, so every
+ * quota-guarded route answers 402 until a subscription exists. Any test that
+ * exercises behaviour BEYOND the paywall has to grant a plan first; without
+ * this the assertion under test never runs and the failure looks like a bug in
+ * the route rather than a missing fixture.
+ */
+export async function grantPlan(
+  orgId: string,
+  plan: "pro" | "business" | "enterprise" = "business",
+): Promise<void> {
+  await Organization.updateOne({ _id: orgId }, { $set: { plan } });
 }
 
 /**

@@ -7,7 +7,7 @@ import { enforceOrgBudget } from "../middleware/budget-limit.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { NotFoundError } from "../utils/errors.js";
-import { generateSuggestions } from "../services/ai/suggestions.service.js";
+import { generateSuggestions } from "../services/ai/chains/suggestions.chain.js";
 import { getStorage } from "../config/storage.js";
 
 const router = Router();
@@ -165,7 +165,7 @@ router.patch(
 
 // ---------- GET /:id/suggestions ----------
 // Operator-facing quick-reply suggestions. Always returns exactly 3 strings —
-// see suggestions.service.ts for the LLM/fallback shape.
+// see chains/suggestions.chain.ts for the LLM/fallback shape.
 router.get("/:id/suggestions", enforceOrgBudget, async (req: Request, res: Response) => {
   const conversation = await Conversation.findOne({
     _id: req.params.id,

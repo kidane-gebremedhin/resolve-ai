@@ -1,12 +1,40 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
+import { verifyTotp } from "./security/totp.js";
 import mongoose from "mongoose";
 import { Organization, User, Membership } from "../models/index.js";
 import { signAccessToken, signRefreshToken } from "../utils/jwt.js";
-import { ConflictError, UnauthorizedError } from "../utils/errors.js";
+import { env } from "../config/env.js";
+import {
+  ConflictError,
+  InvalidTotpError,
+  TotpRequiredError,
+  UnauthorizedError,
+} from "../utils/errors.js";
 import { bindReferralOnSignup } from "./affiliate.service.js";
+import { openSecret } from "./security/secret-field.js";
 
 const BCRYPT_COST = 12;
+
+// The clients refresh their access token when `expiresIn` says it is about to
+// die, so this number has to be the TRUTH about JWT_ACCESS_EXPIRY — not a
+// constant that happens to match the default. Hardcoding 900 meant that
+// changing JWT_ACCESS_EXPIRY to anything shorter silently broke refresh: the
+// API issued a short-lived token while telling the dashboard it had 15
+// minutes, so the token died mid-session and the next call 401'd the operator
+// straight back to the login page.
+export function accessTokenSeconds(): number {
+  const raw = String(env.jwtAccessExpiry).trim();
+  const m = /^(\d+)\s*([smhd])?$/i.exec(raw);
+  if (!m) return 900; // unparseable config — fall back to the documented default
+  const n = Number(m[1]);
+  switch ((m[2] ?? "s").toLowerCase()) {
+    case "d": return n * 86_400;
+    case "h": return n * 3_600;
+    case "m": return n * 60;
+    default: return n;
+  }
+}
 
 function slugify(input: string): string {
   return input
@@ -112,11 +140,67 @@ export async function ensureMembershipForUser(user: {
   });
 }
 
-export async function loginWithCredentials(email: string, password: string) {
+// Verify a 6-digit TOTP, or fall back to a one-time recovery code.
+//
+// Recovery codes are stored as bcrypt hashes and are CONSUMED on use: a code
+// that logs you in once must never work again, otherwise a code read over
+// someone's shoulder (or left in a screenshot) becomes a permanent password
+// bypass. The consuming write happens before the login is allowed to succeed.
+async function verifySecondFactor(
+  user: {
+    totpSecret?: string | null;
+    recoveryCodes?: string[] | null;
+    save: () => Promise<unknown>;
+  },
+  code: string,
+): Promise<boolean> {
+  const secret = openSecret(user.totpSecret);
+  if (secret) {
+    try {
+      if (await verifyTotp(secret, code)) return true;
+    } catch {
+      // otplib rejects anything that isn't a well-formed 6-digit token, and a
+      // recovery code ("xxxx-xxxx-xxxx") is exactly that. Swallow it so the
+      // recovery path below still gets a chance — without this, entering a
+      // recovery code returned a 500 instead of logging the user in.
+    }
+  }
+
+  const hashes = user.recoveryCodes ?? [];
+  for (let i = 0; i < hashes.length; i += 1) {
+    if (await bcrypt.compare(code, hashes[i])) {
+      hashes.splice(i, 1);
+      user.recoveryCodes = hashes;
+      await user.save();
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Email + password login, with the second factor enforced when the account has
+ * one.
+ *
+ * `code` is optional so an account without 2FA still logs in on one round trip;
+ * a 2FA account answers `totp_required` on the first attempt and succeeds on the
+ * retry carrying the code. Enforcement lives HERE rather than in the route so
+ * every caller — the dashboard's NextAuth provider, the admin console, any
+ * future client — is gated by construction and cannot forget to ask.
+ */
+export async function loginWithCredentials(email: string, password: string, code?: string) {
   const user = await User.findOne({ email });
   if (!user || !user.passwordHash) throw new UnauthorizedError("Invalid email or password.");
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) throw new UnauthorizedError("Invalid email or password.");
+
+  // Only after the password is proven correct — someone without it learns
+  // nothing about whether the account has 2FA enabled.
+  if (user.totpEnabled) {
+    if (!code) throw new TotpRequiredError();
+    if (!(await verifySecondFactor(user, code))) throw new InvalidTotpError();
+  }
+
   user.lastLoginAt = new Date();
   await user.save();
 
@@ -190,6 +274,6 @@ function issueTokens(
     },
     accessToken,
     refreshToken,
-    expiresIn: 900,
+    expiresIn: accessTokenSeconds(),
   };
 }

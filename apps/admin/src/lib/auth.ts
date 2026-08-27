@@ -1,11 +1,22 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { CredentialsSignin } from "next-auth";
 import Google from "next-auth/providers/google";
 // NextAuth runs server-side only, so it uses the internal API base (which falls
 // back to the public URL when no internal host is configured).
 import { API_INTERNAL_URL as apiUrl } from "./app-urls";
 
 type Role = "owner" | "admin" | "agent" | "viewer" | "platform_admin";
+
+// Lets the login form tell three outcomes apart, which a plain `return null`
+// cannot: wrong password, 2FA code needed, 2FA code wrong. Auth.js surfaces the
+// `code` property to `signIn(..., { redirect: false })` as `result.code`.
+class TotpRequired extends CredentialsSignin {
+  code = "totp_required";
+}
+class InvalidTotp extends CredentialsSignin {
+  code = "invalid_totp";
+}
 
 declare module "next-auth" {
   interface Session {
@@ -89,18 +100,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       credentials: {
         email: { type: "email" },
         password: { type: "password" },
+        // Second factor. Absent on the first attempt; the form re-submits with
+        // it once the API has asked for one.
+        code: { type: "text" },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
+        const code =
+          typeof credentials.code === "string" && credentials.code.trim()
+            ? credentials.code.trim()
+            : undefined;
         const res = await fetch(`${apiUrl}/auth/login`, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             email: credentials.email,
             password: credentials.password,
+            ...(code ? { code } : {}),
           }),
         });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          // The API distinguishes "password is right, now prove the second
+          // factor" from "these credentials are wrong". Collapsing both into
+          // null would leave the form showing "invalid password" to a user
+          // whose password was in fact correct.
+          const failure = (await res.json().catch(() => null)) as
+            | { error?: { code?: string } }
+            | null;
+          if (failure?.error?.code === "totp_required") throw new TotpRequired();
+          if (failure?.error?.code === "invalid_totp") throw new InvalidTotp();
+          return null;
+        }
         const body = (await res.json()) as {
           user: {
             id: string;

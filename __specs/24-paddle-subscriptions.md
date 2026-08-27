@@ -208,6 +208,95 @@ Decisions:
 ### Idempotency (G2)
 - Add a `ProcessedWebhook` collection (`eventId` unique) or store last-processed `eventId` per subscription; `handlePaddleEvent` no-ops if seen. TTL-index old rows (e.g., 30d).
 
+### Payment ledger and dunning (Changelog 8)
+
+Until this batch, `handlePaddleEvent` returned early on anything that did not
+start with `subscription.`, so every `transaction.*` event was silently dropped.
+The app knew what a customer was entitled to and nothing about what they had
+actually been charged, which is why the checkout pending page could only spin
+for three minutes on a declined card: the subscription poll cannot tell "still
+processing" from "the payment failed".
+
+**Signature verification reads `req.rawBody`, never a second body parser.** The
+global `express.json({ verify })` in `index.ts` is the only body reader, and it
+stashes the exact signed bytes on `req.rawBody`. Mounting `express.raw()` on the
+webhook route does not work and never did: body-parser sees `req._body` already
+set and skips, so `req.body` stays the parsed object and the HMAC ends up
+computed over an empty string, rejecting every real delivery with 401. The
+per-connection integration webhooks in `integrations.routes.ts` have always read
+`rawBody`; platform billing now does too. `src/test/app.ts` carries the same
+`verify` callback so the test harness cannot drift from production here again.
+
+**Dispatch.** `handlePaddleEvent` is now a dispatcher over three event families,
+and **the `ProcessedWebhook` idempotency guard runs first, before the family is
+inspected**. Its previous position — immediately after the `subscription.` early
+return — meant transaction events never reached it at all, and moving the
+dispatch above it would have let a redelivered transaction book a second payment
+row. Paddle does redeliver.
+
+Because the guard is claimed before any handler runs, a handler that throws
+loses the event permanently: Paddle's retry arrives and is swallowed as a
+duplicate. Every handler therefore writes idempotently (upsert by provider id)
+and pushes anything fallible, email above all, onto a fire-and-forget path.
+
+**Event names, verified against Paddle Billing's webhook reference.** Two things
+here contradict a reasonable guess and are worth stating so they are not
+"corrected" back:
+
+1. There is **no** `transaction.refunded`, `transaction.partially_refunded` or
+   `transaction.disputed`. Refunds and chargebacks arrive as `adjustment.created`
+   / `adjustment.updated`, carrying `action` (`refund` | `chargeback` |
+   `chargeback_reverse` | `chargeback_warning` | `credit` | `credit_reverse`),
+   `type` (`full` | `partial`), and a `transaction_id` pointing back at the
+   transaction they adjust. An adjustment is only applied when its own `status`
+   is `approved`; a `pending_approval` refund has moved no money.
+2. Money is at `data.details.totals.*` as **strings in minor units**, not as
+   numbers at the top level. The parser returns `undefined` rather than `0` for
+   anything unreadable, because a silent zero in a billing history is
+   indistinguishable from a free month.
+
+Transaction states map as: `paid` / `completed` → `completed`, `billed` →
+`pending`, `past_due` → `failed`, and `transaction.payment_failed` → `failed`
+regardless of state. `draft`, `ready` and `canceled` map to **nothing** and leave
+no row: a draft transaction is a quote, and a canceled one never took money.
+
+**Out-of-order delivery.** Last-write-wins is wrong here — a replayed
+`transaction.updated` would drag a paid invoice back to `pending` in the
+customer's history. The event's own `occurred_at` is authoritative; a
+terminality rank breaks ties only when timestamps match or are absent. `failed`
+ranks *below* `completed` deliberately: a retried card that finally clears keeps
+the same transaction id, so `failed → completed` must remain a legal forward
+move. A stale event is not discarded outright — it may still fill in fields we
+are missing, since Paddle sometimes populates the invoice id or card details
+only on the later-numbered event.
+
+**Dunning.** A failed payment sets `Subscription.status = past_due` and emails
+the org's owners and admins (`payment_failed`, a new `ReceiptAction`). A later
+`completed` for the same org clears it. This path writes `Subscription.status`
+**only**; `Organization.plan` stays under the subscription handler's control, so
+access is not revoked while the provider is still retrying the card. A canceled
+subscription is never dunned.
+
+**Organization resolution.** Renewals do not echo the checkout's `custom_data`,
+so resolution falls back from `custom_data.organizationId` → the subscription
+behind `data.subscription_id` → an existing payment row for the same
+transaction. Reading only `custom_data` silently drops every renewal.
+
+**Invoices are minted, not stored.** Paddle sends no receipt or invoice URL on
+the webhook, and the link `GET /transactions/{id}/invoice` returns **expires
+after an hour**. Caching it would guarantee a dead link by the time anyone
+clicked, so `GET /billing/payments/:id/invoice` mints a fresh one per click,
+scoped to the caller's org. The list response carries `hasInvoice` so the UI
+does not offer a link for a charge that never billed, which would 404.
+
+**Backfill.** `pnpm --filter @csb/api billing:backfill-payments` pages Paddle's
+`/transactions` per subscription and replays each one through
+`applyTransactionEvent`, so backfilled rows are identical to live ones and a
+later webhook for the same transaction still wins on timestamp. `--dry-run`
+counts without writing, `--org` and `--after` narrow the scan, and 429s back off
+on Paddle's `retry-after`. Safe to re-run; an interrupted run is simply started
+again.
+
 ### Centralized config (G3)
 - Move Paddle vars into [`apps/api/src/config/env.ts`](../apps/api/src/config/env.ts) with validation; `billing.service.ts` reads from `env`.
 

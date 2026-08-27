@@ -6,6 +6,11 @@ export const metadata: Metadata = {
   title: "Chat widget",
 };
 
+// The widget only ever renders inside an iframe, so no user sees this icon —
+// but without one the browser still requests /favicon.ico on every load and
+// logs a 404 in the host page's console. `icon.svg` (Next's file convention)
+// emits a <link rel="icon">, which stops the request.
+
 // The widget shares the platform's global font. It reads the admin-chosen body /
 // heading fonts from the public theming endpoint when reachable, falling back to
 // the defaults so the embedded widget always renders.

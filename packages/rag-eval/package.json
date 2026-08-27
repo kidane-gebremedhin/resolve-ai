@@ -1,0 +1,27 @@
+{
+  "name": "@csb/rag-eval",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "eval": "tsx src/cli.ts",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf .turbo node_modules reports/*.json"
+  },
+  "dependencies": {
+    "@csb/api": "workspace:*",
+    "dotenv": "^16.4.5",
+    "mongoose": "^8.9.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@csb/config": "workspace:*",
+    "@types/node": "^22",
+    "eslint": "^9",
+    "tsx": "^4.19.2",
+    "typescript": "^5",
+    "vitest": "^2.1.8"
+  }
+}

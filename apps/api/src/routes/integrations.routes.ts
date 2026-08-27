@@ -803,7 +803,7 @@ router.post("/:provider/connect", requireAuth, requireOrg, requireOrgRole("admin
   const appCreds = await getOAuthAppCreds(orgId!, provider, Boolean(sandbox));
   if (!appCreds?.clientId) {
     res.status(400).json({
-      error: `Configure your ${provider} OAuth app (Client ID + Secret) for ${Boolean(sandbox) ? "sandbox" : "production"} before connecting.`,
+      error: `Configure your ${provider} OAuth app (Client ID + Secret) for ${sandbox ? "sandbox" : "production"} before connecting.`,
       needsOAuthApp: true,
     });
     return;
@@ -812,7 +812,7 @@ router.post("/:provider/connect", requireAuth, requireOrg, requireOrgRole("admin
   // identify the org (OAuth redirects carry no JWT) and store the tokens in the
   // right per-environment slot. Format: "<orgId>.<nonce>.<s|p>".
   const nonce = randomBytes(16).toString("hex");
-  const envCode = Boolean(sandbox) ? "s" : "p";
+  const envCode = sandbox ? "s" : "p";
   const state = `${String(orgId)}.${nonce}.${envCode}`;
   const authUrl = adapter.buildAuthUrl(String(orgId), state, appCreds);
   if (!authUrl) {

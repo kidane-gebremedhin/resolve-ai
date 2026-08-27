@@ -28,12 +28,29 @@ export default function AdminLoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
+  // Shown only once the API reports this account has 2FA — most accounts do
+  // not, and asking everyone for a code up front would just confuse them.
+  const [totpRequired, setTotpRequired] = useState(false);
+  const [code, setCode] = useState('');
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setPending(true);
-    const res = await signIn('credentials', { email, password, redirect: false });
+    const res = await signIn('credentials', { email, password, code, redirect: false });
     setPending(false);
+
+    if (res?.code === 'totp_required') {
+      // The password was correct — this is a prompt, not a failure.
+      setTotpRequired(true);
+      toast.info('Enter the 6-digit code from your authenticator app.');
+      return;
+    }
+    if (res?.code === 'invalid_totp') {
+      setTotpRequired(true);
+      setCode('');
+      toast.error('That code is not valid. Try again, or use a recovery code.');
+      return;
+    }
     if (res?.error) {
       toast.error('Invalid email or password.');
       return;
@@ -83,8 +100,29 @@ export default function AdminLoginPage() {
               autoComplete="current-password"
             />
           </div>
+          {totpRequired && (
+            <div className="space-y-1.5">
+              <Label htmlFor="code">Two-factor code</Label>
+              <Input
+                id="code"
+                type="text"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                required
+                autoFocus
+                placeholder="123456"
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                maxLength={32}
+                className="tracking-[0.3em]"
+              />
+              <p className="text-xs text-muted-foreground">
+                From your authenticator app, or one of your recovery codes.
+              </p>
+            </div>
+          )}
           <Button type="submit" className="w-full" disabled={pending}>
-            {pending ? 'Signing in…' : 'Sign in'}
+            {pending ? 'Signing in…' : totpRequired ? 'Verify code' : 'Sign in'}
           </Button>
         </form>
 

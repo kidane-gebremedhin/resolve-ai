@@ -7,7 +7,7 @@ const CTA = () => {
         <div className="main-container">
           <div className="text-center">
             <RevealAnimation delay={0.1}>
-              <span className="badge badge-blur text-ns-yellow mb-5">Let's start</span>
+              <span className="badge badge-blur text-ns-yellow mb-5">Let&apos;s start</span>
             </RevealAnimation>
             <RevealAnimation delay={0.2}>
               <h2 className="mb-3 text-white">Resolve more. Escalate less. Delight customers.</h2>

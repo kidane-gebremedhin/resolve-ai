@@ -53,7 +53,15 @@ certs/
 # uploads (local file storage)
 uploads/
 
-CHANGELOG_*.md
+# Country-flag SVGs vendored from node_modules at build time by
+# apps/widget/scripts/copy-flags.mjs — generated, not authored.
+apps/widget/public/flags/
+
+# NOTE: CHANGELOG_*.md, QA_TEST_RESULTS_*.md and IMPLEMENTATION_AUDIT.md were
+# ignored here. Being untracked, they did not survive a clean — CHANGELOG_1
+# through 3 and every QA_TEST_RESULTS file were lost that way. A record of why a
+# decision was made is worth more than the diff that made it, so they are tracked
+# now. Re-ignore them only if you also decide the history is disposable.
 
 .claude
 
@@ -61,7 +69,6 @@ CHANGELOG_*.md
 .nvmrc
 
 BLOCKERS.md
-QA_TEST_RESULTS_*.md
 
 test-data.md
 
@@ -69,3 +76,7 @@ test-data.md
 .run/
 
 .playwright-mcp
+
+TODO_PROMPTS.md
+TODO.txt
+

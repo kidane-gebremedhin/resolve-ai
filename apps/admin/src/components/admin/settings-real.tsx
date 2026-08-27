@@ -34,6 +34,8 @@ export type PlatformSettings = {
     secret?: string;
     fromEmail?: string;
   };
+  /** True when an SMTP password is stored. The value itself is never sent. */
+  smtpSecretSet?: boolean;
   security?: {
     mfaRequired?: boolean;
     sessionTimeoutMinutes?: number;
@@ -156,6 +158,9 @@ export function AdminSettingsForm({ initial }: { initial: PlatformSettings | nul
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  // The SMTP password is never sent to the browser, so the form can only know
+  // *whether* one is stored. Kept in state so it stays right after a save.
+  const [smtpSecretSet, setSmtpSecretSet] = useState(Boolean(initial?.smtpSecretSet));
 
   async function save() {
     setBusy(true);
@@ -166,6 +171,7 @@ export function AdminSettingsForm({ initial }: { initial: PlatformSettings | nul
         toPatch(draft),
       );
       setDraft(toEditable(next));
+      setSmtpSecretSet(Boolean(next?.smtpSecretSet));
       setSavedAt(Date.now());
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -246,10 +252,12 @@ export function AdminSettingsForm({ initial }: { initial: PlatformSettings | nul
                 className="mt-1.5"
                 value={draft.smtp.secret}
                 onChange={(e) => update("smtp", { secret: e.target.value })}
-                placeholder="••••••••"
+                placeholder={smtpSecretSet ? "•••••••• (unchanged)" : "••••••••"}
               />
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Stored as plaintext for now — TODO: encrypt at rest.
+                {smtpSecretSet
+                  ? "A password is saved and encrypted at rest. Leave blank to keep it; type a new one to replace it."
+                  : "Encrypted at rest once saved."}
               </p>
             </div>
           </Section>

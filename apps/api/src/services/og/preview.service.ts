@@ -13,7 +13,7 @@ type CachedOg = { data: OgData | null };
 const cache = new LRUCache<string, CachedOg>({ max: 500, ttl: 24 * 60 * 60 * 1000 });
 
 // Extract up to 2 HTTPS URLs from a text string.
-const URL_RE = /https:\/\/[^\s<>"{}|\\^`\[\]]+/g;
+const URL_RE = /https:\/\/[^\s<>"{}|\\^`[\]]+/g;
 export function extractUrls(text: string): string[] {
   return [...new Set((text.match(URL_RE) ?? []).slice(0, 2))];
 }

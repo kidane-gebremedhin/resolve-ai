@@ -24,6 +24,15 @@ type ThemeProviderProps = {
 export function ThemeProvider({ children, initialTheme = 'light' }: ThemeProviderProps) {
   const [theme, setThemeState] = useState<Theme>(initialTheme);
 
+  // One-shot hydration: localStorage and the OS colour-scheme query only exist
+  // on the client, so the true theme cannot be known during SSR — the server
+  // renders `initialTheme` from the cookie and this reconciles it on mount.
+  // It runs in useLayoutEffect, before paint, so no wrong-theme flash is
+  // visible, and the empty dep array means it cannot cascade.
+  //
+  // react-hooks/set-state-in-effect warns here. The alternatives are a blocking
+  // inline script (deliberately avoided, see the prop doc above) or
+  // useSyncExternalStore, which would still need this same first reconciliation.
   useLayoutEffect(() => {
     const stored = getStoredTheme();
     const resolved = resolveTheme(stored, getSystemTheme());

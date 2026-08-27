@@ -6,7 +6,7 @@
 // what the org pays for.
 
 import { Router, type Request, type Response } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { z } from "zod";
 import { User } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
@@ -32,7 +32,13 @@ function couponLimiter(max: number, windowMs: number) {
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    keyGenerator: (req: Request) => req.auth?.userId ?? req.ip ?? "unknown",
+    // ipKeyGenerator normalises IPv6 to its /64 prefix. Keying on the raw
+    // req.ip would let anyone with an IPv6 allocation rotate addresses inside
+    // their own subnet and walk the code space unthrottled — which is exactly
+    // the brute-force oracle this limiter exists to close. express-rate-limit
+    // v8 also refuses raw-IP key generators outright (ERR_ERL_KEY_GEN_IPV6),
+    // so the previous version threw a ValidationError on every boot.
+    keyGenerator: (req: Request) => req.auth?.userId ?? ipKeyGenerator(req.ip ?? "unknown"),
     message: {
       error: {
         code: "rate_limited",

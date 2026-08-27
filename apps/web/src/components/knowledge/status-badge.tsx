@@ -2,6 +2,7 @@
 //   pending  -> gray
 //   processing -> blue + pulse
 //   synced   -> green
+//   empty    -> amber (read fine, but retrieves nothing — a failure, not a success)
 //   error    -> red
 //   deleting -> orange
 
@@ -11,6 +12,7 @@ const styles: Record<KbStatus, string> = {
   pending: "bg-muted text-muted-foreground",
   processing: "bg-blue-500/10 text-blue-600 dark:text-blue-400 animate-pulse",
   synced: "bg-success/10 text-success",
+  empty: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
   error: "bg-destructive/10 text-destructive",
   deleting: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
 };
@@ -19,6 +21,7 @@ const labels: Record<KbStatus, string> = {
   pending: "Pending",
   processing: "Processing",
   synced: "Synced",
+  empty: "No text found",
   error: "Error",
   deleting: "Deleting",
 };

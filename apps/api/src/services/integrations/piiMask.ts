@@ -2,7 +2,7 @@
 // Extended in Plan 18 with SSN, NI number, and other patterns.
 const PII_PATTERNS: [RegExp, string][] = [
   // Email addresses
-  [/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g, "[EMAIL]"],
+  [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, "[EMAIL]"],
   // Credit card numbers (13-19 digits, optionally separated)
   [/\b(?:\d[ -]?){13,19}\b/g, "[CARD]"],
   // Phone numbers (various formats)

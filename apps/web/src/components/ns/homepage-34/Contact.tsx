@@ -59,7 +59,7 @@ const Contact = () => {
                     <h2 className="max-w-[517px]">Support when you need It</h2>
                   </RevealAnimation>
                   <RevealAnimation delay={0.2}>
-                    <p className="max-w-[372px]">Our team is here to help, whether you're choosing a plan, setting up your agent, or connecting your tools.</p>
+                    <p className="max-w-[372px]">Our team is here to help, whether you&apos;re choosing a plan, setting up your agent, or connecting your tools.</p>
                   </RevealAnimation>
                 </div>
                 <RevealAnimation delay={0.3}>

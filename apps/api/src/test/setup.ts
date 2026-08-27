@@ -9,6 +9,20 @@
 // placeholder MONGODB_URI here; it gets overwritten with the in-memory server's
 // real URI inside `beforeAll`, and we use that URI for the actual `mongoose.connect`.
 process.env.NODE_ENV = "test";
+
+// Zero-cost tests, enforced rather than intended.
+//
+// `config/env.ts` imports `dotenv/config`, so a developer's real `.env` is
+// loaded under vitest — live OpenRouter, embedding, Pinecone and Firecrawl keys
+// included. This scrubs them so every provider takes its existing no-key path,
+// and then wraps `fetch` so anything that still tries to leave the machine
+// throws with the URL that tried. Run BEFORE any module reads the environment.
+//
+// See __specs/14-testing-strategy.md, "No test may call a third party".
+import { installNetworkGuard, scrubProviderCredentials } from "./no-external-calls.js";
+
+scrubProviderCredentials();
+installNetworkGuard();
 process.env.MONGODB_URI ??= "mongodb://placeholder-replaced-in-beforeAll/test";
 process.env.JWT_SECRET ??= "test-secret-32-chars-long-xxxxxx";
 // AES-256 key (32 bytes / 64 hex) so the credentials vault (encrypt/decrypt) works
@@ -18,8 +32,9 @@ process.env.JWT_ACCESS_EXPIRY ??= "15m";
 process.env.JWT_REFRESH_EXPIRY ??= "7d";
 process.env.SESSION_TOKEN_EXPIRY_HOURS ??= "1"; // 1 hour — we assert TTL is in the future + < 2h
 process.env.AI_CONFIDENCE_THRESHOLD ??= "0.7";
-// Tests can't reach OpenRouter, but the env loader requires these knobs
-// regardless of whether the LLM is actually called.
+// The env loader requires these knobs whether or not a model is ever called.
+// Nothing here enables a network call: the API KEY is scrubbed above, so a chat
+// model built from these settings has nowhere to send a request.
 process.env.AI_MODEL ??= "openai/gpt-4o-mini";
 process.env.AI_TEMPERATURE ??= "0.2";
 process.env.AI_ENHANCE_TEMPERATURE ??= "0.3";

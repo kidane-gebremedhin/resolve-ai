@@ -36,7 +36,7 @@ A [pnpm](https://pnpm.io) + [Turborepo](https://turborepo.com) monorepo — **4 
 
 - **Frontend** — Next.js 16 (App Router), React 19, Tailwind CSS v4, shadcn/ui
 - **Backend** — Express + TypeScript, MongoDB (Mongoose), Socket.io, Redis
-- **AI / RAG** — OpenAI-compatible embeddings (`text-embedding-3-small`, 1536-dim), Pinecone vector DB, OpenRouter LLM, Firecrawl website ingestion
+- **AI / RAG** — LangGraph agent (`StateGraph`) on LangChain, OpenRouter LLM via `ChatOpenAICompletions`, OpenAI-compatible embeddings (`text-embedding-3-small`, 1536-dim), Pinecone vector DB, Firecrawl website ingestion, optional LangSmith tracing
 - **Auth** — NextAuth (Google OAuth + email/password), JWT
 - **Billing** — Paddle
 - **Storage / email** — MinIO (S3-compatible) · MailHog (dev SMTP)
@@ -88,10 +88,11 @@ account list and caveats.
 | [__skills/](__skills/) | **Reusable procedures** (Anthropic Skill format) invoked by the plans. |
 | [SKILLS_GALLERY.md](SKILLS_GALLERY.md) | **Skills catalog** — purpose, provenance (custom-written vs downloaded), and phase for every skill. |
 | [E2E_FLOW.md](E2E_FLOW.md) | **RAG flow** — indexing → retrieval → generation, end to end. |
+| [__specs/05-ai-agent-design.md](__specs/05-ai-agent-design.md) | **AI agent** — the LangGraph state graph, tool layer, input gate and LangSmith tracing. |
 | [__specs/35-error-monitoring-sentry.md](__specs/35-error-monitoring-sentry.md) | **Error monitoring** — Sentry for the API + web app, and the `/sentry-example-page` production smoke test ([RUNBOOK §14](RUNBOOK.md)). |
-| [IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md) | Spec-by-spec implementation status. |
+| `IMPLEMENTATION_AUDIT.md` | Codebase audit — architecture, strengths, ranked findings. **Local only** (git-ignored), so it is absent from a fresh clone. |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | Conventions for AI coding agents working in this repo. |
-| `CHANGELOG_*.md` | Per-session change logs (latest: [CHANGELOG_1.md](CHANGELOG_1.md)). |
+| `CHANGELOG_*.md` · `QA_TEST_RESULTS_*.md` | Per-session change logs and QA runs. **Local only** (git-ignored) — see `.gitignore`; they are working documents, not shipped docs. |
 
 ---
 

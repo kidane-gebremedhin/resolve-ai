@@ -31,7 +31,7 @@ The current `customer-service-chatbot` directory contains a **Next.js 16 marketi
 | Current Path | Action | Target Path | Wire-up |
 |--------------|--------|-------------|---------|
 | `src/app/app/layout.tsx` | Move | `apps/web/src/app/(dashboard)/layout.tsx` | Uses `AppShell` |
-| `src/app/app/page.tsx` | Wire | `apps/web/src/app/(dashboard)/app/page.tsx` | KPI cards → `GET /analytics/overview` |
+| `src/app/app/page.tsx` | Wire | `apps/web/src/app/(dashboard)/app/page.tsx` | KPI cards → `GET /billing/usage` + `GET /conversations` |
 | `src/app/app/inbox/page.tsx` | Wire | `apps/web/src/app/(dashboard)/app/inbox/page.tsx` | Replace mock list → `GET /conversations` + Socket.io |
 | `src/app/app/inbox/[conversationId]/page.tsx` | **Create** | (new) | Thread view (Phase 3) |
 | `src/app/app/chat/page.tsx` | **DELETE** | — | `Live chat` is removed entirely |

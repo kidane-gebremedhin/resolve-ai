@@ -6,6 +6,92 @@ Three-tier testing pyramid: **unit → integration → end-to-end (E2E)**. All t
 
 ---
 
+## 0. No test may call a third party
+
+**Tests cost nothing and pass with the network unplugged.** This is enforced,
+not asked for: `apps/api/src/test/no-external-calls.ts`, installed by both
+suites' setup files before any other module loads.
+
+### Why it needs enforcing
+
+`config/env.ts` does `import "dotenv/config"`, and `apps/api/.env` is a symlink
+to the repository root `.env`. A developer's **real** OpenRouter, embedding,
+Pinecone and Firecrawl keys are therefore present under vitest. Nothing warned
+about this, and the consequences were already live:
+
+- `knowledge-conflict.test.ts`'s two integration cases reached OpenRouter on
+  every run. They passed on a good day and failed when a balance ran out — and
+  the failure read as a conflict-detection bug, not a billing one.
+- Every ingestion test embedded through the real provider.
+- A `402 requires more credits` was, for a while, indistinguishable from a
+  genuine regression.
+
+### The two layers
+
+**1. Scrub the credentials.** Every provider in this codebase already has a
+no-key path — pseudo-embeddings, a no-op Pinecone index, a disabled crawler, a
+mailer that skips. Removing the keys makes the suite take those paths.
+
+Order matters and is easy to get wrong: dotenv only fills in variables that are
+**absent**, so deleting a key *before* dotenv loads simply invites dotenv to put
+it back. The guard imports `dotenv/config` itself first, which makes
+`config/env.ts`'s later import a module-cache no-op.
+
+Deleted rather than blanked, because several call sites read
+`process.env.X ?? "fallback"`: an empty string is not nullish and would be sent
+as the key.
+
+**2. Guard the socket anyway.** Layer 1 rests on every current *and future*
+service checking for its key first. That is a convention, and a convention is
+not what a test suite should rest on when the failure mode is a bill. `fetch` is
+wrapped; anything bound for a host other than the loopback throws
+`ExternalCallInTestError` naming the URL and how to stub it.
+
+### What is scrubbed
+
+LLM and embeddings (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`,
+`EMBEDDING_API_KEY`), the vector store (`PINECONE_API_KEY`, `PINECONE_INDEX`),
+crawling (`FIRECRAWL_API_KEY`), voice (`TTS_API_KEY`, `STT_API_KEY`), billing
+(`PADDLE_API_KEY`), object storage (`MINIO_*`, `AWS_*`), mail (`SMTP_HOST`,
+`SMTP_USER`, `SMTP_PASS`), telemetry that phones home (`SENTRY_DSN`,
+`LANGSMITH_API_KEY`), messaging (`TWILIO_AUTH_TOKEN`), and `REDIS_URL`.
+
+`PADDLE_WEBHOOK_SECRET` is deliberately **kept**: it signs payloads locally,
+reaches no network, and the billing tests need it.
+
+### Writing a test that needs a provider
+
+Inject or mock. In order of preference:
+
+1. **Inject the dependency.** `understoodSearch` accepts a `reranker` and
+   `conflictDeps`; `checkForConflict` accepts `deps.invoke`; `clusterGaps`
+   accepts `deps.embed`. This is the pattern to extend — it makes the test
+   hermetic by design rather than by interception.
+2. **Mock the module.**
+
+   ```ts
+   vi.mock("../services/ai/llm/chat-model.js", () => ({ createChatModel: () => stub }));
+   vi.mock("../config/pinecone.js", () => ({ getPineconeIndex: () => fakeIndex }));
+   vi.mock("../services/ai/embedding.service.js", () => ({ embed: async (t) => t.map(...) }));
+   ```
+
+A stand-in should **derive** its verdict from its input where it can, rather
+than returning a constant: the conflict judge in `knowledge-conflict.test.ts`
+reads the day counts out of the passages it is shown, so a fixture that stops
+containing a contradiction stops being flagged as one.
+
+### The guard checks itself
+
+`apps/api/src/__tests__/no-external-calls.test.ts` and the matching file in
+`packages/rag-eval` assert that representative provider URLs are refused, that
+the error message is actionable, that the loopback still works, that **every**
+guarded credential is absent, and that the no-key paths actually function
+(embeddings return deterministic vectors; the Pinecone index is a no-op).
+
+A guarantee nothing checks is a comment.
+
+---
+
 ## 1. Unit Tests
 
 ### Backend (`apps/api`)

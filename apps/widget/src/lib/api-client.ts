@@ -98,6 +98,18 @@ export type MessageSource = {
   sourceTitle: string;
   url?: string;
   score: number;
+  /**
+   * The integer shown inline in the reply, e.g. the 2 in "[2]".
+   *
+   * Optional on purpose: messages written before inline citations existed have
+   * no marker, and must keep rendering as the collapsible source list they
+   * always did.
+   */
+  marker?: number;
+  /** `<sourceId>:<chunkIndex>` — which passage, not just which document. */
+  chunkId?: string;
+  /** Heading stack, so a citation can name the section it came from. */
+  headingPath?: string[];
 };
 
 // Structured UI blocks rendered alongside or instead of prose content.

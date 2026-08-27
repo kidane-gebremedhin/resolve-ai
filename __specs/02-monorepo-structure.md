@@ -220,6 +220,22 @@ customer-service-chatbot/
 │   │   ├── tsconfig.json
 │   │   └── package.json
 │   │
+│   ├── rag-eval/                     # Offline RAG evaluation harness
+│   │   ├── src/
+│   │   │   ├── cli.ts                # `pnpm eval:rag`
+│   │   │   ├── fixtures.ts           # Seeds the fixture org/agent/KB
+│   │   │   ├── runner.ts             # Calls searchKb + generateAiReply
+│   │   │   ├── judge.ts              # LLM-as-judge + verdict cache
+│   │   │   ├── cost.ts               # Cost settle pass
+│   │   │   ├── report.ts             # Table, JSON, baseline diff
+│   │   │   └── metrics/              # Pure, unit-tested metric functions
+│   │   ├── fixtures/
+│   │   │   ├── kb/*.md               # The fixture knowledge base
+│   │   │   └── golden.json           # Golden cases
+│   │   ├── reports/                  # Run artefacts (gitignored)
+│   │   ├── tsconfig.json             # `@api/*` path into apps/api
+│   │   └── package.json
+│   │
 │   └── config/                       # Shared configs
 │       ├── eslint/
 │       │   └── base.js

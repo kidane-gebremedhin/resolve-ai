@@ -39,3 +39,22 @@ export class ConflictError extends ApiError {
     super(409, "conflict", message);
   }
 }
+
+// Password was correct, but the account has 2FA enabled and no code was
+// supplied. Deliberately distinct from UnauthorizedError: the client needs to
+// tell "wrong password" (show an error) apart from "now ask for the code"
+// (show the second field). It is only ever reachable AFTER the password check
+// passes, so it reveals nothing to someone who does not already hold valid
+// credentials.
+export class TotpRequiredError extends ApiError {
+  constructor(message = "A two-factor code is required.") {
+    super(401, "totp_required", message);
+  }
+}
+
+// 2FA code supplied but wrong, expired, or an already-used recovery code.
+export class InvalidTotpError extends ApiError {
+  constructor(message = "That two-factor code is not valid.") {
+    super(401, "invalid_totp", message);
+  }
+}

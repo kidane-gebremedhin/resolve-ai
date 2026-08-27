@@ -2,12 +2,60 @@
 
 ## Overview
 
-The system uses **one shared AI agent service** — a single codebase agent that runs for all organizations. Per-org customization is achieved through:
-- Organization-scoped KB search (Pinecone namespace isolation)
-- Per-agent configuration (system prompt additions, model overrides)
-- Tool-call gating (subscription plan limits)
+The system uses **one shared AI agent** — a single LangGraph `StateGraph` that runs for all
+organizations. Per-org customization is achieved through:
 
-There is **no per-org deployed agent instance**.
+- Organization-scoped KB retrieval (Pinecone, AND-scoped to `organizationId` + `agentId`)
+- Per-agent configuration (system prompt additions, model, temperature)
+- A tool set assembled per conversation from that org's active integration connections
+
+There is **no per-org deployed agent instance**, and no per-org graph. The compiled graph is a
+process-wide singleton; everything conversation-specific arrives per invocation through
+`configurable.turnContext`.
+
+### Framework
+
+The agent is built on **LangGraph** (`@langchain/langgraph`) with **LangChain** primitives
+(`@langchain/core`, `@langchain/openai`). This buys three things the previous hand-rolled loop
+had to implement itself: a declarative, testable control-flow graph; a standard tool abstraction
+with schema validation and `content_and_artifact` results; and first-class streaming and tracing.
+
+> **Provider note.** The chat model is instantiated as `ChatOpenAICompletions`, **not** the
+> umbrella `ChatOpenAI` class. `ChatOpenAI` silently routes some model ids (gpt-5, the o-series)
+> to OpenAI's `/responses` endpoint, which OpenRouter does not implement — the call would 404
+> for exactly the newest models. The completions class always speaks `/chat/completions`, the
+> only surface OpenRouter exposes.
+
+---
+
+## Module Layout
+
+```
+apps/api/src/services/ai/
+├── index.ts                  Engine facade — the ONLY entry point callers use
+├── llm/
+│   ├── chat-model.ts         createChatModel(): the single LLM factory (OpenRouter)
+│   └── tracing.ts            LangSmith bootstrap + per-run trace metadata
+├── retrieval/
+│   ├── embeddings.ts         KbEmbeddings — LangChain Embeddings over embedding.service
+│   └── kb-retriever.ts       KnowledgeBaseRetriever — BaseRetriever over Pinecone
+├── tools/
+│   ├── builtin.tools.ts      search_kb, escalate, resolve, request_form
+│   ├── integration.tools.ts  One tool per connected capability (dispatcher wrapper)
+│   ├── input-gate.ts         Does this call have what it needs, or ask the customer?
+│   ├── registry.ts           Assembles the conversation's complete tool set
+│   └── types.ts              ToolArtifact / ToolRegistry
+├── graph/
+│   ├── agent.graph.ts        The StateGraph and its routing
+│   ├── state.ts              AgentStateAnnotation (channels + reducers)
+│   ├── context.ts            TurnContext passed via configurable
+│   ├── nodes/                agent · tools · finalize
+│   └── runner.ts             Turn orchestration: stream, persist, broadcast
+├── chains/                   LCEL chains: enhance · suggestions · transcript
+├── shared/                   forms · attachments · controls · sanitize
+├── prompts.ts                Layered system-prompt assembly
+└── agent.service.ts          FROZEN legacy engine (rollback only)
+```
 
 ---
 
@@ -15,41 +63,31 @@ There is **no per-org deployed agent instance**.
 
 ```mermaid
 flowchart TD
-    subgraph Widget
-        A[Customer message]
-    end
-    
-    subgraph API Server
-        B[Message Controller]
-        C[Agent Service]
-        D[Tool Router]
-    end
-    
-    subgraph Tools
-        E[search - KB RAG]
-        F[resolveConversation]
-        G[escalateConversation]
-    end
-    
-    subgraph External
-        H[LLM Provider - OpenRouter]
-        I[Pinecone - org namespace]
-        J[MongoDB]
-    end
-    
-    A --> B
-    B --> C
-    C --> H
-    H -->|tool_call| D
-    D --> E
-    D --> F
-    D --> G
-    E --> I
-    F --> J
-    G --> J
-    H -->|text response| B
-    B -->|Socket.io| A
+    A[Customer message] --> R[runner.ts<br/>build TurnContext]
+    R -->|presentToolResult| F
+    R --> AG[agent node]
+    AG -->|tool_calls| GT{input gate}
+    AG -->|no tool_calls| F[finalize node]
+    GT -->|ready| TE[tools node<br/>execute]
+    GT -->|missing inputs| FM[form block<br/>halt turn]
+    GT -->|no slot chosen| ST[steer to<br/>list_calendar_slots]
+    TE -->|halt / OTP| F
+    TE --> AG
+    ST --> AG
+    FM --> F
+    F --> P[persist + emit]
+
+    TE -.-> KB[(Pinecone<br/>org+agent scoped)]
+    TE -.-> DISP[dispatcher<br/>guardrails · OTP · audit]
+    F -.->|streamed tokens| WS[Socket.IO<br/>message:delta]
 ```
+
+The loop is bounded three ways:
+
+1. the model choosing not to call a tool,
+2. a tool **halting** the turn to wait on the customer (inline form or OTP), and
+3. a hard ceiling on agent↔tool round trips (`AI_MAX_TOOL_TURNS`, default 10), so a model stuck
+   on a failing tool cannot burn an org's budget.
 
 ---
 
@@ -264,98 +302,86 @@ const AGENT_TOOLS: Tool[] = [
 
 ## Agent Execution Flow
 
-### Message Processing Pipeline
+### Graph state
 
-```typescript
-async function processCustomerMessage(params: {
-  conversationId: string;
-  orgId: string;
-  content: string;
-}): Promise<void> {
-  const { conversationId, orgId, content } = params;
-  
-  // 1. Load context
-  const conversation = await Conversation.findById(conversationId);
-  if (conversation.status === 'resolved') {
-    // Reopen conversation on new message
-    conversation.status = 'active';
-    await conversation.save();
-  }
-  
-  // If escalated, DO NOT auto-reply (operators handle it)
-  if (conversation.status === 'escalated') {
-    return; // Message saved but no AI response
-  }
-  
-  const org = await Organization.findById(orgId);
-  const agent = await Agent.findById(conversation.agentId);
-  const contactSession = await ContactSession.findById(conversation.contactSessionId);
-  
-  // 2. Load conversation history (last N messages for context window)
-  const history = await Message.find({ conversationId })
-    .sort({ createdAt: 1 })
-    .limit(50) // Keep context manageable
-    .lean();
-  
-  // 3. Build system prompt
-  const systemPrompt = buildSystemPrompt({ agent, org, conversation, contactSession });
-  
-  // 4. Build messages array
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...history.map(msg => ({
-      role: msg.role === 'customer' ? 'user' 
-           : msg.role === 'operator' ? 'user'  // Operator msgs appear as context
-           : 'assistant',
-      content: msg.role === 'operator' 
-        ? `[Operator ${msg.senderName}]: ${msg.content}` 
-        : msg.content
-    })),
-    { role: 'user', content } // Current message
-  ];
-  
-  // 5. Call LLM with tools (structured output includes confidence)
-  const response = await callLLM({
-    model: agent.model || process.env.DEFAULT_LLM_MODEL,
-    messages,
-    tools: AGENT_TOOLS,
-    temperature: agent.temperature || 0.7,
-    responseFormat: 'structured' // Requests { content, confidence } format
-  });
-  
-  // 6. Handle tool calls
-  if (response.toolCalls) {
-    for (const toolCall of response.toolCalls) {
-      await executeToolCall(toolCall, { conversation, orgId });
-    }
-    
-    // If tool calls produced results, make another LLM call to generate response
-    if (hasSearchResults(response.toolCalls)) {
-      // Re-call with tool results in context
-      const finalResponse = await callLLMWithToolResults(messages, response.toolCalls);
-      // 6a. Check confidence on final response
-      const confidenceOk = await handleConfidenceCheck(
-        finalResponse, agent, conversation, orgId
-      );
-      if (!confidenceOk) return; // Escalated — stop AI processing
-      await saveAndEmitMessage(conversationId, orgId, finalResponse.content, 'ai', {
-        confidence: finalResponse.confidence
-      });
-    }
-  } else {
-    // 7. Check confidence before saving response
-    const confidenceOk = await handleConfidenceCheck(
-      response, agent, conversation, orgId
-    );
-    if (!confidenceOk) return; // Escalated — stop AI processing
-    
-    // 8. Save AI response and emit via Socket.io
-    await saveAndEmitMessage(conversationId, orgId, response.content, 'ai', {
-      confidence: response.confidence
-    });
-  }
-}
-```
+State is **per-turn and in-memory**. MongoDB's `Message` collection remains the single source of
+truth for conversation history, and every turn rebuilds its message list from there. There is
+deliberately **no checkpointer**: a second durable store of the same conversation would have to
+be kept in sync with the operator inbox, and nothing here needs to resume across process
+restarts.
+
+| Channel | Reducer | Purpose |
+|---------|---------|---------|
+| `messages` | `messagesStateReducer` | System + history + tool traffic |
+| `blocks` | append | Rich UI blocks (cards, forms, OTP, link previews) |
+| `kbHits` | append | Retrieved passages, deduped into citations at the end |
+| `queryRewrites` | append | What each `search_kb` call actually embedded, before and after rewriting |
+| `retrievalStats` | append | One entry per embedded query: hit count, applied floor, `widenedOnEmpty`, latency. Parallel to `kbHits` rather than folded into it — `kbHits` is what survived to the prompt, these are what every search *did*, including the searches that returned nothing |
+| `toolCallLog` | append | Tool trace persisted on the AI message for the inbox |
+| `generationIds` | append | OpenRouter ids used to price the turn afterwards |
+| `halt` | logical OR (latches) | A tool has handed control to the customer |
+| `conflicted` | logical OR (latches) | Two sources contradicted each other on the queried fact |
+| `toolTurns` | sum | Round trips so far, checked against the ceiling |
+| `replyText` / `confidence` / `action` / `quickReplies` | last write | Finalize node output |
+| `generationStats` | last write | Finalize's own latency, answer length and citation counts, measured where the numbers are in hand. Consumed by online telemetry ([`39-rag-evaluation.md`](39-rag-evaluation.md)) |
+
+### Nodes
+
+**`agent`** — binds the conversation's tools to the model and invokes it. On failure it logs and
+returns no message, which routes straight to `finalize`: the customer still gets an answer, just
+without further tool use. LangChain has already exhausted its retries by that point.
+
+**`tools`** — for each requested call: consult the input gate, execute, then fold the result's
+`ToolArtifact` into state (blocks, KB hits, retrieval stats, halt). A tool that throws returns an error result to
+the model rather than crashing the reply. Built-in calls are written to `ToolCallLog`;
+integration calls are audited inside the dispatcher, which sees the connection and credentials
+this layer deliberately never touches.
+
+**`finalize`** — runs two calls concurrently:
+
+- a **streaming** prose call, tagged `final_reply`, so the runner can pick its tokens out of the
+  graph's event stream and forward them as `message:delta` within a few hundred milliseconds; and
+- a cheap **structured meta pass** (`withStructuredOutput`) returning `{confidence, action,
+  quickReplies}`.
+
+They are separate precisely so the visible reply can stream as plain text instead of arriving as
+one JSON blob at the end. A failure in either degrades independently — a dead meta pass leaves
+defaults, a dead stream leaves a non-committal apology and reports to Sentry.
+
+### The input gate
+
+Before any integration tool runs, `gateToolInput()` decides whether the model actually supplied
+what it needs. It returns one of three decisions:
+
+| Decision | When | Effect |
+|----------|------|--------|
+| `ready` | Every customer-supplied required field is present | Dispatch |
+| `collect` | A required field is missing or is a `[PLACEHOLDER]` | Render an inline form, halt the turn |
+| `steer` | `book_meeting` with no slot chosen yet | Tell the model to list slots first |
+
+This lives in the graph rather than inside the tool for two reasons. It is a control-flow
+decision — execute, or interrupt and ask — which is what a node is for. And LangChain validates a
+tool's arguments against its JSON schema *before* the tool body runs, so a call missing a
+required field would be rejected before any tool code could react to it.
+
+Custom webhooks are a special case: once their form is triggered it renders the operator's
+**entire** input schema, not just the missing-required subset, because the operator defined those
+fields precisely so they must all be supplied.
+
+### Turn orchestration (`graph/runner.ts`)
+
+1. Load agent, organization, recent history (20 messages) and contact session.
+2. Read org conversation controls and PII-redaction setting.
+3. Build the tool registry from this org's active `ToolDefinition`s.
+4. Assemble the layered system prompt and the LangChain message list (masking PII, inlining
+   image attachments as vision parts).
+5. Run the graph with `streamEvents({ version: "v2" })`, forwarding `on_chat_model_stream`
+   events tagged `final_reply` to the widget as `message:delta`.
+6. Apply org conversation controls to the chosen action (defence in depth beyond the prompt).
+7. Persist the AI message, emit `message:done` / `message:new`, record usage.
+
+The streaming placeholder message is created **lazily on the first token**, so a turn that fails
+before generating anything does not leave an empty message behind.
 
 ### Reliability & Resilience (must-hold guarantees)
 
@@ -384,74 +410,56 @@ uncaught throw means the customer **never** hears back. The implementation in
 
 ### Tool Execution
 
-```typescript
-async function executeToolCall(
-  toolCall: ToolCall,
-  context: { conversation: Conversation; orgId: string }
-) {
-  switch (toolCall.function.name) {
-    case 'search': {
-      const { query } = JSON.parse(toolCall.function.arguments);
-      const results = await searchKnowledgeBase(context.orgId, { query });
-      return { toolCallId: toolCall.id, content: JSON.stringify(results) };
-    }
-    
-    case 'resolveConversation': {
-      const { summary } = JSON.parse(toolCall.function.arguments);
-      await Conversation.updateOne(
-        { _id: context.conversation._id },
-        {
-          status: 'resolved',
-          resolvedAt: new Date(),
-          resolvedBy: 'ai',
-          'metadata.resolutionSummary': summary
-        }
-      );
-      // Emit status change via Socket.io
-      io.to(`conversation:${context.conversation._id}`).emit('conversation:status', {
-        conversationId: context.conversation._id,
-        status: 'resolved',
-        resolvedBy: 'ai'
-      });
-      // Also notify org inbox
-      io.to(`org:${context.orgId}`).emit('conversation:updated', {
-        conversationId: context.conversation._id,
-        status: 'resolved'
-      });
-      return { toolCallId: toolCall.id, content: 'Conversation resolved successfully.' };
-    }
-    
-    case 'escalateConversation': {
-      const { reason, priority } = JSON.parse(toolCall.function.arguments);
-      await Conversation.updateOne(
-        { _id: context.conversation._id },
-        {
-          status: 'escalated',
-          escalatedAt: new Date(),
-          'metadata.escalationReason': reason,
-          'metadata.priority': priority || 'medium'
-        }
-      );
-      // Emit to org inbox for operator pickup
-      io.to(`org:${context.orgId}`).emit('conversation:escalated', {
-        conversationId: context.conversation._id,
-        reason,
-        priority: priority || 'medium'
-      });
-      // Save system message
-      await saveAndEmitMessage(
-        context.conversation._id,
-        context.orgId,
-        `Conversation escalated: ${reason}`,
-        'system'
-      );
-      return { toolCallId: toolCall.id, content: 'Conversation escalated to human operator.' };
-    }
-  }
-}
+Every tool is a LangChain `StructuredTool` built with `tool()` and
+`responseFormat: "content_and_artifact"`. A tool therefore returns **two** things:
+
+- **content** — JSON the model reads, and
+- **artifact** — everything else the turn needs but the model must not see: rich blocks to
+  render, KB hits to cite, and whether the turn must now halt.
+
+```ts
+type ToolArtifact = {
+  blocks?: MessageBlock[];          // cards, forms, OTP prompts
+  kbHits?: KbHit[];                 // citations
+  queryRewrite?: QueryRewriteRecord; // what was actually embedded
+  retrievalStats?: RetrievalStats[]; // one entry per embedded query, for telemetry
+  noRelevantEvidence?: boolean;     // a calibrated reranker rejected every candidate
+  conflicted?: boolean;             // two sources disagree on the queried fact
+  halt?: boolean;                   // something now awaits the customer
+  status?: "success" | "error";
+};
 ```
 
----
+#### Built-in tools
+
+| Tool | Behaviour |
+|------|-----------|
+| `search_kb` | Retrieves via `KnowledgeBaseRetriever`. If the configured score floor filters everything out, it retries once with no floor — "no hits" pushes the model into premature escalation. Logs a `KnowledgeGap` when the best score is below `AI_KB_GAP_SCORE_THRESHOLD`. |
+| `escalate_conversation` | A **signal**, not an action. Removed from the tool set entirely when the org disables human escalation, so the model cannot ask for a handoff it isn't allowed to make. |
+| `resolve_conversation` | A **signal**. The real status change is decided after the reply and filtered through the org's two-step resolve confirmation. |
+| `request_form` | Renders an inline form for an integration tool's inputs. Only offered when the agent actually has integration tools. |
+
+#### Integration tools
+
+One tool per capability key, built from the operator's `ToolDefinition.jsonSchema`. The
+non-obvious work is reconciling **many connections to one offered tool**: an org can connect both
+Stripe and Paddle, each exposing `get_subscription`. Duplicate function names 400 the entire
+request, so the key is offered **once** — the operator's configured priority picks the primary's
+schema and description, and the rest become ordered fallbacks the dispatcher walks:
+
+- a **hard error** falls through to the next connection;
+- a **soft miss** (`{found: false}`) also falls through — the record may live in the other
+  provider — and the last miss stands if every connection misses;
+- a **guardrail block, OTP challenge or rate limit** stops the chain, because it is intentional
+  rather than a failure.
+
+For plan-change tools the offered schema carries the **union** of every connection's `targetPlan`
+enum, so the model can request any plan any connected provider offers.
+
+Two safety rules are enforced regardless of what the model asks for: `create_support_ticket`
+results are stripped of `url`/`browseUrl` keys before the model sees them (or it offers the
+customer an internal "track it here" link), and every operator-authored schema is coerced to a
+valid object schema so one malformed webhook definition cannot poison the whole tools array.
 
 ## Confidence Monitoring & Auto-Escalation
 
@@ -627,84 +635,83 @@ When quota exceeded:
 
 ## LLM Provider Integration
 
-### OpenRouter / OpenAI-Compatible API
+### The single chat-model factory
 
-```typescript
-import OpenAI from 'openai';
+Every LLM call in the API — the agent, the meta pass, operator draft polish, reply suggestions,
+ticket transcript scoping — goes through `createChatModel()`, so timeouts, retries and provider
+routing are configured in exactly one place.
 
-const llmClient = new OpenAI({
-  baseURL: process.env.LLM_BASE_URL,
-  apiKey: process.env.LLM_API_KEY,
-});
-
-async function callLLM(params: {
-  model: string;
-  messages: ChatMessage[];
-  tools?: Tool[];
-  temperature?: number;
-  responseFormat?: 'structured' | 'text';
-}): Promise<LLMResponse> {
-  // When structured format is requested, use JSON schema to get confidence score
-  const responseFormat = params.responseFormat === 'structured' ? {
-    type: 'json_schema' as const,
-    json_schema: {
-      name: 'ai_response',
-      schema: {
-        type: 'object',
-        properties: {
-          content: { type: 'string', description: 'The response text to show the customer' },
-          confidence: { type: 'number', description: 'Self-assessed confidence 0.0–1.0' }
-        },
-        required: ['content', 'confidence']
-      }
-    }
-  } : undefined;
-
-  const response = await llmClient.chat.completions.create({
-    model: params.model,
-    messages: params.messages,
-    tools: params.tools,
-    temperature: params.temperature || 0.7,
-    max_tokens: 1024,
-    ...(responseFormat && { response_format: responseFormat }),
+```ts
+// services/ai/llm/chat-model.ts
+export function createChatModel(opts: ChatModelOptions = {}): ChatOpenAICompletions {
+  const model = new ChatOpenAICompletions({
+    model: opts.model ?? env.ai.model,
+    temperature: opts.temperature ?? env.ai.temperature,
+    streaming: opts.streaming ?? false,
+    ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+    streamUsage: true,                       // usage block on the final streaming chunk
+    apiKey: process.env.OPENROUTER_API_KEY ?? "not-configured",
+    timeout: env.ai.llmTimeoutMs,
+    maxRetries: env.ai.llmMaxRetries,        // transient failures only; 4xx surfaces immediately
+    configuration: { baseURL: OPENROUTER_URL },
   });
-  
-  const rawContent = response.choices[0].message.content;
-  let content = rawContent;
-  let confidence = 1.0; // Default if not structured
-  
-  // Parse structured response
-  if (params.responseFormat === 'structured' && rawContent) {
-    try {
-      const parsed = JSON.parse(rawContent);
-      content = parsed.content;
-      confidence = parsed.confidence;
-    } catch {
-      // Fallback: treat as plain text with full confidence
-      content = rawContent;
-      confidence = 1.0;
-    }
-  }
-  
-  return {
-    content,
-    confidence,
-    toolCalls: response.choices[0].message.tool_calls,
-    usage: response.usage
-  };
+  return opts.tags || opts.runName ? model.withConfig({ ... }) : model;
 }
 ```
 
-### Model Configuration
+Retry/backoff is LangChain's, not hand-rolled: `maxRetries` covers 429s, 5xx and socket resets
+with exponential backoff, while a 4xx surfaces immediately as it should.
 
-| Setting | Default | Override |
-|---------|---------|---------|
-| Model | `openai/gpt-4o-mini` | Per-agent `model` field |
-| Temperature | `0.7` | Per-agent `temperature` field |
-| Max tokens | `1024` | Environment variable |
-| Base URL | OpenRouter | Environment variable |
-| Confidence threshold | `0.7` | Per-agent `confidenceThreshold` field or `AI_CONFIDENCE_THRESHOLD` env var |
-| Response format | `structured` | Always structured (includes confidence score) |
+**`maxTokens` is left unset on the answering path** — the model should decide how long a reply
+needs to be — and **set on every call with a small, fixed output shape**: the conflict check
+(`{conflicted, reason}`) and the faithfulness judge (a short JSON verdict). This is not a cost
+optimisation. OpenRouter reserves the full `max_tokens` against the account balance *before* the
+call runs, so an uncapped call to a model whose default ceiling is 64k tokens returns `402 ...
+requires more credits` on a perfectly healthy balance. Both of those call sites swallow their own
+errors by design, so the symptom is not an error — it is contradiction detection and online
+faithfulness silently switching themselves off.
+
+### Usage metering
+
+OpenRouter's **generation id** is what its cost API is keyed on. LangChain copies the raw
+response `id` onto the message for both streamed and non-streamed calls, so `generationIdOf()`
+reads `message.id`. The runner collects every id produced during a turn and hands them to
+`recordConversationUsage()` after the reply is persisted.
+
+### Degrading without a key
+
+`isLlmConfigured()` is false when `OPENROUTER_API_KEY` is unset (dev, CI). Every caller degrades
+rather than failing the request: suggestions return deterministic fallbacks, draft polish returns
+the operator's own text, and transcript scoping falls back to a trailing window.
+
+---
+
+## Entry Point
+
+`services/ai/index.ts` exports `generateAiReply`, the single function the rest of the API calls to
+answer a customer turn. It runs the graph described above — there is no alternative implementation
+and no engine switch.
+
+There is deliberately no engine switch: one implementation, one code path. A bad AI deploy is rolled
+back by redeploying the previous image, like any other part of the API.
+
+The facade earns its place as the seam callers depend on — `services/ai/shared/` holds the
+form-building, attachment, sanitisation and conversation-control helpers, so graph nodes and the
+operator-facing side chains share one copy of each.
+
+---
+
+## Observability — LangSmith (optional)
+
+Tracing is **off by default** and requires *both* `LANGSMITH_TRACING=true` and a non-empty
+`LANGSMITH_API_KEY`. `initLangSmithTracing()` (called once at API startup) is the single place
+that sets the SDK's environment variables, and it actively **clears** them when tracing is
+disabled — a stray `LANGSMITH_TRACING` in a deployment environment must never start shipping
+customer conversation text to a third party.
+
+When enabled, each turn is traced as one run named `customer_reply`, tagged `org:<id>` and
+`agent:<id>`, with the conversation id in metadata. Only primitive `configurable` values reach
+LangSmith metadata, so the tool registry and its closures never appear in a trace payload.
 
 ---
 
@@ -745,3 +752,38 @@ function truncateHistory(messages: Message[], maxTokens: number = 6000): Message
   return result;
 }
 ```
+
+---
+
+## When the knowledge base contradicts itself (Changelog 14)
+
+Spec: [`44-knowledge-conflicts.md`](44-knowledge-conflicts.md).
+
+Retrieval can return two passages that cannot both be true — an old refund policy
+and a new one, two crawled pages with different prices. Both are relevant, both
+clear the score floor, and relevance cannot separate them: the stale document
+often scores *higher*, because it was written when the topic was fresher.
+
+**Detection is gated on scores, not decided by them.** A cross-encoder scores
+relevance, not agreement; two passages both scoring 0.9 is what a contradiction
+looks like and also what a well-covered topic looks like. So the score gap gates
+a narrow model call rather than serving as the detector, which keeps the common
+single-source turn free of any extra call.
+
+**Resolution is priority, then recency, then relevance.** Priority first because
+it is the only signal a human set deliberately. Relevance last and reluctantly,
+because it says which passage matches the question, not which is correct.
+
+**An unbreakable tie escalates.** When nothing separates two sources, the agent
+is told to say the documentation is inconsistent and hand off, rather than pick.
+Picking would be a coin flip presented as an answer.
+
+The losing source's passages remain in the prompt; the agent is told which is
+authoritative and told not to merge. A merged answer is the worst outcome — it is
+confident and it exists in no document.
+
+Conflicts are surfaced to operators as `KnowledgeGap` records with
+`kind: "conflict"`, kept separate from gaps because the fixes differ: a gap is
+filled by writing a document, a conflict by deciding which existing document is
+right.
+

@@ -14,6 +14,7 @@ import {
   createOrgWithOwner,
   createSession,
   createWebsite,
+  grantPlan,
 } from "../test/factories.js";
 import { ContactSession, Conversation } from "../models/index.js";
 import { env } from "../config/env.js";
@@ -101,6 +102,10 @@ describe("widget session lifecycle", () => {
 
   it("POST /widget/conversations/:id/messages with a valid session token works (sanity check on the middleware contract)", async () => {
     const a = await createOrgWithOwner(app, { email: "widget-200@example.com" });
+    // Unsubscribed orgs get a message quota of 0, so the widget is paywalled
+    // from the very first message. Grant a plan to reach the middleware
+    // contract this test is actually about.
+    await grantPlan(a.orgId);
     const site = await createWebsite({ orgId: a.orgId, domain: "msg2.example.com" });
     const agent = await createAgent({ orgId: a.orgId, websiteId: site._id });
 
@@ -124,5 +129,34 @@ describe("widget session lifecycle", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.message?.content).toBe("hello from the widget");
+  });
+
+  // The paywall is deliberate: an org with no subscription has a quota of zero,
+  // so the widget is gated from the FIRST message rather than after a free
+  // allowance. This test exists so that decision can't be reversed by accident —
+  // if a free tier is introduced later, this is the test that should fail first.
+  it("POST /widget/conversations/:id/messages is paywalled for an org with no subscription", async () => {
+    const a = await createOrgWithOwner(app, { email: "widget-402@example.com" });
+    const site = await createWebsite({ orgId: a.orgId, domain: "paywall.example.com" });
+    const agent = await createAgent({ orgId: a.orgId, websiteId: site._id });
+    const session = await createSession(app, { domain: "paywall.example.com" });
+
+    const conv = await Conversation.create({
+      threadId: crypto.randomUUID(),
+      organizationId: a.orgId,
+      websiteId: site._id,
+      agentId: agent._id,
+      contactSessionId: new mongoose.Types.ObjectId(session.sessionId),
+      status: "active",
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/widget/conversations/${String(conv._id)}/messages`)
+      .set("X-Session-Token", session.sessionToken)
+      .send({ content: "hello from an unsubscribed org" });
+
+    expect(res.status).toBe(402);
+    expect(res.body.error?.code).toBe("plan_limit_exceeded");
+    expect(res.body.error?.limit).toBe(0);
   });
 });

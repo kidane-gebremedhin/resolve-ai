@@ -1,8 +1,7 @@
-import { Router, type Request, type Response, type NextFunction } from "express";
+import { Router } from "express";
 import mongoose from "mongoose";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import {
-  Agent,
   Conversation,
   ConversationRating,
   KnowledgeGap,
@@ -11,49 +10,17 @@ import {
   MessageFeedback,
   ToolCallLog,
 } from "../models/index.js";
-
-// Resolve the agent ids that belong to a website (for scoping org-level metrics
-// like knowledge gaps / KB sources, which are keyed by agent, to one website).
-async function agentIdsForWebsite(
-  orgId: unknown,
-  websiteId: string,
-): Promise<mongoose.Types.ObjectId[]> {
-  const agents = await Agent.find(
-    { organizationId: orgId, websiteId: new mongoose.Types.ObjectId(websiteId) },
-    { _id: 1 },
-  ).lean();
-  return agents.map((a) => a._id as mongoose.Types.ObjectId);
-}
+// Date-range parsing, org scoping and the website→agents resolver are shared
+// with the RAG metrics routes. Two implementations of "last 30 days" in one
+// product means two pages that disagree and nobody able to say which is right.
+import {
+  agentIdsForWebsite,
+  orgObjectId,
+  parseDateRange,
+  wrap,
+} from "./shared/analytics-scope.js";
 
 const router = Router();
-
-function wrap(fn: (req: Request, res: Response) => Promise<void>) {
-  return (req: Request, res: Response, next: NextFunction) =>
-    fn(req, res).catch(next);
-}
-
-// req.orgId comes from the JWT payload as a STRING. Mongoose `.find()` auto-casts
-// it to ObjectId, but aggregation-pipeline `$match` does NOT — a string compared
-// against an ObjectId-typed field silently matches nothing. Always wrap orgId in
-// an ObjectId before using it inside an aggregate $match.
-function orgObjectId(req: Request): mongoose.Types.ObjectId {
-  return new mongoose.Types.ObjectId(String(req.orgId));
-}
-
-// Parse either ?from=YYYY-MM-DD&to=YYYY-MM-DD or ?days=N into a {since, until} range.
-function parseDateRange(query: Request["query"], defaultDays = 30): { since: Date; until: Date; days: number } {
-  if (typeof query.from === "string" && typeof query.to === "string") {
-    const since = new Date(query.from);
-    const until = new Date(query.to + "T23:59:59.999Z");
-    if (!isNaN(since.getTime()) && !isNaN(until.getTime()) && since <= until) {
-      const days = Math.ceil((until.getTime() - since.getTime()) / (24 * 60 * 60 * 1000));
-      return { since, until, days };
-    }
-  }
-  const daysRaw = parseInt(String(query.days ?? defaultDays), 10);
-  const days = Math.min(Math.max(Number.isFinite(daysRaw) ? daysRaw : defaultDays, 1), 365);
-  return { since: new Date(Date.now() - days * 24 * 60 * 60 * 1000), until: new Date(), days };
-}
 
 // GET /analytics/knowledge-gaps
 // Returns top unanswered questions ranked by occurrence count.

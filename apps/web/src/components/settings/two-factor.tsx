@@ -208,7 +208,7 @@ export function TwoFactor({ initialEnabled }: Props) {
           <div className="space-y-5">
             <div className="grid gap-5 sm:grid-cols-[200px_1fr]">
               <div className="flex h-[200px] w-[200px] items-center justify-center rounded-md border border-border bg-white p-2">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
+                { }
                 <Image
                   src={setup.qrCodeDataUrl}
                   alt="2FA QR code"

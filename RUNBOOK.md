@@ -427,9 +427,32 @@ service definitions. Best for a single-server "everything together" deployment.
 **Option B — one resource per app.** Create a
 separate **Dockerfile** resource per app (api, web, admin, widget, embed) from
 the same repo, each pointed at its `apps/<app>/Dockerfile`. This lets each app
-scale, redeploy, and get its own domain independently. Add Coolify's one-click
+redeploy and get its own domain independently. Add Coolify's one-click
 **MongoDB** and **Redis** databases (or use MongoDB Atlas) and wire their
 connection strings into the API's env.
+
+> ### ⚠️ The API runs at exactly ONE replica
+>
+> The web, admin, widget and embed apps are stateless and scale freely. **The
+> API does not.** It keeps state in process memory that a second instance
+> cannot see, and every failure mode is silent — no error, no alert, just a
+> fraction of users getting wrong behaviour:
+>
+> | In-process state | What a second replica breaks |
+> |---|---|
+> | Socket.IO rooms (no Redis adapter) | A visitor connected to instance A never receives events emitted by instance B. Streaming replies, operator messages and typing indicators simply stop arriving for part of your traffic. |
+> | OTP codes (`otpService.ts`) | A code issued by A cannot be verified by B, so identity-verified tool calls fail at random. |
+> | Widget + integration rate limits | Each replica counts separately, so the effective limit multiplies by replica count. |
+> | Background jobs (`setInterval`) | Firecrawl ingestion and embedding reconciliation run concurrently on every replica, duplicating work and cost. |
+>
+> Redis is already provisioned and `REDIS_URL` is read, but **nothing connects
+> to it yet** — provisioning it does not make the API scalable. Lifting this
+> limit means adding `@socket.io/redis-adapter`, moving the OTP and rate-limit
+> stores to Redis, and giving the jobs a distributed lock or their own worker
+> process.
+>
+> Until that work lands: keep the API resource at **1 instance** in Coolify and
+> scale vertically (more CPU/RAM) rather than horizontally.
 
 ### 10.4 Environment variables
 
@@ -516,13 +539,47 @@ restart unhealthy containers (`restart: unless-stopped`). Verify a deploy with
 | Reset everything (empty DB) | `pnpm dev:infra:reset && pnpm db:migrate` |
 | Scrub website names off old agents | `pnpm --filter @csb/api agents:clean-names` (add `-- --apply` to write) |
 
+### 11.1 AI reply engine
+
+The agent that answers customer messages is a LangGraph state graph
+(`apps/api/src/services/ai/graph/`) — `agent → tools → finalize`, described in
+[`__specs/05-ai-agent-design.md`](__specs/05-ai-agent-design.md).
+
+It is the only implementation — there is no engine switch to set. **Roll back a bad AI deploy by
+redeploying the previous API image**, the same as any other part of the API.
+
+Two knobs bound a turn's cost: `AI_MAX_TOOL_TURNS` (default 10) caps agent↔tool round trips, and
+`AI_LLM_TIMEOUT_MS` / `AI_LLM_MAX_RETRIES` bound each upstream call.
+
+### 11.2 LangSmith tracing (optional)
+
+Tracing records every graph node, LLM call and tool call for the agent — invaluable when a
+tool-heavy conversation goes wrong. It is **off by default and must stay that way unless you
+intend it**: traces contain customer message content, which leaves your infrastructure.
+
+Enable it by setting **both**:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_pt_xxx
+# optional
+LANGSMITH_PROJECT=customer-service-chatbot
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+```
+
+A missing or empty API key keeps tracing off regardless of the flag, and startup actively clears
+the SDK's environment variables in that case. Each turn appears as one `customer_reply` run,
+tagged `org:<id>` and `agent:<id>`, with the conversation id in metadata.
+
 ## 12. Troubleshooting
 
 - **`pnpm install` fails on lifecycle scripts** — run `pnpm approve-builds` to whitelist native deps, then retry.
 - **API can't reach Mongo** — confirm `pnpm dev:infra` is up and `MONGODB_URI` in `.env` points to `localhost:27017` (or `mongo:27017` inside the full stack).
 - **Web app shows blank dashboard** — check NextAuth: `NEXTAUTH_SECRET` set and `GOOGLE_CLIENT_ID/SECRET` valid.
 - **`pnpm dev` rebuilds packages every time** — Turbo's cache may be stale; `pnpm clean && pnpm install`.
-- **Widget loads but no AI replies** — verify `OPENROUTER_API_KEY` and `AI_MODEL`; check API logs for `429` (rate limit) or `401` (bad key).
+- **Widget loads but no AI replies** — verify `OPENROUTER_API_KEY` and `AI_MODEL`; check API logs for `429` (rate limit) or `401` (bad key). With LangSmith enabled (§11.2), the failing turn's trace shows exactly which node stopped.
+- **A `/responses` 404 from OpenRouter** — something is constructing `ChatOpenAI` instead of `ChatOpenAICompletions`. The umbrella class routes newer model ids (gpt-5, o-series) to OpenAI's Responses API, which OpenRouter does not implement. Build models through `createChatModel()` in `services/ai/llm/chat-model.ts`.
+- **Agent stops mid-action without replying** — expected when a tool halts the turn to wait on the customer (an inline form or an OTP challenge). Look for a `form` or `otp` block on the last AI message.
 - **Embed test page shows the error screen** — the `data-agent` is stale or missing. Copy a fresh snippet from `/app/developers` (the DB ships empty, so create an agent first), and serve the HTML over HTTP, not `file://` (see §7).
 - **Phase-specific failures** — consult the matching plan in [`__plans/`](__plans/) and the procedure in [`__skills/`](__skills/).
 
@@ -599,6 +656,508 @@ plan changes stay in sync:
   connection is actually serving (sandbox vs production). If upgrade/downgrade reports
   "no plans are configured for this environment", the plans were set on the other env's
   slot — re-enter them while the connection is on the target environment.
+
+### 13.x Payment ledger — reconciling a stuck or missing payment
+
+Every `transaction.*` and `adjustment.*` event Paddle sends is recorded in the
+`payments` collection, one row per transaction, keyed on `providerTransactionId`.
+Billing history and the dunning banner both read from it.
+
+**Every delivery is coming back 401 `invalid_signature`.** Two causes, in order
+of likelihood:
+
+1. The secret is stale. Each Paddle notification destination gets its own
+   signing secret, so adding or recreating a destination invalidates the old
+   `PADDLE_WEBHOOK_SECRET`. Update `.env` **and restart the API** — `tsx watch`
+   watches source files, not `.env`, so a running dev server keeps serving the
+   old secret and the symptom looks identical to a wrong secret.
+2. The raw body is not reaching the verifier. Signatures are computed over the
+   exact bytes Paddle signed, taken from `req.rawBody` (stashed by the global
+   `express.json({ verify })` in `index.ts`). If someone reintroduces a
+   per-route `express.raw()`, body-parser will skip it, the HMAC will be
+   computed over an empty string, and every delivery fails. The HTTP-level tests
+   in `billing-payments.test.ts` cover this.
+
+**A payment is missing from billing history.**
+
+1. Confirm Paddle actually delivered it. Paddle dashboard → Notifications →
+   find the event, check its delivery status and response code. A non-2xx means
+   we rejected it; the API log line will say why (`invalid_signature` is the
+   usual culprit after a secret rotation).
+2. If Paddle shows a 2xx delivery but no row exists, the event was almost
+   certainly de-duplicated. The idempotency guard is claimed **before** any
+   handler runs, so an event whose handler threw is recorded as processed and
+   Paddle's retry is swallowed. Search the log for the `event_id`.
+3. Repair by re-running the backfill for that org. It is idempotent and bypasses
+   the webhook guard entirely:
+
+   ```bash
+   pnpm --filter @csb/api billing:backfill-payments --org <organizationId> --dry-run
+   pnpm --filter @csb/api billing:backfill-payments --org <organizationId>
+   ```
+
+   `--dry-run` prints how many transactions would be written without touching
+   the database. Always run it first on production.
+
+**A customer is stuck on the checkout pending page.** The page polls
+`/billing/subscription` and `/billing/payments/latest`. If the payment row says
+`failed`, the page shows the decline and stops polling. If there is no row at
+all, the webhook never arrived: check step 1 above, then use the admin "Refresh
+status" action, which calls `syncSubscriptionFromPaddle` and bypasses
+idempotency.
+
+**A subscription is stuck in `past_due` after the customer paid.** A failed
+payment sets `past_due`; a later `completed` for the same org clears it. If the
+recovery event was missed, the state persists. Re-run the backfill for the org
+(above) — replaying the successful transaction clears `past_due` through the
+same code path the webhook uses. Note that `past_due` does **not** revoke
+access: `Organization.plan` is written only by subscription events, so the
+customer keeps working while the card is retried.
+
+**A refund or chargeback did not show up.** These are not `transaction.*`
+events. Look for `adjustment.created` / `adjustment.updated` in Paddle's
+notification log. An adjustment is applied only when its `status` is `approved`
+— a `pending_approval` refund is deliberately ignored until Paddle approves it,
+at which point an `adjustment.updated` follows.
+
+**A customer says the invoice link is broken.** Invoice URLs are minted on
+demand and expire an hour after they are issued, so a link copied out of the
+page and used later is expected to fail. Re-opening it from billing history
+mints a new one. A `400 no_invoice` means the payment never billed (a failed or
+pending charge has no invoice); a `502` means Paddle itself did not return one.
+
+**Reading amounts.** `amount`, `tax` and `discount` are stored in **minor units**
+(cents), exactly as Paddle reports them. A row showing `amount: 6000` is $60.00.
+Divide only at the display edge.
+
+## 13.5 Running a RAG evaluation before and after a retrieval change
+
+Spec: [`__specs/39-rag-evaluation.md`](__specs/39-rag-evaluation.md).
+
+The harness scores retrieval and generation against a committed fixture
+knowledge base, so a change to the RAG pipeline can be defended with a number.
+It runs the real `searchKb` and `generateAiReply`, so it needs the same
+environment the API needs: Mongo, Pinecone and an OpenRouter key.
+
+**The workflow around a retrieval change is always the same three steps.**
+
+```bash
+# 1. Baseline, BEFORE touching anything. Keep the path it prints.
+pnpm eval:rag
+
+# 2. Make the change.
+
+# 3. Re-run against that baseline. Non-zero exit means a metric regressed.
+pnpm eval:rag --baseline packages/rag-eval/reports/<the-baseline>.json
+```
+
+Step 1 is the one people skip, and without it step 3 is impossible: there is
+nothing to compare against, and "it feels better" is what the harness exists to
+replace.
+
+**Cheaper loops while iterating.**
+
+```bash
+pnpm eval:rag --no-judge            # retrieval metrics only, spends no judge tokens
+pnpm eval:rag --tag multi-hop       # just the slice you are working on
+pnpm eval:rag --limit 10            # the CI smoke subset
+```
+
+`--retrieval-only` is the right default while tuning retrieval: it skips the
+answering model and the judge entirely, leaving the query rewrite and the
+embeddings. Recall@K, Precision@K, MRR and nDCG are the metrics a chunking,
+rewriting or ranking change actually moves, and none of them need an answer.
+
+**Toggling query understanding for a before/after.** The harness reads the
+`AI_QUERY_*` flags from the environment, so the comparison is two runs:
+
+```bash
+AI_QUERY_REWRITE_ENABLED=false pnpm eval:rag --retrieval-only --tag follow-up
+AI_QUERY_REWRITE_ENABLED=true  pnpm eval:rag --retrieval-only --tag follow-up
+```
+
+The report prints `rewrite p50` / `rewrite p95` (the model call alone, not the
+retrieval it triggers) and the fallback rate. A high fallback rate means the
+feature is costing a call and buying nothing.
+
+**Reading the result.** Check the errored count first; anything above zero means
+the numbers describe a subset. Then faithfulness and the unsupported-claims
+list, which names the exact sentences the context did not support. Then Recall@K
+against Precision@K: high recall with low precision means the evidence is found
+and buried, low recall means it is not found at all and no prompt change will
+fix that.
+
+**Costs may read `unknown`, and that is correct.** OpenRouter prices a call
+asynchronously and the usage service records zero when it gives up waiting. The
+harness distinguishes the two and excludes unresolved cases from the total
+rather than counting them as $0.00 — a fake zero in a budget table is
+indistinguishable from a free call. A large unresolved count means the cost
+figure is a floor, not a total; re-run later and the same cases usually resolve.
+
+**Common failures.**
+
+| Symptom | Cause |
+| --- | --- |
+| `402 ... requires more credits` on most cases | The OpenRouter balance is exhausted. Retrieval metrics still compute; generation ones do not. Add credits and re-run |
+| `Fixture ingest produced 0 chunks for <doc>` | A fixture document is empty or unparseable. The harness fails loudly rather than scoring every case against it as a miss |
+| `Unknown fixture document slug "x"` | A case references a document that is not in `fixtures/kb/`. Fix the slug; a silent skip would turn a positive case into a negative one |
+| Judge cost `unknown` with cache hits | Every judge verdict came from cache, so nothing new was billed. Expected on a re-run |
+
+**Re-seeding the fixture KB.** Ingestion is skipped when a document's content
+hash is unchanged. After editing `fixtures/kb/`, the next run re-ingests that
+document automatically; `--reingest` forces all of them, which costs embedding
+tokens and is only needed if the chunker or embedding model changed.
+
+## 13.5b Reading live RAG quality (`ragturnmetrics`)
+
+Spec: [`__specs/39-rag-evaluation.md`](__specs/39-rag-evaluation.md), "Online
+telemetry".
+
+The offline harness above scores a fixed golden set. Production writes one
+`RagTurnMetric` per customer turn, so the same questions can be asked of live
+traffic. It is **on by default** (`RAG_TELEMETRY_ENABLED=true`), costs one
+fire-and-forget document write per turn, and happens after the reply has been
+sent — it cannot slow or break a customer reply.
+
+**Is an org's assistant healthy right now?**
+
+```bash
+mongosh "$MONGODB_URI" --quiet --eval '
+  const since = new Date(Date.now() - 24*60*60*1000);
+  db.ragturnmetrics.aggregate([
+    { $match: { organizationId: ObjectId("<orgId>"), createdAt: { $gte: since } } },
+    { $group: {
+        _id: null,
+        turns:       { $sum: 1 },
+        noHitRate:   { $avg: { $cond: ["$flags.noHits", 1, 0] } },
+        lowConfRate: { $avg: { $cond: ["$flags.lowConfidence", 1, 0] } },
+        escRate:     { $avg: { $cond: ["$flags.escalated", 1, 0] } },
+        confidence:  { $avg: "$retrieval.retrievalConfidence" },
+        p50Ms:       { $avg: "$durationMs" },
+        cost:        { $sum: "$generation.costUsd" }
+    } }
+  ]).toArray()'
+```
+
+**What is the knowledge base missing?** The no-hit turns carry the masked query
+that found nothing:
+
+```bash
+mongosh "$MONGODB_URI" --quiet --eval '
+  db.ragturnmetrics.find(
+    { organizationId: ObjectId("<orgId>"), "flags.noHits": true },
+    { originalQuery: 1, rewrittenQuery: 1, createdAt: 1 }
+  ).sort({ createdAt: -1 }).limit(20).toArray()'
+```
+
+**Online faithfulness.** Averaged over sampled turns only. Note the `$ne: null`:
+a drawn turn with a null score means the judge produced no verdict (no passages,
+over budget, no factual claims, or an error — see `faithfulness.skippedReason`),
+and averaging those in as zeros would be wrong.
+
+```bash
+mongosh "$MONGODB_URI" --quiet --eval '
+  db.ragturnmetrics.aggregate([
+    { $match: { "faithfulness.sampled": true, "faithfulness.score": { $ne: null } } },
+    { $group: { _id: null, n: { $sum: 1 }, faithfulness: { $avg: "$faithfulness.score" } } }
+  ]).toArray()'
+```
+
+### Things that look wrong and are not
+
+| Symptom | Explanation |
+| --- | --- |
+| `generation.costUsd` is `null` on recent turns | OpenRouter resolves cost asynchronously and the backfill has not landed yet, or it gave up. Null means **unknown**, deliberately — a `0` there would be indistinguishable from a free call |
+| `faithfulness.score` null on a sampled turn | Read `faithfulness.skippedReason`. A correct refusal genuinely has no claims to score |
+| `retrievalConfidence` low while replies look fine | Expect this when the top passages score closely: the margin term is small by design. Compare against `retrieval.topScore` before concluding anything |
+| `retrieval.minScore` is `0` | That search fell through the widen-on-empty retry. The field records the floor **actually applied**, not the configured one |
+| `status: "fallback"` | The graph never produced a state and the runner's safe reply went out. Look for `[ai] reply generation failed` in the same window |
+
+### Turning things down
+
+```bash
+RAG_FAITHFULNESS_SAMPLE_RATE=0   # stop judge spend, keep every other metric
+RAG_ALERT_ENABLED=false          # stop the alert sweep, keep collecting
+RAG_TELEMETRY_ENABLED=false      # stop collecting entirely
+```
+
+Sampling is skipped automatically for an org over its monthly AI budget, so an
+org whose replies are paused is never billed for measuring them.
+
+## 13.5c Improving answer quality from feedback
+
+Spec: [`__specs/04-pinecone-firecrawl.md`](__specs/04-pinecone-firecrawl.md),
+"Index health".
+
+The loop: production telemetry says which passages are pulling their weight and
+which questions keep going unanswered; you repair the index; the next window
+tells you whether it worked. Everything below lives on **RAG Quality**
+(`/app/analytics/rag`), and nothing on this page changes anything until you
+press something.
+
+### Start from the symptom, not the panel
+
+| What you were told | Where to look | The repair |
+| --- | --- | --- |
+| "It keeps saying it doesn't know" | Gap clusters | Answer the top cluster |
+| "It gave a customer the wrong policy" | Passages that need work → **Misleading** | Fix that document's content, then re-index it |
+| "The answer is vague even though we document it" | Passages that need work → **Never quoted** | Almost always chunking: the sentence that answers the question got split away from its heading. Rewrite the passage so it stands alone, then re-index |
+| "We have hundreds of docs and it uses three" | Knowledge health → Never retrieved | Review, then delete or rewrite |
+
+### The four repairs
+
+**Re-index one source.** Tears that source's vectors down first, then re-ingests.
+Use it after editing a document, or when a passage looks right but retrieves
+wrong. It touches nothing else — the vector ids are prefixed with the source id
+and `index-health.test.ts` asserts the isolation by recording every vector
+operation.
+
+**Answer a gap.** Writes a `Q: … / A: …` pair as its own source at priority 5 and
+closes every gap in the cluster. The question is stored with the answer on
+purpose: the customer's phrasing is exactly the phrasing that failed to match
+anything, so embedding it is the point. Needs a single website selected, since a
+Q&A pair belongs to one agent's knowledge base.
+
+**Mark stale / lower authority.** Metadata only — no re-embed, and
+`sourceUpdatedAt` does not move. Reach for this instead of deleting when
+something newer should win but the old document is still the only thing you
+have. A stale source stays retrievable: hiding it turns "this is out of date"
+into "we have no answer".
+
+**Bulk delete dead weight.** Two steps, and the second cannot be reached without
+the first. Review shows the exact list and issues a token over it; the confirm is
+refused if the list differs, if 15 minutes have passed, or if any of those
+sources started being retrieved in the meantime.
+
+### Reading the flags without over-reacting
+
+- Every rate is held behind `KB_HEALTH_MIN_RETRIEVALS` (5). A passage retrieved
+  twice and downvoted once is two retrievals, not a 50 percent failure.
+- A blank downvote rate means **nobody rated it**, which is not approval.
+- `Never quoted` only fires on passages that also scored well. A passage that
+  scraped into the prompt on a thin query and was ignored is the system working.
+
+### Turning on the scheduled half
+
+```bash
+KB_INDEX_HEALTH_ENABLED=true      # default false
+KB_INDEX_HEALTH_HOUR_UTC=3        # when it may re-embed
+KB_INDEX_HEALTH_MAX_REEMBED_PER_RUN=10
+```
+
+It does two things and no more: re-embeds sources whose stored text no longer
+matches the hash their vectors were built from, and raises one
+`kb_weak_chunks` notification per org per day. **It never deletes and never
+edits content.** Leave it off until you have watched the flags against your own
+traffic for a window — that is what the default is for.
+
+Verify a night's run:
+
+```bash
+grep -E "index health tick|re-embedded drifted source" <api logs>
+```
+
+`reembedded: 0` on a healthy corpus is the expected result, not a failure: the
+job selects on hash mismatch, so a corpus that has not drifted costs one indexed
+find.
+
+### Things that look wrong and are not
+
+| Symptom | Explanation |
+| --- | --- |
+| A passage is both "Misleading" and "Never quoted" | Two different problems in one passage. Collapsing them to one label would hide half the story |
+| Gap clusters shrink after you answer one | Answering closes every gap in the cluster, so it leaves the open list entirely |
+| "Never retrieved" lists a source you know is good | It is unreachable by the questions being asked, not necessarily bad. Check the gap clusters for what people ask instead, and rewrite rather than delete |
+| Bulk delete refuses right after a review | Something in the list started being retrieved. Re-run the review — that is the check doing its job |
+| A source stays in "Never retrieved" after re-indexing | Re-indexing rebuilds vectors from the same text. If nobody asks about that text, it stays unretrieved. Rewrite it in the customer's vocabulary instead |
+
+## 13.6 Backfilling the chunk mirror, and changing the embedding model
+
+Spec: [`__specs/41-hybrid-retrieval.md`](__specs/41-hybrid-retrieval.md).
+
+Retrieval reads passage text from the `kbchunks` mirror and runs a lexical leg
+against it. A deployment whose mirror has not been backfilled falls back to the
+truncated Pinecone metadata, so nothing breaks — but the lexical leg finds
+nothing and retrieval is dense-only.
+
+**Backfill.** Always dry-run first; it prices the whole run before writing a
+single vector.
+
+```bash
+cd apps/api
+pnpm tsx scripts/reembed.ts --all --dry-run   # cost + per-source delta, no writes
+pnpm tsx scripts/reembed.ts --all             # backfill
+pnpm tsx scripts/reembed.ts --all --resume    # continue an interrupted run
+pnpm tsx scripts/reembed.ts --org <id>        # one organization
+```
+
+`--resume` skips any source already fully mirrored, so an interrupted run is
+restarted with the same command. There is no checkpoint file to go stale.
+
+**Changing the embedding model is not a config change.** It is a config change
+**plus a mandatory full reindex**, and doing only the first half silently breaks
+retrieval with no error anywhere:
+
+> An index holding vectors from two different embedding models returns nonsense.
+> Cosine distance between two embedding spaces means nothing. If you change
+> `EMBEDDING_MODEL` and restart without reindexing, queries are embedded with the
+> new model and compared against documents embedded with the old one. Retrieval
+> degrades to noise, silently.
+
+The safe order is: take the KB out of service or accept degraded retrieval for
+the duration, set `EMBEDDING_MODEL` (and `EMBEDDING_DIMENSIONS` if the new model
+is larger than the index), then run `--all` to completion. `--resume` makes an
+interrupted switch recoverable, but the window between the config change and the
+end of the reindex is a window of bad answers.
+
+`EMBEDDING_DIMENSIONS` is required for any model whose native size exceeds the
+index dimension. The index here is 1536; `text-embedding-3-large` is 3072
+natively and cannot be upserted at all without `EMBEDDING_DIMENSIONS=1536`.
+
+**Tuning the dense/lexical blend.** `KB_HYBRID_ALPHA` is 1.0 dense-only, 0.0
+lexical-only, default 0.7 from a measured sweep. To re-derive it on your own
+corpus:
+
+```bash
+for A in 1.0 0.7 0.5 0.3 0.0; do
+  KB_HYBRID_ALPHA=$A pnpm eval:rag --retrieval-only
+done
+```
+
+Expect an inverted U. If a extreme wins outright, one leg is not contributing and
+that is worth understanding before shipping the extreme as a default.
+
+**Common failures.**
+
+| Symptom | Cause |
+| --- | --- |
+| Lexical leg returns nothing for everything | The mirror is not backfilled, or the text index was not built. `db.kbchunks.getIndexes()` should show `kb_chunk_text` |
+| Retrieval quality collapsed after an env change | `EMBEDDING_MODEL` changed without a reindex. See above |
+| `[kb] lexical leg failed, degrading to dense-only` | Expected under load or a slow query; retrieval still works. Persistent occurrences mean the text index is missing or `KB_LEXICAL_TIMEOUT_MS` is too tight |
+| Upsert fails on dimension mismatch | The model emits more dimensions than the index accepts. Set `EMBEDDING_DIMENSIONS` |
+
+## 13.7 Turning on cross-encoder reranking
+
+Spec: [`__specs/42-reranking.md`](__specs/42-reranking.md).
+
+Reranking is off by default and is a **trade, not a free upgrade**: it makes
+unanswerable questions detectable (every negative case in the eval set correctly
+returns "no evidence" instead of retrieving noise) and costs roughly 8 points of
+Recall@5 on answerable ones, plus ~1.2s and one external dependency per KB
+search.
+
+```bash
+KB_RERANK_ENABLED=true
+KB_RERANK_PROVIDER=pinecone      # needs PINECONE_API_KEY, already set for the index
+```
+
+**Re-sweep the floor on your own corpus.** `KB_RERANK_MIN_SCORE` is the setting
+most likely to be wrong for you, because the useful signal is the *gap* between
+the answering passage and the rest, not the magnitude — and the magnitude varies
+by corpus. A floor tuned by intuition rejects evidence for every query phrased
+less directly than the documents.
+
+```bash
+for MS in 0.02 0.005 0.001 0.0005; do
+  KB_RERANK_ENABLED=true KB_RERANK_MIN_SCORE=$MS pnpm eval:rag --retrieval-only
+done
+```
+
+Watch the **widen-on-empty rate** in the report: that is the share of queries
+returning no evidence. Compare it against the share of your dataset that is
+genuinely unanswerable. If it is much higher, the floor is rejecting real
+evidence and every one of those turns escalates unnecessarily.
+
+**What the two failure modes look like in production:**
+
+| Symptom | Cause |
+| --- | --- |
+| Escalation rate jumped after enabling | `KB_RERANK_MIN_SCORE` is too high. Every query whose best passage scores below it is told there is no evidence |
+| Multi-hop answers became half-answers | Should not happen — the floor gates on the best candidate, not each one. If it recurs, check that `rerankHits` still slices `ordered` rather than a filtered list |
+| `[kb] rerank failed, keeping stage-1 order` | Expected occasionally; retrieval still works at stage-1 quality. Persistent means the provider is down or `KB_RERANK_TIMEOUT_MS` is too tight for `KB_RERANK_CANDIDATES` |
+| Latency up ~1.2s per turn | Expected at 50 candidates. Lower `KB_RERANK_CANDIDATES` to trade recall for speed |
+
+**`widenOnEmpty` is disabled automatically while reranking is on.** That hedge
+existed because an uncalibrated cosine floor could not tell an irrelevant passage
+from a relevant one scoring low. With a calibrated score downstream it would only
+feed stage 2 noise, so it is gated off rather than left to interact.
+
+## 13.8 Knowledge ingestion is failing
+
+Spec: [`__specs/04-pinecone-firecrawl.md`](__specs/04-pinecone-firecrawl.md).
+
+**Start at the source detail page.** Every failure now carries a classified
+message and a suggested action, and the Indexing history panel shows the stage
+timeline grouped by attempt. That answers most triage without touching a shell:
+you can see which stage failed, how long it took, how many times it has been
+retried, and whether retrying will help at all.
+
+### Decide first whether retrying can possibly work
+
+| The message says | Class | Retrying |
+| --- | --- | --- |
+| "This file type can't be read" | `unsupported_file_type` | **Never helps.** Convert the file |
+| "The file couldn't be opened…" | `parse_failure` | **Never helps.** Fix or re-export the file |
+| "Read successfully but contains no selectable text" | `empty_extraction` | **Never helps.** OCR it, or paste the text in |
+| "The embedding provider returned an error" | `embedding_provider_error` | Automatic, with backoff |
+| "…is rate limiting us" | `rate_limited` | Automatic, with backoff |
+| "reached its monthly AI budget" | `budget_exceeded` | Waits for the budget. **No retries are consumed** |
+| "The search index rejected the write" | `pinecone_upsert_failure` | Automatic |
+| "stopped partway through" | `partial_upsert` | Automatic; the next run re-indexes the whole source |
+| "took too long" | `timeout` | Automatic. Split very large files |
+
+The three permanent classes consume **zero** retries by design. If you see one,
+the fix is to the file, not to the system.
+
+### Status meanings that are easy to misread
+
+- **`empty`** — the file was read fine and produced nothing searchable. This is a
+  failure. It used to report as `synced`, which is why these were invisible.
+- **`processing` on a website source** — usually a crawl in flight, not a hang.
+  The crawl id is parked in `embeddingError` as `firecrawl:<id>`, and the
+  reconcile job deliberately leaves these alone.
+- **`processing` on anything else, for over 15 minutes** — an interrupted ingest,
+  almost always a deploy mid-run. The reconcile job re-queues it and records a
+  `recover` event.
+
+### Org-wide checks
+
+```bash
+# Health summary: status counts, failure rate, breakdown by error class,
+# mean duration by source type, and what is in recovery right now.
+GET /api/v1/knowledge/health/ingestion
+
+# The stage timeline for one source, grouped by attempt.
+GET /api/v1/knowledge/:id/events
+```
+
+An alert fires when a workspace's failure rate crosses
+`KB_INGEST_FAILURE_ALERT_RATE` (default 30%) with at least
+`KB_INGEST_FAILURE_ALERT_MIN_SOURCES` sources — the floor stops a new workspace
+alerting on its first bad upload. The alert latches per source so an unresolved
+failure does not re-notify every 60 seconds.
+
+### Retry from the UI
+
+The Re-ingest button is a deliberate operator decision, so it **clears the
+automatic retry budget and the alert latch**. Without that, a source that had
+exhausted its three attempts could be retried once by hand and then never again
+by the reconcile job, and would never re-alert.
+
+### Correlating logs
+
+Every ingest run logs a `runId`, and every event row carries it. To follow one
+attempt end to end:
+
+```bash
+grep '"runId":"<id>"' <log>
+```
+
+### If nothing is being retried at all
+
+Check that the jobs are running: `[jobs] scheduling background jobs` appears once
+at boot. They are plain `setInterval` timers in `jobs/index.ts` with no external
+queue, so if the API process is not running, nothing reconciles.
 
 ## 14. Error monitoring (Sentry)
 

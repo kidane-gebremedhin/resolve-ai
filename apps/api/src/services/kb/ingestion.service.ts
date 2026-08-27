@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
-import { KnowledgeSource } from "../../models/index.js";
-import { chunkText } from "../../utils/chunker.js";
+import { KbChunk, KnowledgeSource } from "../../models/index.js";
+import { chunkText, embeddableText } from "../../utils/chunker.js";
 import { embed } from "../ai/embedding.service.js";
 import { orgBudgetStatus } from "../budget-alert.service.js";
 import { getPineconeIndex } from "../../config/pinecone.js";
+import { env } from "../../config/env.js";
+import { IngestionRun, type IngestionStage } from "./ingestion-events.js";
+import { classifyError, describeError } from "./ingestion-errors.js";
 import { logger } from "../../config/logger.js";
 import { getIoServer } from "../../socket/index.js";
 import { parseFile, type ParseInput } from "./parsers.js";
@@ -72,6 +75,21 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
   const source = await KnowledgeSource.findById(sourceId);
   if (!source) throw new Error(`KB source not found: ${sourceId}`);
 
+  // One run id ties every stage of this attempt together, including when the
+  // reconcile job is the caller. Without it a timeline is a pile of rows with no
+  // way to tell which attempt each belonged to.
+  const run = new IngestionRun({
+    sourceId,
+    organizationId: source.organizationId.toString(),
+    agentId: source.agentId?.toString(),
+    attempt: (source.retryCount ?? 0) + 1,
+  });
+
+  // Which stage is running, so a thrown error can be attributed. Assigned
+  // rather than inferred because the failure surfaces in one catch block far
+  // from where it happened.
+  let currentStage: IngestionStage = "parse";
+
   try {
     source.embeddingStatus = "processing";
     await source.save();
@@ -90,6 +108,18 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
       await source.save();
     }
 
+    // `sourceUpdatedAt` tracks CONTENT, not the row. `updatedAt` moves on every
+    // reingest, retry and status change, so it says nothing about which of two
+    // documents is more current — which is exactly what conflict resolution
+    // needs it for. Stamp it only when the hash actually changed, and seed it
+    // for sources that predate the field.
+    if (!source.sourceUpdatedAt || source.isModified("contentHash")) {
+      source.sourceUpdatedAt = new Date();
+    }
+
+    currentStage = "chunk";
+    run.ok("parse", { byteSize: (source.extractedText ?? source.content ?? "").length });
+
     const text = source.extractedText ?? source.content ?? "";
     const sourceUrl = (source.sourceUrl as string | undefined) ?? undefined;
 
@@ -100,28 +130,54 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
     // has the stored text. Non-website sources (files, pasted text, single URL)
     // tag every chunk with the source URL, if any.
     const pages = source.type === "website" ? splitCrawledPages(text) : [];
-    let taggedChunks: { index: number; text: string; url?: string }[];
+    let taggedChunks: { index: number; text: string; url?: string; headingPath: string[] }[];
     if (pages.length > 0) {
       taggedChunks = [];
       let globalIdx = 0;
       for (const page of pages) {
         for (const c of chunkText(page.markdown)) {
-          taggedChunks.push({ index: globalIdx++, text: c.text, url: page.url || sourceUrl });
+          taggedChunks.push({
+            index: globalIdx++,
+            text: c.text,
+            url: page.url || sourceUrl,
+            headingPath: c.headingPath ?? [],
+          });
         }
       }
     } else {
-      taggedChunks = chunkText(text).map((c) => ({ index: c.index, text: c.text, url: sourceUrl }));
+      taggedChunks = chunkText(text).map((c) => ({
+        index: c.index,
+        text: c.text,
+        url: sourceUrl,
+        headingPath: c.headingPath ?? [],
+      }));
     }
 
     if (taggedChunks.length === 0) {
-      source.embeddingStatus = "synced";
+      // Was `synced`. A source that retrieves nothing is not a success, and
+      // reporting it as one is why these were invisible: the reconcile job only
+      // revisits `error` and `processing`, so a zero-chunk source was never
+      // looked at again by anything.
+      const classified = describeError("empty_extraction");
+      source.embeddingStatus = "empty";
       source.chunkCount = 0;
       source.lastSyncedAt = new Date();
-      source.embeddingError = undefined;
+      source.embeddingErrorCode = classified.code;
+      source.embeddingError = classified.message;
       await source.save();
       emitKnowledgeUpdate(source);
+      run.failed("chunk", classified);
+      await run.flush();
+      logger.warn("[kb] ingest produced no chunks", {
+        runId: run.runId,
+        sourceId,
+        type: source.type,
+      });
       return;
     }
+
+    currentStage = "embed";
+    run.ok("chunk", { chunkCount: taggedChunks.length });
 
     // Budget gate: don't spend on embeddings when the org is over its monthly AI
     // budget. Park the source in "error" with a clear reason (a retry after the
@@ -140,9 +196,20 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
     // Large sources take a while (embed + upsert are batched and run
     // sequentially); log so progress is observable in the server logs.
     logger.info("[kb] embedding source", { sourceId, chunks: taggedChunks.length, pages: pages.length });
-    const vectors = await embed(taggedChunks.map((c) => c.text), {
-      organizationId: source.organizationId.toString(),
-    });
+    // Embed the heading path WITH the text. An isolated chunk about "14 days"
+    // never names its subject; "Refunds > EU" in front of it does, and that is
+    // the cheapest part of what structure-aware chunking would have bought.
+    // The stored text stays clean, so citations show the passage rather than
+    // our annotation of it.
+    const vectors = await embed(
+      taggedChunks.map((c) =>
+        env.kb.headingPathEmbedding ? embeddableText({ index: c.index, text: c.text, headingPath: c.headingPath }) : c.text,
+      ),
+      { organizationId: source.organizationId.toString() },
+    );
+    currentStage = "upsert";
+    run.ok("embed", { chunkCount: taggedChunks.length });
+
     const pinecone = getPineconeIndex();
     const previousIds = source.pineconeIds ?? [];
     const ids = taggedChunks.map((c) => `${source._id.toString()}:${c.index}`);
@@ -161,14 +228,25 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
           sourceId: source._id.toString(),
           chunkIndex: c.index,
           ...(c.url ? { url: c.url } : {}),
-          // Store the FULL chunk text (not a 500-char preview) so retrieval
-          // returns the whole chunk to the model and the on-disk vectors show
-          // complete, overlapping content. Chunks are ~1200 chars; the 8000
-          // cap is just a guard against Pinecone's ~40KB/vector metadata limit.
+          ...(c.headingPath.length > 0 ? { headingPath: c.headingPath.join(" > ") } : {}),
+          // Written for completeness. Retrieval reads these from the Mongo
+          // mirror, not from here — see the note in `hydrate()`.
+          priority: source.priority ?? 0,
+          ...(source.sourceUpdatedAt
+            ? { sourceUpdatedAt: source.sourceUpdatedAt.toISOString() }
+            : {}),
+          // A FALLBACK copy, no longer the source of truth: retrieval hydrates
+          // text from the `KbChunk` mirror, which is not truncated. This stays
+          // so a deployment whose mirror has not been backfilled degrades to the
+          // old behaviour instead of returning empty passages. The 8000 cap
+          // guards Pinecone's ~40KB/vector metadata limit.
           text: c.text.slice(0, 8000),
         },
       })),
     );
+
+    currentStage = "cleanup";
+    run.ok("upsert", { chunkCount: taggedChunks.length });
 
     // Re-ingest cleanup: drop any vectors from a previous run that the new
     // chunking no longer produces (e.g. the doc got shorter, or chunk size
@@ -179,23 +257,78 @@ export async function ingestSource(sourceId: string, payload?: IngestPayload): P
     if (staleIds.length > 0) {
       await pinecone.deleteMany(staleIds);
     }
+    run.ok("cleanup", { chunkCount: staleIds.length });
+
+    // Mirror every chunk to Mongo: the lexical leg queries it, and retrieval
+    // reads passage text from it. Written after the Pinecone upsert so a failure
+    // here leaves searchable vectors rather than orphaned rows, and replaced
+    // wholesale per source so a shorter re-ingest cannot leave stale chunks
+    // behind.
+    await KbChunk.deleteMany({ sourceId: source._id });
+    if (taggedChunks.length > 0) {
+      await KbChunk.insertMany(
+        taggedChunks.map((c, i) => ({
+          organizationId: source.organizationId,
+          agentId: source.agentId,
+          sourceId: source._id,
+          chunkIndex: c.index,
+          chunkId: ids[i]!,
+          text: c.text,
+          headingPath: c.headingPath,
+          ...(c.url ? { url: c.url } : {}),
+          tokenCount: Math.ceil(c.text.length / 4),
+          priority: source.priority ?? 0,
+          sourceUpdatedAt: source.sourceUpdatedAt ?? null,
+        })),
+        { ordered: false },
+      );
+    }
 
     source.pineconeIds = ids;
     source.chunkCount = taggedChunks.length;
     source.embeddingStatus = "synced";
     source.lastSyncedAt = new Date();
     source.embeddingError = undefined;
+    source.embeddingErrorCode = undefined;
     await source.save();
     emitKnowledgeUpdate(source);
-    logger.info("[kb] ingested", { sourceId, chunks: taggedChunks.length });
+    await run.flush();
+    logger.info("[kb] ingested", { runId: run.runId, sourceId, chunks: taggedChunks.length });
   } catch (err) {
     const message = (err as Error).message;
+    // Classify rather than storing the raw provider string as the diagnosis.
+    // The stage matters: an unrecognised failure during `embed` is an embedding
+    // provider error, not a generic unknown.
+    const classified = classifyError(err, currentStage);
+
+    // Vectors may have landed before the failure while `pineconeIds` still
+    // holds the previous run's set. Say so explicitly instead of leaving the
+    // index and our record of it silently disagreeing — the next retry
+    // re-indexes the whole source, which repairs it.
+    const partial = currentStage === "upsert" || currentStage === "cleanup";
+    const finalError = partial ? describeError("partial_upsert", message) : classified;
+
     source.embeddingStatus = "error";
-    source.embeddingError = message;
-    source.retryCount = (source.retryCount ?? 0) + 1;
+    source.embeddingError = finalError.message;
+    source.embeddingErrorCode = finalError.code;
+    source.embeddingErrorAction = finalError.action;
+    // A permanent failure must not consume a retry: the reconcile job reads the
+    // code, and burning attempts on an unsupported file type is what made these
+    // sources go quiet after three minutes.
+    if (finalError.retry === "backoff") {
+      source.retryCount = (source.retryCount ?? 0) + 1;
+    }
     await source.save();
     emitKnowledgeUpdate(source);
-    logger.error("[kb] ingestion failed", { sourceId, err: message });
+    run.failed(currentStage, finalError);
+    await run.flush();
+    logger.error("[kb] ingestion failed", {
+      runId: run.runId,
+      sourceId,
+      stage: currentStage,
+      code: finalError.code,
+      err: message,
+    });
     throw err;
   }
 }
@@ -216,6 +349,9 @@ export async function purgeSourceVectors(sourceId: string): Promise<void> {
     logger.error("[kb] pinecone deleteMany failed", { sourceId, err: (err as Error).message });
     throw err;
   }
+  // The mirror goes with the vectors: leaving rows behind would keep a deleted
+  // source lexically retrievable, which is a knowledge leak with extra steps.
+  await KbChunk.deleteMany({ sourceId: source._id });
   source.pineconeIds = [];
   source.chunkCount = 0;
   await source.save();

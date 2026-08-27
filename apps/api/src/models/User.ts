@@ -14,9 +14,11 @@ const userSchema = new Schema(
     referralCode: { type: String, unique: true, sparse: true },
     emailVerifiedAt: { type: Date },
     lastLoginAt: { type: Date },
-    // 2FA / TOTP. `totpSecret` is the base32 secret used to derive 6-digit
-    // codes; in production this should be encrypted-at-rest (TODO). It is
-    // only set after the user runs through the `setup → verify` flow.
+    // 2FA / TOTP. `totpSecret` holds the base32 secret used to derive 6-digit
+    // codes, encrypted at rest via services/security/secret-field.ts — read it
+    // with openSecret() and write it with sealSecret(), never directly. Values
+    // written before that change are still plaintext and are re-sealed on their
+    // next write. It is only set after the user completes `setup → verify`.
     // `recoveryCodes` holds bcrypt hashes of one-time backup codes; the
     // plaintext codes are shown to the user EXACTLY ONCE at setup.
     totpSecret: { type: String },

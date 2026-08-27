@@ -52,6 +52,16 @@ const messageSchema = new Schema(
             sourceTitle: String,
             url: String,
             score: Number,
+            // Added for inline citations. Every field above keeps its meaning,
+            // so a message written before these existed renders exactly as it
+            // always did — the widget falls back to the collapsible source list
+            // when `marker` is absent.
+            /** The integer shown inline in the reply, e.g. the 2 in "[2]". */
+            marker: Number,
+            /** `<sourceId>:<chunkIndex>` — which passage, not just which document. */
+            chunkId: String,
+            /** Heading stack, so a citation can name the section it came from. */
+            headingPath: [String],
           },
           { _id: false },
         ),

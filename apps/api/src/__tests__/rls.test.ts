@@ -5,12 +5,18 @@
 // drop any `organizationId` value coming from the client and stamp the
 // authenticated org instead.
 
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, beforeEach } from "vitest";
 import request from "supertest";
 import type { Express } from "express";
 import { createApp } from "../test/app.js";
-import { createAgent, createOrgWithOwner, createWebsite } from "../test/factories.js";
-import { Conversation, KnowledgeSource } from "../models/index.js";
+import {
+  createAgent,
+  createOrgWithOwner,
+  createWebsite,
+  grantPlan,
+} from "../test/factories.js";
+import { Conversation, KbChunk, KnowledgeSource } from "../models/index.js";
+import { lexicalSearch } from "../services/kb/lexical-search.service.js";
 import crypto from "node:crypto";
 import mongoose from "mongoose";
 
@@ -44,6 +50,9 @@ describe("multi-org RLS", () => {
   it("POST /websites ignores a client-supplied organizationId — the auth context wins", async () => {
     const a = await createOrgWithOwner(app, { email: "a-poster@example.com" });
     const b = await createOrgWithOwner(app, { email: "b-poster@example.com" });
+    // The website quota is 0 without a subscription, so A needs a plan before
+    // the tenancy behaviour under test is even reachable.
+    await grantPlan(a.orgId);
 
     const res = await request(app)
       .post("/api/v1/websites")
@@ -157,5 +166,76 @@ describe("multi-org RLS", () => {
       .get(`/api/v1/knowledge/${String(ks._id)}`)
       .set("Authorization", `Bearer ${b.accessToken}`);
     expect(direct.status).toBe(404);
+  });
+
+  // The lexical leg is a SECOND query path into customer knowledge, added
+  // alongside the vector one. Everything above tests HTTP routes; this tests the
+  // retrieval function directly, because that is where the leak would be. A
+  // filter that is right in the route and wrong in the query is still a leak.
+  describe("hybrid retrieval: the lexical leg", () => {
+    const orgA = new mongoose.Types.ObjectId();
+    const orgB = new mongoose.Types.ObjectId();
+    const agentA1 = new mongoose.Types.ObjectId();
+    const agentA2 = new mongoose.Types.ObjectId();
+    const agentB1 = new mongoose.Types.ObjectId();
+
+    // beforeEach, not beforeAll: the global setup wipes every collection between
+    // tests, so a one-time seed would be gone by the first assertion.
+    beforeEach(async () => {
+      await KbChunk.syncIndexes();
+      await KbChunk.insertMany([
+        {
+          organizationId: orgA, agentId: agentA1, sourceId: new mongoose.Types.ObjectId(),
+          chunkIndex: 0, chunkId: "rls-a1:0",
+          text: "Org A agent one: the escalation codeword is PELICAN.",
+        },
+        {
+          organizationId: orgA, agentId: agentA2, sourceId: new mongoose.Types.ObjectId(),
+          chunkIndex: 0, chunkId: "rls-a2:0",
+          text: "Org A agent two: the escalation codeword is PELICAN as well.",
+        },
+        {
+          organizationId: orgB, agentId: agentB1, sourceId: new mongoose.Types.ObjectId(),
+          chunkIndex: 0, chunkId: "rls-b1:0",
+          text: "Org B entirely: their escalation codeword is also PELICAN.",
+        },
+      ]);
+    });
+
+    it("org B's knowledge never appears in an org A query", async () => {
+      const hits = await lexicalSearch({
+        query: "PELICAN",
+        organizationId: String(orgA),
+        agentId: String(agentA1),
+        topK: 10,
+      });
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits.map((h) => h.chunkId)).not.toContain("rls-b1:0");
+    });
+
+    it("a sibling agent's knowledge never appears, inside the same org", async () => {
+      // The subtler boundary: same paying tenant, different agent. Knowledge is
+      // keyed by (organizationId, agentId) and both halves have to hold.
+      const hits = await lexicalSearch({
+        query: "PELICAN",
+        organizationId: String(orgA),
+        agentId: String(agentA1),
+        topK: 10,
+      });
+      expect(hits.map((h) => h.chunkId)).toEqual(["rls-a1:0"]);
+    });
+
+    it("refuses an unscoped query rather than widening it", async () => {
+      // `searchKb` refuses a missing agentId rather than falling back to an
+      // org-wide search. The lexical leg must refuse identically, or the guard
+      // is only as strong as whichever path the caller happened to take.
+      await expect(
+        lexicalSearch({ query: "PELICAN", organizationId: String(orgA), agentId: "", topK: 10 }),
+      ).resolves.toEqual([]);
+
+      await expect(
+        lexicalSearch({ query: "PELICAN", organizationId: "", agentId: String(agentA1), topK: 10 }),
+      ).resolves.toEqual([]);
+    });
   });
 });

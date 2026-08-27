@@ -1,13 +1,29 @@
-// Sentry smoke-test endpoints. Public on purpose: they are the fastest way to
-// confirm that a freshly deployed API can actually reach Sentry, and they are
-// driven from the web app's /sentry-example-page. They expose no data — the
+// Sentry smoke-test endpoints. Unauthenticated on purpose: they are the fastest
+// way to confirm that a freshly deployed API can actually reach Sentry, and they
+// are driven from the web app's /sentry-example-page. They expose no data — the
 // throwing route just produces a 500 — and are rate limited so nobody can flood
 // the Sentry project (or the error log) with them.
+//
+// They are still an unauthenticated way for a stranger to burn your error budget
+// and confirm the stack in use, so in production they are OFF unless
+// DEBUG_ENDPOINTS_ENABLED=true is set deliberately. Outside production they stay
+// on, because that is where the smoke test is actually run.
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import * as Sentry from "@sentry/node";
+import { env } from "../config/env.js";
 
 const router = Router();
+
+// Registered before the handlers so a disabled deployment answers a plain 404 —
+// indistinguishable from a build that never had these routes at all.
+router.use("/debug-sentry", (_req, res, next) => {
+  if (!env.debugEndpointsEnabled) {
+    res.status(404).json({ error: { code: "not_found", message: "Not found." } });
+    return;
+  }
+  next();
+});
 
 // 5 requests/minute per IP. Enough to smoke-test a deploy, far too few to be
 // worth abusing. Uses the default (IPv6-safe) key generator.

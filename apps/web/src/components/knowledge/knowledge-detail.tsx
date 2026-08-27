@@ -20,6 +20,7 @@ import {
 import { Button, Input, Label, Textarea } from "@csb/ui";
 import { clientApi, ApiError } from "@/lib/api";
 import { StatusBadge } from "./status-badge";
+import { IngestionTimeline } from "./ingestion-timeline";
 import type { KnowledgeSource } from "./types";
 
 const MAX_PREVIEW = 5000;
@@ -45,17 +46,20 @@ export function KnowledgeDetail({ source }: { source: KnowledgeSource }) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [priority, setPriority] = useState(source.priority ?? 0);
 
   const isText = source.type === "text";
   const titleDirty = title !== source.title;
   const contentDirty = isText && content !== (source.content ?? "");
-  const dirty = titleDirty || contentDirty;
+  const priorityDirty = priority !== (source.priority ?? 0);
+  const dirty = titleDirty || contentDirty || priorityDirty;
 
   async function save() {
     setError(null);
     setSaving(true);
     try {
-      const payload: { title?: string; content?: string } = {};
+      const payload: { title?: string; content?: string; priority?: number } = {};
+      if (priorityDirty) payload.priority = priority;
       if (titleDirty) payload.title = title.trim();
       if (contentDirty) payload.content = content;
       await clientApi.put<KnowledgeSource>(`/knowledge/${source._id}`, payload);
@@ -127,6 +131,31 @@ export function KnowledgeDetail({ source }: { source: KnowledgeSource }) {
           ) : (
             <h1 className="font-display text-2xl font-semibold tracking-tight">{source.title}</h1>
           )}
+          <div className="mt-3 space-y-1.5">
+            <Label
+              htmlFor="kb-priority"
+              className="text-[10px] uppercase tracking-wider text-muted-foreground"
+            >
+              Priority
+            </Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="kb-priority"
+                type="number"
+                min={-10}
+                max={10}
+                step={1}
+                value={priority}
+                onChange={(e) => setPriority(Number(e.target.value))}
+                className="h-9 w-24"
+              />
+              <p className="text-xs text-muted-foreground">
+                When two sources contradict each other, the higher priority wins. Leave at 0
+                unless this document should override another. Changing it does not re-index.
+              </p>
+            </div>
+          </div>
+
           <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span className="rounded-md bg-muted px-2 py-0.5 uppercase tracking-wider">
               {source.type}
@@ -201,12 +230,31 @@ export function KnowledgeDetail({ source }: { source: KnowledgeSource }) {
         </div>
       </div>
 
-      {source.embeddingError && source.embeddingStatus === "error" && (
-        <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          <span className="font-medium">Ingestion error: </span>
-          {source.embeddingError}
+      {/* `empty` is included: the file was read fine and produced nothing
+          searchable, which is a failure that used to be reported as success. */}
+      {source.embeddingError &&
+        (source.embeddingStatus === "error" || source.embeddingStatus === "empty") && (
+          <div
+            data-testid="ingestion-error"
+            className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs"
+          >
+            <div className="font-medium text-destructive">{source.embeddingError}</div>
+            {/* The suggested fix. Classifying a failure is only useful if the
+                operator is told what to do about it. */}
+            {source.embeddingErrorAction && (
+              <p className="mt-1 text-muted-foreground">{source.embeddingErrorAction}</p>
+            )}
+          </div>
+        )}
+
+      <div className="mt-6 rounded-xl border border-border bg-card">
+        <div className="border-b border-border px-5 py-3 font-display text-sm font-semibold">
+          Indexing history
         </div>
-      )}
+        <div className="p-5">
+          <IngestionTimeline sourceId={source._id} />
+        </div>
+      </div>
 
       <div className="mt-6 rounded-xl border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -238,7 +286,7 @@ export function KnowledgeDetail({ source }: { source: KnowledgeSource }) {
           <div>
             <div className="font-display text-sm font-semibold text-destructive">Danger zone</div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Deleting this source removes its vectors from the AI agent's knowledge base. This cannot be undone.
+              Deleting this source removes its vectors from the AI agent&apos;s knowledge base. This cannot be undone.
             </p>
           </div>
           <Button variant="destructive" size="sm" onClick={remove} disabled={deleting}>

@@ -14,10 +14,14 @@ import { logger } from "../config/logger.js";
 import { reconcileOnce } from "./embedding-reconcile.job.js";
 import { firecrawlPollOnce } from "./firecrawl-ingest.job.js";
 import { startOAuthTokenRefresh } from "./refreshOAuthTokens.js";
+import { ragQualityAlertsOnce } from "./rag-quality-alerts.job.js";
+import { indexHealthOnce } from "./index-health.job.js";
+import { env } from "../config/env.js";
 
 const STARTUP_DELAY_MS = 5_000;
 const RECONCILE_INTERVAL_MS = 60_000;
 const FIRECRAWL_INTERVAL_MS = 30_000;
+const INDEX_HEALTH_INTERVAL_MS = env.kb.indexHealthIntervalMs;
 
 let started = false;
 
@@ -52,5 +56,27 @@ export function startJobs(): void {
 
     // OAuth token refresh loop.
     startOAuthTokenRefresh();
+
+    // RAG quality alert sweep. Skipped entirely when telemetry is off, since
+    // there would be nothing in the collection to aggregate.
+    if (env.rag.telemetryEnabled && env.rag.alertsEnabled) {
+      const ragAlertTick = (): void => {
+        void ragQualityAlertsOnce();
+      };
+      ragAlertTick();
+      setInterval(ragAlertTick, env.rag.alertIntervalMs).unref();
+    }
+
+    // Index health loop. The tick is frequent; the WORK is gated to the
+    // configured off-peak hour inside the job, so a restart at any time of day
+    // cannot miss the window and cannot re-embed during business hours either.
+    // Off by default (`KB_INDEX_HEALTH_ENABLED`).
+    if (env.kb.indexHealthEnabled) {
+      const indexHealthTick = (): void => {
+        void indexHealthOnce();
+      };
+      indexHealthTick();
+      setInterval(indexHealthTick, INDEX_HEALTH_INTERVAL_MS).unref();
+    }
   }, STARTUP_DELAY_MS).unref();
 }

@@ -13,6 +13,8 @@ All environment variables organized by application. Each app has its own `.env` 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `NODE_ENV` | ✅ | `development` | `development` / `staging` / `production` |
+| `DEBUG_ENDPOINTS_ENABLED` | No | unset | Enables the unauthenticated `/api/v1/debug-sentry` smoke-test endpoints. Defaults to **off in production**, on elsewhere. Set `true` to enable them in production deliberately. |
+| `TRUST_PROXY` | No | `1` | Reverse-proxy hops in front of the API (Express `trust proxy`). Governs how much of `X-Forwarded-For` is trusted for `req.ip`, which all IP rate limiting keys on. Accepts a hop count or a comma-separated list of proxy IPs/CIDRs. Never set `true` — it lets clients forge their source IP. |
 | `PORT` | ✅ | `4000` | API server port |
 | `API_BASE_URL` | ✅ | `http://localhost:4000` | Public-facing API URL |
 | `CORS_ORIGINS` | ✅ | `http://localhost:3000,http://localhost:3001` | Comma-separated allowed origins |
@@ -57,6 +59,9 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 | `EMBEDDING_API_KEY` | ✅ | — | API key for embedding provider (may be same as OPENROUTER_API_KEY) |
 | `EMBEDDING_BASE_URL` | — | `https://api.openai.com/v1` | Embedding API base URL |
 | `ENHANCE_MODEL` | — | `openai/gpt-4o-mini` | Model for operator message enhancement (falls back to `AI_MODEL` when unset) |
+| `AI_LLM_TIMEOUT_MS` | — | `30000` | Per-attempt timeout for a chat-completion call |
+| `AI_LLM_MAX_RETRIES` | — | `2` | Retries after a transient upstream failure (429 / 5xx / socket reset). Handled by LangChain with exponential backoff; 4xx surfaces immediately. |
+| `AI_MAX_TOOL_TURNS` | — | `10` | Hard ceiling on agent↔tool round trips within one turn, so a model stuck on a failing tool cannot burn an org's budget |
 
 ### Pinecone
 
@@ -133,6 +138,23 @@ Read at runtime. All optional: with no DSN the SDK never initialises and every
 | `SENTRY_DSN` | — | — | Backend project DSN (`chataxispro-backend`). Unset → reporting disabled |
 | `SENTRY_ENVIRONMENT` | — | `NODE_ENV` | Environment tag on each event (`development` / `staging` / `production`) |
 | `SENTRY_RELEASE` | — | — | Build identifier, usually the git SHA. Set by the Coolify compose files |
+
+---
+
+### LangSmith tracing — OPTIONAL (spec 05)
+
+Traces every LangGraph node, LLM call and tool call for the AI agent. **Off by default**:
+tracing ships conversation content (including customer messages) to LangSmith, so it must be an
+explicit opt-in. Requires **both** `LANGSMITH_TRACING=true` **and** a non-empty
+`LANGSMITH_API_KEY` — `initLangSmithTracing()` clears the SDK's env vars otherwise, so a stray
+flag in a deployment environment cannot switch tracing on by accident.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LANGSMITH_TRACING` | — | `false` | Master switch. Only honoured alongside an API key. |
+| `LANGSMITH_API_KEY` | — | — | LangSmith API key. Absent ⇒ tracing stays off regardless of the flag. |
+| `LANGSMITH_ENDPOINT` | — | `https://api.smith.langchain.com` | LangSmith API endpoint (self-hosted installs override this) |
+| `LANGSMITH_PROJECT` | — | `customer-service-chatbot` | Project traces are grouped under |
 
 ---
 
@@ -227,6 +249,60 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `NEXT_PUBLIC_SUPPORT_PHONE` | — | `(239) 555-0108` | Contact section phone. |
 | `NEXT_PUBLIC_SUPPORT_ADDRESS` | — | `4140 Parker Rd, Allentown, NM 31134` | Contact section address. |
 | `NEXT_PUBLIC_APP_URL` | ✅ | `http://localhost:3000` | Dashboard app URL |
+| `KB_HYBRID_ALPHA` | — | `0.7` | Dense/lexical blend. 1.0 dense-only, 0.0 lexical-only. Default is the measured peak of a sweep, see [`41-hybrid-retrieval.md`](41-hybrid-retrieval.md) |
+| `KB_HYBRID_FUSION` | — | `rrf` | `rrf` (fuse on rank) or `weighted` (fuse on normalised score) |
+| `KB_LEXICAL_TIMEOUT_MS` | — | `1500` | Past this the lexical leg is dropped and retrieval proceeds dense-only |
+| `KB_HEADING_PATH_EMBEDDING` | — | `true` | Prepend the chunk's heading path to the embedded text |
+| `EMBEDDING_DIMENSIONS` | — | *(native)* | Output dimensionality. Required for a model whose native size exceeds the index dimension. **Changing the embedding model requires a full reindex**: mixed vector spaces return nonsense |
+| `AI_CONTEXT_TOKEN_BUDGET` | — | `3000` | Token ceiling for the numbered context block. Enforced by dropping whole passages, never truncating one |
+| `AI_MAX_UNCITED_RATIO` | — | `0.5` | Uncited factual sentences allowed before the turn's confidence is lowered, feeding the existing escalation threshold |
+| `KB_INGEST_MAX_RETRIES` | — | `3` | Bounded retries for a **transient** ingest failure. Permanent classes consume none |
+| `KB_INGEST_STUCK_PROCESSING_MS` | — | `900000` | A source in `processing` longer than this was interrupted and is re-queued |
+| `KB_INGEST_RETRY_BACKOFF_MS` | — | `60000` | Base retry delay, doubled per attempt |
+| `KB_INGEST_FAILURE_ALERT_RATE` | — | `0.3` | Org failure rate that raises an operator alert |
+| `KB_INGEST_FAILURE_ALERT_MIN_SOURCES` | — | `5` | Floor before the rate above means anything |
+| `KB_CONFLICT_DETECTION_ENABLED` | — | `false` | Detect and resolve contradictory sources. See [`44-knowledge-conflicts.md`](44-knowledge-conflicts.md) |
+| `KB_CONFLICT_SCORE_GAP` | — | `0.15` | How close the top two sources must score before a conflict check runs. The budget gate |
+| `KB_RERANK_ENABLED` | — | `false` | Cross-encoder reranking. Off by default: a measured trade, not a clear win. See [`42-reranking.md`](42-reranking.md) |
+| `KB_RERANK_PROVIDER` | — | `pinecone` | `pinecone` (hosted cross-encoder) or `llm` (fallback) |
+| `KB_RERANK_MODEL` | — | `bge-reranker-v2-m3` | Hosted reranker model |
+| `KB_RERANK_CANDIDATES` | — | `50` | Stage-1 candidate count. **Distinct from `AI_KB_SEARCH_TOP_K`**, the final context size |
+| `KB_RERANK_TIMEOUT_MS` | — | `3000` | Past this, stage-1 ordering stands |
+| `KB_RERANK_MIN_SCORE` | — | `0.0005` | Relevance floor on the calibrated score, applied to the **best** candidate, not each one |
+| `AI_QUERY_REWRITE_ENABLED` | — | `false` | Query understanding in front of KB search. Off by default: it improves retrieval measurably but costs ~2.5s p95, 6x its stated budget. See [`40-query-understanding.md`](40-query-understanding.md) |
+| `AI_QUERY_REWRITE_MODEL` | — | `anthropic/claude-haiku-4.5` | Small, fast OpenRouter model for rewriting. Never the answering model |
+| `AI_QUERY_REWRITE_TIMEOUT_MS` | — | `4000` | Past this, fall back to the raw query |
+| `AI_QUERY_REWRITE_HISTORY_TURNS` | — | `6` | Prior turns used to resolve a follow-up |
+| `AI_QUERY_EXPANSION_COUNT` | — | `2` | Paraphrases per query, fused with RRF. `0` disables expansion |
+| `AI_QUERY_HYDE_ENABLED` | — | `false` | Embed a hypothetical answer instead of the question. Corpus-dependent |
+| `AI_QUERY_FOLLOWUP_ROUND_ENABLED` | — | `false` | At most one extra retrieval round for multi-hop questions |
+| `RAG_EVAL_JUDGE_MODEL` | — | a strong Claude model | OpenRouter model id for the offline eval judge (`pnpm eval:rag`). Must not be the answering model. See [`__specs/39-rag-evaluation.md`](39-rag-evaluation.md) |
+| `RAG_TELEMETRY_ENABLED` | — | `true` | Persist one `RagTurnMetric` per customer turn. Every write is fire-and-forget, after the reply is sent. See [`39-rag-evaluation.md`](39-rag-evaluation.md) |
+| `RAG_TELEMETRY_RETENTION_DAYS` | — | `90` | TTL on `ragturnmetrics`. Matches every other per-turn telemetry collection ([`12-security-compliance.md`](12-security-compliance.md)) |
+| `RAG_FAITHFULNESS_SAMPLE_RATE` | — | `0.05` | Share of turns sent to the judge for an online faithfulness score. `0` disables sampling without disabling telemetry |
+| `RAG_FAITHFULNESS_JUDGE_MODEL` | — | `RAG_EVAL_JUDGE_MODEL` | Online judge model. Must not be the answering model; defaults to the offline judge so the two numbers stay comparable |
+| `RAG_FAITHFULNESS_TIMEOUT_MS` | — | `20000` | Ceiling on one out-of-band judge call |
+| `RAG_ALERT_ENABLED` | — | `true` | Notify an org when a rolling-window quality rate crosses its threshold |
+| `RAG_ALERT_WINDOW_MINUTES` | — | `60` | Rolling window the rates are computed over |
+| `RAG_ALERT_MIN_TURNS` | — | `20` | Turns required in the window before a rate means anything |
+| `RAG_ALERT_NO_HIT_RATE` | — | `0.4` | No-hit rate that raises an alert. The fix is writing documents |
+| `RAG_ALERT_LOW_CONFIDENCE_RATE` | — | `0.3` | Low-confidence rate that raises an alert. Usually retrieval quality, not missing content |
+| `RAG_ALERT_ESCALATION_RATE` | — | `0.5` | Escalation rate that raises an alert |
+| `RAG_ALERT_COOLDOWN_MINUTES` | — | `360` | Silence per org per rate after one alert |
+| `RAG_ALERT_INTERVAL_MS` | — | `900000` | How often the sweep job runs |
+| `RAG_EVAL_REPORTS_DIR` | — | `../../packages/rag-eval/reports` | Offline eval reports read by the RAG Quality page's eval-history panel. Absent directory → panel reports none available, not an error |
+| `KB_INDEX_HEALTH_ENABLED` | — | `false` | The **scheduled** half of index health. Off until the scoring is trusted on real data. The dashboard reads and the four repair actions are unaffected. See [`04-pinecone-firecrawl.md`](04-pinecone-firecrawl.md) |
+| `KB_INDEX_HEALTH_INTERVAL_MS` | — | `1800000` | How often the job wakes. Work is gated to the off-peak hour below |
+| `KB_INDEX_HEALTH_HOUR_UTC` | — | `3` | UTC hour the job may re-embed in. Re-embedding competes with live retrieval for the same provider quota |
+| `KB_INDEX_HEALTH_MAX_REEMBED_PER_RUN` | — | `10` | Sources re-embedded per run. A drifted corpus is repaired over several nights, never in one burst |
+| `KB_HEALTH_WINDOW_DAYS` | — | `30` | Telemetry window every health metric is computed over |
+| `KB_HEALTH_MIN_RETRIEVALS` | — | `5` | Volume floor before a rate about a chunk means anything |
+| `KB_HEALTH_DOWNVOTE_RATE` | — | `0.3` | Downvote rate among **citing** answers that marks a passage misleading |
+| `KB_HEALTH_UNCITED_RATE` | — | `0.2` | Citation rate at or below which a retrieved passage counts as ignored |
+| `KB_HEALTH_STRONG_SCORE` | — | `0.5` | Score a passage must reach before "never cited" reads as a chunking defect |
+| `KB_HEALTH_GAP_SIMILARITY` | — | `0.55` | Cosine similarity at which two gap queries are the same question. **Measured**, not guessed: 0.86 clustered nothing. See the sweep in [`04-pinecone-firecrawl.md`](04-pinecone-firecrawl.md) |
+| `KB_HEALTH_EMBEDDING_MODEL_TAG` | — | `EMBEDDING_MODEL` | Vector-space tag on cached gap embeddings. Changing the embedding model must change this |
+| `NEXT_DEV_ALLOWED_ORIGINS` | — | *(empty)* | **Dev only.** Comma-separated hosts allowed to reach the Next dev server's internal endpoints (HMR, RSC payloads, `/_next/*`). Required when `pnpm dev` is served through a tunnel, e.g. a Cloudflare quick tunnel used to receive Paddle webhooks locally; without it the page loads but never hydrates. Production is served from its own origin and ignores this. |
 | `NEXT_PUBLIC_PADDLE_ENVIRONMENT` | — | `sandbox` | Paddle client-side environment |
 | `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` | — | — | Paddle client-side token (for Paddle.js) |
 | `NEXT_PUBLIC_SENTRY_DSN` | — | — | Frontend project DSN (`chataxispro-frontend`). **Build-time**: inlined into the client bundle, so it must be a docker build arg — setting it only at runtime leaves the browser SDK uninitialised |

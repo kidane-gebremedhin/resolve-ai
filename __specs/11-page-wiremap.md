@@ -38,7 +38,7 @@ This table maps every route in the application from its current state to target 
 
 | Route | Current State | Target | API Endpoints | Phase |
 |-------|---------------|--------|---------------|-------|
-| `/app` | Template KPI cards (mock data) | Real-time overview cards + recent conversations | `GET /analytics/overview`, `GET /conversations?limit=5` | 3–4 |
+| `/app` | Template KPI cards (mock data) | Real-time overview cards + recent conversations | `GET /billing/usage`, `GET /conversations?limit=5` | 3–4 |
 | `/app/inbox` | Template inbox list (mock data) | Real inbox: filterable conversation list with real-time updates | `GET /conversations?status=...&websiteId=...`, Socket.io `conversation:updated`, `conversation:new` | 3 |
 | `/app/inbox/[conversationId]` | Does not exist | Thread view: messages, reply composer, enhance, resolve/escalate, contact sidebar | `GET /conversations/:id`, `GET /conversations/:id/messages`, `POST /conversations/:id/messages`, `POST /messages/enhance`, `PATCH /conversations/:id/status`, Socket.io `message:new` | 3 |
 | `/app/chat` | **EXISTS — Live chat (template)** | **DELETE entirely** — remove route file + sidebar entry + `MessageSquare` import in `AppShell` | — | 0 |
@@ -48,7 +48,8 @@ This table maps every route in the application from its current state to target 
 | `/app/websites` | Template website list + embed snippet (mock) | Wire CRUD + per-site embed code generator + allowed origins | `GET /websites`, `POST /websites`, `PATCH /websites/:id`, `DELETE /websites/:id` | 4 |
 | `/app/ai` | Template AI agent config (mock prompt + tools) | Per-agent system prompt, model selection, confidence threshold, tool toggles. **First-run empty state is a `CreateAgentForm` (name + welcome message) that POSTs `/agents`, not a "use the API" placeholder.** | `GET /agents`, `POST /agents`, `GET /agents/:id`, `PATCH /agents/:id` | 3 |
 | `/app/usage` | Template usage meters (mock) | Wire to subscription usage counters (AI msg/month, KB sources, crawled pages) | `GET /billing/subscription` (returns `usage` block) | 4 |
-| `/app/analytics` | Template charts (mock channels, KPIs) | Real analytics: conversations over time, resolution rate, top queries | `GET /analytics/overview`, `GET /analytics/conversations` | 4 |
+| `/app/analytics` | Template charts (mock channels, KPIs) | Real analytics: conversations over time, resolution rate, top queries | `GET /analytics/{conversations-daily,volume,feedback,knowledge-gaps}`, `GET /billing/usage/daily` | 4 |
+| `/app/analytics/rag` | Does not exist | **RAG Quality.** Production retrieval and generation health over the `RagTurnMetric` data ([`39-rag-evaluation.md`](39-rag-evaluation.md)). Five sections: KPI row with period-over-period deltas; retrieval (Recall@K / Precision@K / MRR with a K selector, and a score histogram drawing the live `AI_KB_SEARCH_MIN_SCORE` as a threshold line); generation over time plus unsupported-claim examples linking to their conversation; knowledge health (failing queries joined to `KnowledgeGap`, never-retrieved sources, failing ingestion from P8); offline eval history. **Every tile carries its definition in a click-opened popover**, served from the API so it cannot drift from the offline harness. Read-only: no write path anywhere | `GET /rag-metrics/{summary,retrieval,generation,cost,failing-queries,source-health,eval-runs,definitions}` | 4 |
 | `/app/billing` | Template plan tiles + invoices (mock) | Paddle subscription status, upgrade/downgrade, invoices | `GET /billing/subscription`, `POST /billing/checkout`, `POST /billing/portal` | 4 |
 | `/app/settings` | Template tabbed settings form | Org settings (name, timezone), user profile, security, team (sub-tab), API keys, danger zone | `GET /orgs/current`, `PATCH /orgs/current`, `PATCH /auth/profile`, team mgmt endpoints | 4 |
 | `/app/leads` | Template lead list (mock contacts) | Contact sessions with email/phone, conversation counts | `GET /leads?websiteId=...&hasEmail=true` | 3 |
@@ -108,6 +109,7 @@ Source: `src/components/layouts/app-shell.tsx` `nav` array. The current template
 ├─────────────────────────┤
 │  ACCOUNT                │
 │  📈 Analytics           │ → /app/analytics
+│  🎯 RAG Quality         │ → /app/analytics/rag  ← ADD (new in v1)
 │  📏 Usage               │ → /app/usage
 │  💳 Billing             │ → /app/billing
 │  ⚙️ Settings            │ → /app/settings (team is a sub-tab)

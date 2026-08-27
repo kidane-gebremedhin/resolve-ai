@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { ManageSubscriptionButton } from "@/components/billing/plan-actions";
 import { BillingPlansGrid, type BillingCatalogEntry } from "@/components/billing/billing-plans-grid";
 import { CouponRedemption } from "@/components/billing/coupon-redemption";
+import { BillingHistory, type PaymentRow } from "@/components/billing/billing-history";
 import { can } from "@/lib/permissions";
 
 type Subscription = {
@@ -52,6 +53,16 @@ async function Page() {
       e instanceof ApiError ? e.message : "Failed to load subscription.";
   }
 
+  // Billing history is best-effort: a provider hiccup here must not take the
+  // whole billing page down, since the plan controls above it still work.
+  let payments: PaymentRow[] = [];
+  try {
+    const res = await api.get<{ payments: PaymentRow[] }>("/billing/payments?limit=50");
+    payments = res.payments;
+  } catch {
+    payments = [];
+  }
+
   let catalog: BillingCatalogEntry[] = [];
   try {
     const res = await api.get<{ plans: BillingCatalogEntry[] }>("/billing/plans");
@@ -75,6 +86,9 @@ async function Page() {
 
   // Plan display name — pulled from catalog so it reflects admin overrides.
   const catalogEntry = catalog.find((c) => c.plan === plan);
+  // Only used to name the decline reason in the dunning banner; the banner
+  // itself is driven by subscription status, not by this lookup.
+  const lastFailedPayment = payments.find((p) => p.status === "failed") ?? null;
   const currentPlanLabel = !plan ? "No active plan" : (catalogEntry?.name ?? plan);
 
   return (
@@ -89,6 +103,28 @@ async function Page() {
       {loadError && (
         <div className="mt-6 rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {loadError}
+        </div>
+      )}
+
+      {status === "past_due" && (
+        <div className="mt-6 flex items-start gap-3 rounded-md border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <div className="flex-1">
+            <div className="font-medium text-foreground">Your last payment failed</div>
+            <p className="mt-0.5 text-muted-foreground">
+              {lastFailedPayment?.failureReason
+                ? `The payment was declined (${lastFailedPayment.failureReason.replace(/_/g, " ")}). `
+                : "We couldn't take payment for your subscription. "}
+              Your access is unchanged while the payment is retried. Update your payment
+              method to avoid an interruption.
+            </p>
+            <div className="mt-3">
+              <ManageSubscriptionButton
+                hasPaddleCustomer={hasPaddleCustomer}
+                label="Update payment method"
+              />
+            </div>
+          </div>
         </div>
       )}
 
@@ -186,9 +222,13 @@ async function Page() {
         />
       </div>
 
-      <div className="mt-8 rounded-xl border border-dashed border-border bg-surface/40 p-5 text-sm text-muted-foreground">
-        Invoices and receipts are available inside the Paddle customer portal. Use the
-        &quot;Manage subscription&quot; button above to view, download, or update billing details.
+      <div className="mt-8">
+        <div className="font-display text-sm font-semibold mb-3">Billing history</div>
+        <BillingHistory payments={payments} />
+        <p className="mt-3 text-xs text-muted-foreground">
+          Full invoices and tax documents live in the Paddle customer portal. Use
+          &quot;Manage subscription&quot; above to download them or update billing details.
+        </p>
       </div>
     </div>
   );

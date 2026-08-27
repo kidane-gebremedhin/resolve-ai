@@ -21,7 +21,7 @@ import { enforceMessageQuota } from "../middleware/plan-limit.middleware.js";
 import { enforceBudgetLimit } from "../middleware/budget-limit.middleware.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { env } from "../config/env.js";
-import { generateAiReply } from "../services/ai/agent.service.js";
+import { generateAiReply } from "../services/ai/index.js";
 import { widgetRateLimit } from "../middleware/widgetRateLimit.js";
 import { dispatchToolCall } from "../services/integrations/dispatcher.js";
 import Ajv from "ajv";
@@ -889,7 +889,7 @@ router.post(
         conversation,
         content,
         io,
-        req.body.attachments as import("../services/ai/agent.service.js").CurrentAttachment[] | undefined,
+        req.body.attachments as import("../services/ai/index.js").CurrentAttachment[] | undefined,
         presentToolResult,
       ).catch((err) => {
         logger.error("[widget] AI reply failed", {

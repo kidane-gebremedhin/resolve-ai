@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from "express";
-import express from "express";
 import { z } from "zod";
 import { Organization, Subscription } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
@@ -10,9 +9,11 @@ import {
   verifyPaddleSignature,
   createCheckoutSession,
   createCustomerPortalSession,
+  invoiceUrlForPayment,
   activateFromTransaction,
   changePlan,
 } from "../services/billing.service.js";
+import { latestPayment, listPayments } from "../services/payment.service.js";
 import { limitsForPlan } from "../middleware/plan-limit.middleware.js";
 import { loadPlanCatalog } from "../config/plans.js";
 import { Message, KnowledgeSource, Website, Membership, UsageRecord } from "../models/index.js";
@@ -30,20 +31,31 @@ router.get("/plans", async (_req: Request, res: Response) => {
   res.json({ plans: await loadPlanCatalog() });
 });
 
-// Webhook must consume the raw body to verify HMAC.
+// Webhook signature is verified over the EXACT bytes Paddle signed, taken from
+// `req.rawBody` — the copy stashed by the global `express.json({ verify })` in
+// `index.ts`.
+//
+// This route previously mounted its own `express.raw({ type: "*/*" })` and read
+// `req.body instanceof Buffer`. That never worked: the global json parser runs
+// first, sets `req._body`, and body-parser then skips the second parser
+// entirely, so `req.body` was always the parsed object and the Buffer branch
+// never ran. The signature was therefore always computed over an empty string
+// and every real delivery was rejected with 401. The per-connection
+// integration webhooks in `integrations.routes.ts` already read `rawBody` this
+// way; this brings platform billing in line with them.
 router.post(
   "/webhook",
-  express.raw({ type: "*/*", limit: "1mb" }),
   async (req: Request, res: Response) => {
-    const raw = req.body instanceof Buffer ? req.body.toString("utf8") : "";
+    const raw = (req as unknown as { rawBody?: string }).rawBody ?? "";
     const sig = req.headers["paddle-signature"] as string | undefined;
     if (!verifyPaddleSignature(raw, sig)) {
       res.status(401).json({ error: { code: "invalid_signature", message: "Bad signature." } });
       return;
     }
     try {
-      const event = JSON.parse(raw);
-      await handlePaddleEvent(event);
+      // `req.body` is already the parsed object; re-parsing `raw` would only
+      // risk the two disagreeing.
+      await handlePaddleEvent(req.body);
       res.status(204).send();
     } catch (err) {
       logger.error("[billing] webhook handling failed", err);
@@ -89,6 +101,42 @@ router.get("/subscription", requireAuth, requireOrg, requireOrgRole("admin"), as
     canceledAt: sub?.canceledAt ?? null,
     cancelScheduledAt: sub?.cancelScheduledAt ?? null,
   });
+});
+
+// Billing history: one row per payment attempt at the provider, newest first.
+// Read-only and org-scoped; the ledger is written only by the webhook path.
+router.get("/payments", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {
+  const rawLimit = (req.query.limit as string | undefined) ?? "50";
+  const payments = await listPayments({
+    organizationId: req.orgId!,
+    limit: Number(rawLimit) || 50,
+  });
+  res.json({ payments });
+});
+
+// Mint a fresh invoice PDF link for one payment. Not cached anywhere: Paddle's
+// link expires after an hour, so it is minted per click and the row is scoped
+// to the caller's org inside the service.
+router.get(
+  "/payments/:id/invoice",
+  requireAuth,
+  requireOrg,
+  requireOrgRole("admin"),
+  async (req: Request, res: Response) => {
+    const url = await invoiceUrlForPayment({
+      paymentId: String(req.params.id),
+      organizationId: req.orgId!,
+    });
+    res.json({ url });
+  },
+);
+
+// The most recent payment attempt. The checkout pending page polls this
+// alongside /subscription so a declined card surfaces as "failed" immediately
+// instead of spinning until the poll gives up.
+router.get("/payments/latest", requireAuth, requireOrg, async (req: Request, res: Response) => {
+  const payment = await latestPayment(req.orgId!);
+  res.json({ payment });
 });
 
 router.get("/usage", requireAuth, requireOrg, requireOrgRole("admin"), async (req: Request, res: Response) => {

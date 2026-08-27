@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { KnowledgeSource, Agent } from "../models/index.js";
+import { KnowledgeSource, Agent, KbChunk, IngestionEvent } from "../models/index.js";
+import { ingestionHealth } from "../services/kb/ingestion-health.service.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceKnowledgeQuota } from "../middleware/plan-limit.middleware.js";
@@ -11,6 +12,7 @@ import { ConflictError, NotFoundError, ValidationError } from "../utils/errors.j
 import { ingestSource, purgeSourceVectors } from "../services/kb/ingestion.service.js";
 import { startCrawl } from "../services/kb/firecrawl.service.js";
 import { parseFile, sourceTypeFor } from "../services/kb/parsers.js";
+import { assertSignatureMatches, FileSignatureError } from "../services/kb/file-signature.js";
 import { logger } from "../config/logger.js";
 import { logAuditFromReq } from "../services/audit.service.js";
 import type { Server as IoServer } from "socket.io";
@@ -54,6 +56,14 @@ async function resolveAgentId(orgId: string, value: unknown): Promise<string> {
 const updateSchema = z.object({
   title: z.string().min(1).optional(),
   content: z.string().min(1).optional(),
+  /**
+   * Authority when two sources contradict each other. Higher wins.
+   *
+   * Bounded to a small range on purpose: this is a coarse "which document do we
+   * stand behind" dial, not a score to be tuned. An unbounded integer invites
+   * operators to encode an ordering they will not remember in six months.
+   */
+  priority: z.number().int().min(-10).max(10).optional(),
 });
 
 function normalize(text: string): string {
@@ -109,6 +119,25 @@ router.post(
     const file = (req as Request & { file?: Express.Multer.File }).file;
     if (!file) throw new ValidationError("No file uploaded. Expected field name: 'file'.");
 
+    // Check the BYTES before handing the buffer to a parser. Content-Type and
+    // the filename are both caller-supplied and neither is evidence
+    // (__specs/12 §5).
+    const declaredType = sourceTypeFor({
+      buffer: file.buffer,
+      mimetype: file.mimetype,
+      filename: file.originalname,
+    });
+    try {
+      assertSignatureMatches({
+        buffer: file.buffer,
+        declaredType,
+        filename: file.originalname,
+      });
+    } catch (err) {
+      if (err instanceof FileSignatureError) throw new ValidationError(err.message);
+      throw err;
+    }
+
     const parsed = await parseFile({
       buffer: file.buffer,
       mimetype: file.mimetype,
@@ -131,7 +160,7 @@ router.post(
     const source = await KnowledgeSource.create({
       organizationId: req.orgId,
       agentId,
-      type: sourceTypeFor({ buffer: file.buffer, mimetype: file.mimetype, filename: file.originalname }),
+      type: declaredType,
       title,
       fileName: file.originalname,
       mimeType: file.mimetype,
@@ -190,7 +219,11 @@ router.put("/:id", validateBody(updateSchema), async (req: Request, res: Respons
   const source = await KnowledgeSource.findOne({ _id: req.params.id, organizationId: req.orgId });
   if (!source) throw new NotFoundError("Knowledge source not found.");
 
-  const { title, content } = req.body as { title?: string; content?: string };
+  const { title, content, priority } = req.body as {
+    title?: string;
+    content?: string;
+    priority?: number;
+  };
 
   if (content !== undefined && source.type !== "text") {
     throw new ValidationError(
@@ -202,6 +235,14 @@ router.put("/:id", validateBody(updateSchema), async (req: Request, res: Respons
 
   if (typeof title === "string") {
     source.title = title;
+  }
+
+  // Priority is metadata, not content: changing it must NOT trigger a reingest
+  // or move `sourceUpdatedAt`. It is mirrored onto the source's chunks directly,
+  // because retrieval reads it from there on the hot path.
+  if (typeof priority === "number" && priority !== (source.priority ?? 0)) {
+    source.priority = priority;
+    await KbChunk.updateMany({ sourceId: source._id }, { $set: { priority } });
   }
 
   if (typeof content === "string" && source.type === "text") {
@@ -247,10 +288,72 @@ router.put("/:id", validateBody(updateSchema), async (req: Request, res: Respons
 router.post("/:id/reingest", async (req: Request, res: Response) => {
   const source = await KnowledgeSource.findOne({ _id: req.params.id, organizationId: req.orgId });
   if (!source) throw new NotFoundError("Knowledge source not found.");
+
+  // An operator pressing Retry is a deliberate decision to try again, so it
+  // clears the automatic retry budget and the alert latch. Without this, a
+  // source that exhausted its three attempts could be retried from the UI once
+  // and then never again by the reconcile job, and would never re-alert.
+  await KnowledgeSource.updateOne(
+    { _id: source._id },
+    {
+      $set: { retryCount: 0, ingestAlerted: false },
+      $unset: { embeddingErrorCode: 1, embeddingErrorAction: 1 },
+    },
+  );
+
   ingestSource(source._id.toString()).catch((err) =>
     logger.error("[kb] async reingest failed", { sourceId: source._id, err }),
   );
   res.status(202).json({ status: "queued" });
+});
+
+/**
+ * The stage timeline for one source: what happened, when, and what to do.
+ *
+ * Grouped by run so an operator sees "this was re-ingested four times" rather
+ * than twenty ungrouped rows.
+ */
+router.get("/:id/events", async (req: Request, res: Response) => {
+  const source = await KnowledgeSource.findOne({ _id: req.params.id, organizationId: req.orgId })
+    .select({ _id: 1 })
+    .lean();
+  if (!source) throw new NotFoundError("Knowledge source not found.");
+
+  const events = await IngestionEvent.find({ sourceId: req.params.id })
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+
+  const runs = new Map<string, typeof events>();
+  for (const e of events) {
+    const list = runs.get(e.runId) ?? [];
+    list.push(e);
+    runs.set(e.runId, list);
+  }
+
+  res.json({
+    runs: [...runs.entries()].map(([runId, stages]) => ({
+      runId,
+      attempt: stages[0]?.attempt ?? 1,
+      startedAt: stages[stages.length - 1]?.createdAt ?? null,
+      failed: stages.some((s) => s.status === "error"),
+      stages: [...stages].reverse().map((s) => ({
+        stage: s.stage,
+        status: s.status,
+        durationMs: s.durationMs ?? null,
+        chunkCount: s.chunkCount ?? null,
+        errorCode: s.errorCode ?? null,
+        errorMessage: s.errorMessage ?? null,
+        errorAction: s.errorAction ?? null,
+        createdAt: s.createdAt,
+      })),
+    })),
+  });
+});
+
+/** Org-level ingestion health, for the operator dashboard. */
+router.get("/health/ingestion", async (req: Request, res: Response) => {
+  res.json(await ingestionHealth(req.orgId!));
 });
 
 router.delete("/:id", async (req: Request, res: Response) => {

@@ -7,12 +7,23 @@ import { redirect } from "next/navigation";
 import { auth } from "./auth";
 import { API_URL, API_INTERNAL_URL } from "./app-urls";
 
-// Any 401 from the API means our bearer token is missing/stale/invalid (the
-// dashboard only ever calls authed endpoints; login failures go through
-// next-auth's credentials provider, not this client). So we auto-logout on ANY
-// 401 rather than matching specific message copy.
-function isUnauthorized(status: number): boolean {
-  return status === 401;
+// A 401 normally means our bearer token is missing/stale/invalid, and the right
+// response is to sign out and send the operator back to /login.
+//
+// It is NOT always that. Some endpoints answer 401 for a reason that has
+// nothing to do with the session — a wrong second factor, most obviously, where
+// the caller is perfectly authenticated and merely mistyped six digits. Signing
+// out there destroys a valid session, throws away whatever is on screen (the
+// one-time recovery codes, in the case that surfaced this), and shows a
+// misleading "session expired".
+//
+// So auto-logout is driven by the error CODE, not the bare status. Codes that
+// describe the submitted credentials rather than the session are excluded; the
+// caller handles them like any other error.
+const NON_SESSION_401_CODES = new Set(["totp_required", "invalid_totp"]);
+
+function isUnauthorized(status: number, code?: string): boolean {
+  return status === 401 && !NON_SESSION_401_CODES.has(code ?? "");
 }
 
 export class ApiError extends Error {
@@ -114,7 +125,7 @@ async function apiFetch<T>(path: string, options: FetchOptions = {}): Promise<T>
     // We only do this for true server-side calls resolving the session via
     // `auth()` (no explicit token passed).
     if (
-      isUnauthorized(res.status) &&
+      isUnauthorized(res.status, err?.error?.code) &&
       options.token === undefined &&
       typeof window === "undefined"
     ) {
@@ -158,7 +169,7 @@ export async function clientApiFetch<T>(
     // so route handlers can decide for themselves.
     if (
       err instanceof ApiError &&
-      isUnauthorized(err.status) &&
+      isUnauthorized(err.status, err.code) &&
       typeof window !== "undefined"
     ) {
       const { signOut } = await import("next-auth/react");

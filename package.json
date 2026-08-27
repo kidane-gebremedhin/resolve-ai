@@ -18,6 +18,7 @@
     "db:migrate": "pnpm --filter @csb/api db:migrate",
     "db:seed": "pnpm --filter @csb/api db:seed",
     "db:seed:coupons": "pnpm --filter @csb/api db:seed:coupons",
+    "eval:rag": "pnpm --filter @csb/rag-eval eval",
     "verify:assets": "node scripts/verify-assets.mjs",
     "verify:env": "node scripts/verify-env.mjs"
   },

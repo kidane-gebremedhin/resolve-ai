@@ -3,7 +3,9 @@ import rateLimit from "express-rate-limit";
 import { z } from "zod";
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import { generateSecret, generateURI, verify as verifyOtp } from "otplib";
+import { generateSecret, generateURI } from "otplib";
+import { verifyTotp } from "../services/security/totp.js";
+import { sealSecret, openSecret } from "../services/security/secret-field.js";
 import QRCode from "qrcode";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireAuth } from "../middleware/auth.middleware.js";
@@ -13,6 +15,7 @@ import {
   ensureMembershipForUser,
   requestPasswordReset,
   resetPassword,
+  accessTokenSeconds,
 } from "../services/auth.service.js";
 import { sendMail } from "../services/mailer.service.js";
 import { env } from "../config/env.js";
@@ -49,6 +52,11 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
+  // Second factor. Optional because accounts without 2FA never send one, and a
+  // 2FA account's first attempt legitimately omits it — the API answers
+  // `totp_required` and the client retries with the code. Accepts either a
+  // 6-digit TOTP or a `xxxx-xxxx-xxxx` recovery code, so the length is loose.
+  code: z.string().trim().min(1).max(32).optional(),
 });
 
 // Abuse throttles for unauthenticated auth endpoints (per client IP — the app
@@ -84,7 +92,7 @@ router.post("/register", validateBody(registerSchema), async (req: Request, res:
 });
 
 router.post("/login", loginLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
-  const result = await loginWithCredentials(req.body.email, req.body.password);
+  const result = await loginWithCredentials(req.body.email, req.body.password, req.body.code);
   res.json(result);
 });
 
@@ -143,7 +151,7 @@ router.post("/refresh", async (req: Request, res: Response) => {
     role: user.role as "user" | "platform_admin",
     membershipRole: membership?.role as "owner" | "admin" | "agent" | "viewer" | undefined,
   });
-  res.json({ accessToken, expiresIn: 900 });
+  res.json({ accessToken, expiresIn: accessTokenSeconds() });
 });
 
 // Google's stable per-account id lives in the id_token's `sub` claim. We use it
@@ -218,7 +226,7 @@ router.post("/google", async (req: Request, res: Response) => {
     },
     accessToken,
     refreshToken,
-    expiresIn: 900,
+    expiresIn: accessTokenSeconds(),
   });
 });
 
@@ -226,21 +234,42 @@ router.post("/google", async (req: Request, res: Response) => {
 // The setup → verify → (later) disable flow is split into three calls so the
 // secret + recovery codes are only shown ONCE and 2FA isn't actually flipped
 // on until the user has proven they can produce a valid code from the secret.
-// Login enforcement is intentionally NOT wired here — that's a follow-up
-// (we'd need to plumb a `requires2fa` step through the auth.service login
-// path and the NextAuth credentials flow). See report TODO.
+// Login enforcement lives in auth.service.ts (`loginWithCredentials`), not
+// here, so every client is gated by construction: POST /auth/login answers
+// `totp_required` when the password is right but no code was sent, and
+// `invalid_totp` when the code is wrong. Both the dashboard and the admin
+// console surface those codes through their NextAuth credentials provider and
+// reveal a code field. Recovery codes are accepted in place of a TOTP and are
+// consumed on use.
 
 const ISSUER = "CSB";
 const RECOVERY_CODE_COUNT = 10;
 const BCRYPT_COST = 10;
 
+// Alphabet for recovery codes. Deliberately NOT base64url, which was the
+// original choice: base64url contains `-` and `_`, and the codes are formatted
+// in `-` separated groups, so it produced codes like `lc-i-guvt-wozz` and
+// `a9gj-7mi3-1cb-` where the separator is indistinguishable from a character.
+// These get written on paper and read back under stress, so ambiguity is the
+// one thing they cannot afford.
+//
+// Also drops the characters people reliably confuse when transcribing:
+// 0/o, 1/l/i.
+const RECOVERY_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+
 function generateRecoveryCodes(): string[] {
-  // 10 codes formatted `xxxx-xxxx-xxxx` from url-safe random bytes. Plenty of
-  // entropy and easy to read aloud / copy by hand.
   const codes: string[] = [];
   for (let i = 0; i < RECOVERY_CODE_COUNT; i += 1) {
-    const raw = crypto.randomBytes(9).toString("base64url").slice(0, 12).toLowerCase();
-    codes.push(`${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}`);
+    // Rejection-free selection: 31 symbols would bias a plain %-of-256 mapping,
+    // so draw a byte per character from a range that divides evenly.
+    const bytes = crypto.randomBytes(12 * 2);
+    let out = "";
+    for (let b = 0; out.length < 12; b += 1) {
+      const v = bytes[b % bytes.length];
+      if (v >= 248) continue; // 248 = 31 * 8, the largest unbiased cut
+      out += RECOVERY_ALPHABET[v % RECOVERY_ALPHABET.length];
+    }
+    codes.push(`${out.slice(0, 4)}-${out.slice(4, 8)}-${out.slice(8, 12)}`);
   }
   return codes;
 }
@@ -265,7 +294,8 @@ router.post("/2fa/setup", requireAuth, async (req: Request, res: Response) => {
   // Stash the secret + recovery hashes but DON'T flip totpEnabled — that
   // only happens after `/2fa/verify` succeeds, proving the user actually
   // enrolled the secret in an authenticator app.
-  user.totpSecret = secret;
+  // Sealed at rest: a database dump alone must not yield working TOTP seeds.
+  user.totpSecret = sealSecret(secret);
   user.totpEnabled = false;
   user.recoveryCodes = recoveryHashes;
   await user.save();
@@ -285,12 +315,13 @@ router.post(
     if (!user.totpSecret) {
       throw new ValidationError("Run /2fa/setup before verifying.");
     }
-    const result = await verifyOtp({
-      secret: user.totpSecret,
-      token: req.body.code,
-    });
-    if (!result.valid) {
-      throw new UnauthorizedError("Invalid 2FA code.");
+    const valid = await verifyTotp(openSecret(user.totpSecret)!, req.body.code);
+    if (!valid) {
+      // 400, deliberately NOT 401. The caller's session is perfectly valid —
+      // they just mistyped a code. Returning 401 made the dashboard's global
+      // "401 means the session died" handler sign the user out and bounce them
+      // to /login?session=expired, losing the recovery codes still on screen.
+      throw new ValidationError("Invalid 2FA code.");
     }
     user.totpEnabled = true;
     await user.save();
@@ -323,11 +354,12 @@ router.post(
       authorised = await bcrypt.compare(req.body.password, user.passwordHash);
     }
     if (!authorised && req.body.code && user.totpSecret) {
-      const result = await verifyOtp({ secret: user.totpSecret, token: req.body.code });
-      authorised = result.valid;
+      authorised = await verifyTotp(openSecret(user.totpSecret)!, req.body.code);
     }
     if (!authorised) {
-      throw new UnauthorizedError("Could not verify identity to disable 2FA.");
+      // Same reasoning as /2fa/verify: the session is valid, the supplied
+      // password or code was not.
+      throw new ValidationError("Could not verify identity to disable 2FA.");
     }
 
     user.totpEnabled = false;

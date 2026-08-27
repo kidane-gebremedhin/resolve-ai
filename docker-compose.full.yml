@@ -48,6 +48,10 @@ services:
       - '8025'
     restart: unless-stopped
 
+  # NOTE: run exactly ONE replica of this service. It holds Socket.IO rooms,
+  # OTP codes, rate-limit counters and job timers in process memory, so a
+  # second instance silently breaks realtime delivery and duplicates jobs.
+  # See RUNBOOK §10.3 for what lifting this limit requires.
   api:
     build:
       context: .

@@ -4,6 +4,19 @@ import { withSentryConfig } from "@sentry/nextjs";
 const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
+  // Hosts allowed to reach the dev server's internal endpoints (HMR, RSC
+  // payloads, /_next/*). Next blocks cross-origin dev requests by default, so
+  // serving `pnpm dev` through a tunnel — a Cloudflare quick tunnel for a
+  // Paddle webhook, say — needs the tunnel host listed here or the page loads
+  // and then quietly fails to hydrate.
+  //
+  // Env-driven, comma-separated, and dev-only: production is served from its
+  // own origin and never consults this. Keeping the host out of the repo
+  // matters because a quick tunnel gets a new name on every restart.
+  allowedDevOrigins: (process.env.NEXT_DEV_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean),
   transpilePackages: ["@csb/ui", "@csb/shared-types"],
   outputFileTracingRoot: process.env.NEXT_OUTPUT_FILE_TRACING_ROOT,
   images: {

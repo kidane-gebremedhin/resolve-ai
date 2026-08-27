@@ -19,6 +19,7 @@ import { errorHandler } from "./middleware/error-handler.middleware.js";
 import { ApiError } from "./utils/errors.js";
 import { attachSocketServer } from "./socket/index.js";
 import { startJobs } from "./jobs/index.js";
+import { initLangSmithTracing } from "./services/ai/llm/tracing.js";
 
 // Network hardening: on hosts with broken/absent IPv6 routing, Node's
 // Happy-Eyeballs (`autoSelectFamily`, default-on since Node 20) stalls when it
@@ -38,8 +39,16 @@ async function main() {
 
   const app = express();
   // Trust the reverse proxy (nginx / load balancer) so `req.ip` reflects the
-  // real client address (from X-Forwarded-For) instead of the proxy's.
-  app.set("trust proxy", true);
+  // real client address (from X-Forwarded-For) instead of the proxy's — but
+  // only as many hops as actually exist. See the TRUST_PROXY note in
+  // config/env.ts: trusting the entire chain lets a client forge their own
+  // source IP and walk straight through the IP-based rate limits.
+  const trustProxy = /^\d+$/.test(env.trustProxy)
+    ? Number(env.trustProxy)
+    : env.trustProxy.includes(",")
+      ? env.trustProxy.split(",").map((v) => v.trim()).filter(Boolean)
+      : env.trustProxy;
+  app.set("trust proxy", trustProxy);
   app.use(helmet());
   // Public widget endpoints are embedded on arbitrary customer sites, so they
   // must accept ANY origin (the embed loader calls /widget/appearance from the
@@ -94,6 +103,10 @@ async function main() {
   });
 
   app.use(errorHandler);
+
+  // Must run before any LangChain runnable is invoked — the SDK reads its
+  // tracing configuration straight from process.env at call time.
+  initLangSmithTracing();
 
   const httpServer = createServer(app);
   const io = attachSocketServer(httpServer);

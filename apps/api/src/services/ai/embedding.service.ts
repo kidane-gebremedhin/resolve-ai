@@ -9,6 +9,20 @@ import { recordUsage } from "../openrouter-usage.service.js";
 const baseUrl = process.env.EMBEDDING_BASE_URL ?? "https://api.openai.com/v1";
 const model = process.env.EMBEDDING_MODEL ?? "text-embedding-3-small";
 
+// Output dimensionality, when the model supports reducing it.
+//
+// This exists because the vector index has a FIXED dimension (1536 here) and a
+// model that natively emits more cannot be used at all without it:
+// `text-embedding-3-large` is 3072 by default, and upserting those into a
+// 1536-dim index fails outright. Matryoshka-trained models keep most of their
+// quality when truncated, which is what makes a larger model a candidate for an
+// existing index rather than a reason to rebuild one.
+//
+// Unset means "send no `dimensions` field", i.e. the model's native size.
+const dimensions = process.env.EMBEDDING_DIMENSIONS
+  ? Number(process.env.EMBEDDING_DIMENSIONS)
+  : null;
+
 // USD per 1M input tokens for the embedding model. OpenAI's text-embedding-3-small
 // is $0.02/1M; override via env when using a different model/provider. Used to price
 // embedding usage since the provider's response has no per-call cost (only tokens).
@@ -64,7 +78,11 @@ async function embedBatch(
       const res = await fetch(`${baseUrl}/embeddings`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, input: texts }),
+        body: JSON.stringify({
+          model,
+          input: texts,
+          ...(dimensions ? { dimensions } : {}),
+        }),
         signal: controller.signal,
       });
       if (!res.ok) throw new Error(`Embedding ${res.status}: ${await res.text()}`);

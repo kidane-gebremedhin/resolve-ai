@@ -83,4 +83,37 @@ export class DiskAdapter implements StorageAdapter {
     // Local disk can't presign — caller streams via the API route.
     return null;
   }
+
+  /**
+   * Remove a whole key prefix, sidecars included.
+   *
+   * Goes through `resolveKey` so the same path-traversal guard that protects
+   * reads and writes protects this too: a recursive delete is the last place to
+   * trust a caller-supplied path.
+   */
+  async deleteByPrefix(prefix: string): Promise<number> {
+    const { filePath: dir } = this.resolveKey(prefix.replace(/\/+$/, ""));
+    let removed = 0;
+    const walk = async (current: string): Promise<void> => {
+      let entries;
+      try {
+        entries = await fs.readdir(current, { withFileTypes: true });
+      } catch {
+        return; // Nothing stored under this prefix.
+      }
+      for (const entry of entries) {
+        const full = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+        } else {
+          await fs.rm(full, { force: true });
+          // Sidecars are bookkeeping, not objects; only count real blobs.
+          if (!entry.name.endsWith(".json")) removed += 1;
+        }
+      }
+      await fs.rm(current, { recursive: true, force: true });
+    };
+    await walk(dir);
+    return removed;
+  }
 }

@@ -2,9 +2,9 @@ import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
 // Singleton document holding platform-wide configuration. Keyed by
 // `singleton: 'global'` so we can always upsert against a stable filter.
-// Secrets (e.g. SMTP password) should be encrypted at rest — kept as a plain
-// string field for now with a TODO so the future encryption layer has a
-// concrete home.
+// Secrets (e.g. the SMTP password) are encrypted at rest via
+// services/security/secret-field.ts — always read them through openSecret()
+// and write them through sealSecret().
 const platformSettingSchema = new Schema(
   {
     singleton: { type: String, default: "global", unique: true, required: true },
@@ -13,7 +13,7 @@ const platformSettingSchema = new Schema(
         host: { type: String, default: "" },
         port: { type: Number, default: 587 },
         username: { type: String, default: "" },
-        // TODO: encrypt at rest. Stored as plaintext for now; do not log.
+        // Encrypted at rest (sealSecret/openSecret). Never log this value.
         secret: { type: String, default: "" },
         fromEmail: { type: String, default: "" },
       },

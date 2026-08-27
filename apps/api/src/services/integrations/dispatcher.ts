@@ -4,7 +4,7 @@ import { getAdapter } from "./adapters/index.js";
 import { evaluateGuardrails } from "./guardrails.js";
 import { checkRateLimit } from "./rateLimit.js";
 import { maskPii } from "./piiMask.js";
-import { buildIssueScopedTranscript } from "../ai/ticket-transcript.service.js";
+import { buildIssueScopedTranscript } from "../ai/chains/transcript.chain.js";
 import { decrypt, encrypt } from "../security/crypto.service.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";

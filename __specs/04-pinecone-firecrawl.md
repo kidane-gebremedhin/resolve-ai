@@ -483,3 +483,315 @@ function chunkText(text: string, options: {
   return addOverlap(chunks, overlap);
 }
 ```
+
+---
+
+## Conflicting sources (Changelog 14)
+
+Spec: [`44-knowledge-conflicts.md`](44-knowledge-conflicts.md).
+
+Two fields were added to `KnowledgeSource` and mirrored onto every chunk:
+
+- **`priority`** (integer, default 0) — operator-set authority. Higher wins when
+  two sources contradict each other.
+- **`sourceUpdatedAt`** — when the source's **content** last changed. Distinct
+  from `updatedAt`, which moves on every reingest, retry and status change and
+  therefore says nothing about which of two documents is more current.
+
+Both are denormalised onto `kbchunks` at ingest, because conflict resolution
+reads them for every candidate on the retrieval hot path and a join per hit would
+not pay for itself.
+
+**The backfill was metadata-only — no vector was re-embedded.** Retrieval reads
+these fields from the Mongo mirror rather than from Pinecone metadata (see the
+hybrid-retrieval spec), so `scripts/backfill-conflict-metadata.ts` is a Mongo
+update. Had retrieval still read Pinecone metadata, this would have required
+extending the client wrapper (which exposes only `upsert`, `query`, `deleteMany`)
+or a full re-embed. New ingests do write both fields into Pinecone metadata for
+consistency; old vectors lack them, which is harmless because they are only the
+fallback path.
+
+Changing `priority` from the UI does **not** trigger a reingest and does not move
+`sourceUpdatedAt`: it is metadata, not content.
+
+---
+
+## Vector-store tenancy: filtering today, namespaces later
+
+**What the code does.** Vectors for every organization share one Pinecone
+namespace. Isolation comes from two things working together in
+`services/kb/search.service.ts`:
+
+1. Every query carries an AND-ed metadata filter on `organizationId` **and**
+   `agentId`. Either alone would be insufficient — the org alone leaks between
+   agents in one workspace, the agent alone relies on ids never being reused.
+2. A query that arrives without an `agentId` is **refused and logged**, not run.
+   That is the dangerous case: an empty filter field silently means "everything",
+   and the failure would look like unusually good retrieval rather than a leak.
+
+`__tests__/vector-tenancy.test.ts` asserts both, plus that a vector-store outage
+degrades to zero hits rather than to an unfiltered query.
+
+**What the spec used to claim.** [`12-security-compliance.md`](12-security-compliance.md)
+§1.3 stated "Pinecone namespace = `organizationId`; no default/fallback namespace
+ever" and marked it 🔴 Critical. That was never implemented — see the note at
+`services/kb/ingestion.service.ts` where the upsert happens. The spec has been
+corrected to describe the mechanism that exists. **A spec that claims a stronger
+guarantee than the code provides is worse than one that admits the weaker one**,
+because it is the document a reviewer trusts.
+
+**Why namespaces have not shipped.** Every existing vector lives in the default
+namespace. Switching writes to `pinecone.namespace(orgId)` makes every already-
+indexed knowledge base invisible until it is re-embedded — a migration with real
+customer impact and real embedding cost, not a code change. It is worth doing:
+namespaces are physical partitioning, and the current design puts a single filter
+clause between two tenants.
+
+**If it is done**, the isolation tests above should pass unchanged — they assert
+the outcome (no cross-tenant hit), not the mechanism.
+
+---
+
+## Index health: closing the loop from query logs (Changelog 3)
+
+Ingestion gets content INTO the index. This is about what happens to it after:
+which passages earn their place, which gaps keep going unanswered, and what an
+operator does about either. Service:
+`apps/api/src/services/kb/index-health.service.ts`. Surfaced on the RAG Quality
+page ([`11-page-wiremap.md`](11-page-wiremap.md)).
+
+### Scored per chunk, not per source
+
+A document is rarely uniformly good, and the repair for one badly-split passage
+is not the repair for a bad document. Scoring at source granularity averages the
+two together and points the operator at the wrong fix.
+
+This needed an input the telemetry did not have. `RagTurnMetric.retrieval`
+recorded `sourceIds`; it now also records `retrieval.chunks`, one entry per
+retrieved passage in rank order:
+
+| Field | Meaning |
+| --- | --- |
+| `chunkId` / `sourceId` | Which passage, and which document it came from |
+| `rank` | 0-based position in the deduplicated list the prompt saw |
+| `score` | Raw similarity, always on the cosine scale |
+| `rerankScore` | Calibrated cross-encoder score, null when stage 2 did not run |
+| `cited` | Whether the reply actually quoted it |
+
+`cited` is the half that has to be recorded rather than derived: a passage that
+was retrieved and then ignored leaves no trace anywhere else, and it is the most
+diagnostic signal in the set. Bounded by `AI_KB_SEARCH_TOP_K`, written on the
+same fire-and-forget document as the rest of the turn's telemetry.
+
+### The three flags
+
+Kept apart because each has a different repair.
+
+| Flag | Condition | What it means | The repair |
+| --- | --- | --- | --- |
+| `dead_weight` | Zero retrievals in the window | Nobody asks about it, or it does not match the words they use | Delete it, or rewrite it in the customer's vocabulary |
+| `misleading` | Downvote rate among **citing** answers ≥ `KB_HEALTH_DOWNVOTE_RATE` | It is being quoted and the answers are wrong | Fix the content. This one is actively costing you |
+| `retrieved_not_cited` | Citation rate ≤ `KB_HEALTH_UNCITED_RATE` **and** score ≥ `KB_HEALTH_STRONG_SCORE` | Reaches the prompt, model declines to quote it | Usually a chunking defect: the sentence that answers the question got split away |
+
+Three decisions worth stating:
+
+- **Every rate sits behind `KB_HEALTH_MIN_RETRIEVALS`.** A chunk retrieved twice,
+  once downvoted, is not a 50 percent downvote rate — it is two retrievals.
+  `dead_weight` needs no floor, because zero is not a rate.
+- **Thumbs are attributed only to turns that CITED the chunk.** A downvote on an
+  answer that merely had the passage in its context is not evidence against the
+  passage.
+- **`retrieved_not_cited` is gated on the score**, and prefers the calibrated
+  rerank score over the raw cosine when one exists. Without the gate, a passage
+  that scraped into the prompt on a thin query and was rightly ignored gets
+  reported as a chunking defect.
+
+No thumbs at all leaves `downvoteRate` null, not zero: "nobody said" and
+"everybody approved" are different facts.
+
+### Gap clustering
+
+23 customers asking one question in 23 phrasings is one problem. `KnowledgeGap`
+records the phrasings; clustering turns them back into the problem.
+
+Greedy single-pass agglomerative clustering on embedding cosine, at
+`KB_HEALTH_GAP_SIMILARITY`. Greedy rather than k-means because the number of
+distinct topics is exactly what is unknown, and asking an operator to pick a `k`
+for their own knowledge gaps is asking the wrong person the wrong question.
+Processed highest-volume-first, so the result is deterministic and a reload
+compares cleanly; the centroid is a running mean, so a cluster drifts toward its
+members rather than being pinned to whichever query arrived first.
+
+Embeddings are **cached on the gap document** (`embedding`, `embeddingModel`).
+Without that, opening the page re-embeds every open gap on every load — a cost
+that grows with exactly the thing the page exists to reduce. The model tag is
+what stops a model change silently comparing two vector spaces.
+
+**The threshold is measured.** The first guess, 0.86, turned out to cluster
+essentially nothing: real paraphrases of one question sit far lower than
+intuition suggests, and their similarity distribution overlaps with that of
+merely-related questions. Swept over a seeded gap set of 7 queries, 5 of which
+were paraphrases of "how long do EU refunds take":
+
+| Threshold | Clusters from 7 queries | Largest cluster |
+| --- | --- | --- |
+| 0.86 | 6 | 2 |
+| 0.80 | 5 | 2 |
+| 0.75 | 5 | 2 |
+| 0.70 | 4 | 3 |
+| 0.65 | 4 | 3 |
+| 0.60 | 4 | 3 |
+| 0.55 | **3** | **5** |
+| 0.50 | 3 | 5 |
+
+Measured pairwise cosines on that set: within-topic min 0.425 / median 0.672 /
+max 0.863; against the two related-but-different refund queries, min 0.320 /
+median 0.460 / max 0.836. **The two distributions overlap**, so no threshold
+separates them cleanly — 0.55 is chosen to favour collapsing a question into one
+row over keeping near-duplicates apart, because the failure this feature exists
+to fix is 23 rows that should have been 1.
+
+Seven queries from one corpus is a starting point, not a tuned optimum. It is an
+env var because the right value depends on the embedding model and on how varied
+the questions are.
+
+Ranked by `volume × (1 + escalationRate)`. Multiplicative with a `1 +` floor so
+escalation scales volume instead of competing with it: 40 people asking
+something that always escalates outranks 40 people asking something the bot
+muddles through, but neither is beaten by 3 people asking something that always
+escalates. Escalation is joined through the PII mask, since telemetry stores
+`originalQuery` masked and `KnowledgeGap.queryUsed` raw.
+
+### Repair actions
+
+All four are operator-initiated, org-scoped, and require admin or above.
+
+| Action | Route | Notes |
+| --- | --- | --- |
+| Targeted re-index | `POST /index-health/sources/:id/reindex` | Purges that source's vectors **first**, then re-ingests. The reason you are here is that the current vectors are wrong, and upserting over them leaves every chunk the new chunking no longer produces exactly where it was |
+| Answer a gap | `POST /index-health/gap-clusters/answer` | Creates a `text` source at priority 5, stored as `Q: … / A: …` so the customer's own vocabulary is embedded alongside the answer. Closes the cluster's gaps only after the source exists |
+| Mark stale / re-prioritise | `POST /index-health/sources/:id/mark` | Metadata only: never re-embeds, never moves `sourceUpdatedAt`. Priority is mirrored onto `KbChunk`, where conflict resolution reads it on the hot path |
+| Bulk delete dead weight | `POST /index-health/sources/bulk-delete` | Two steps. See below |
+
+**A stale source stays indexed and retrievable.** Hiding it silently would turn
+"this answer is out of date" into "we have no answer", which is worse. The flag
+is what the health surface sorts and filters on.
+
+### Deletion requires a review step
+
+Not a boolean the caller sets. `POST /index-health/sources/bulk-delete/preview`
+returns the candidate list and an HMAC over **that exact set**, the org, and the
+moment it was issued. The delete route recomputes it and refuses a mismatch, an
+expiry past 15 minutes, or a `confirm` that is not literally `true`.
+
+Then it re-checks the claim the token approved against the world as it is now: a
+source that started being retrieved between the review and the confirm is no
+longer dead weight, and a token is a receipt for a review rather than a licence
+to delete something that has since changed.
+
+Stateless on purpose — a `pendingDeletions` collection would be one more thing
+to expire, scope and keep in sync, to express what an HMAC already says.
+
+### The scheduled job, and what it is not allowed to do
+
+`apps/api/src/jobs/index-health.job.ts`, **off by default**
+(`KB_INDEX_HEALTH_ENABLED`). The scoring has to be watched against real traffic
+before a job is allowed to act on it.
+
+It does two things:
+
+1. **Drift repair.** Re-embeds sources whose stored text no longer hashes to the
+   `contentHash` their vectors were built from, capped at
+   `KB_INDEX_HEALTH_MAX_REEMBED_PER_RUN`. The selection is the mismatch itself,
+   so a corpus that has not drifted costs one indexed find and nothing else.
+   **This is never a full reindex.** The hash is stamped before the re-embed, or
+   the same source would be repaired every night forever.
+2. **Review notification.** Raises one `kb_weak_chunks` notification per org per
+   day when anything is flagged. It changes nothing.
+
+**It never deletes and never edits customer knowledge.** Re-embedding rebuilds
+vectors from the operator's text; it must never rewrite the text. The
+destructive routes are not imported, and `index-health.test.ts` asserts that
+from the job's source rather than trusting this paragraph.
+
+Work is gated to `KB_INDEX_HEALTH_HOUR_UTC` while the tick itself is frequent, so
+a restart at any time of day cannot miss the window and cannot re-embed during
+business hours either. Re-embedding competes with live retrieval for the same
+provider quota, and a repair that slows the thing it is repairing is not a
+repair.
+
+---
+
+## Ingestion observability (Changelog 15)
+
+Before this, a failed ingest stored one raw provider string in `embeddingError`
+and incremented `retryCount`. "It failed" was the entire diagnosis, and the retry
+loop treated every failure identically.
+
+### The error taxonomy
+
+`services/kb/ingestion-errors.ts` classifies every failure into one of ten codes,
+each carrying an **operator-readable message**, a **suggested action**, and a
+**retry policy**. The last is separate from the first two on purpose: what an
+operator should do and what the retry loop should do are different questions.
+
+| Policy | Classes | Behaviour |
+| --- | --- | --- |
+| `never` | `unsupported_file_type`, `parse_failure`, `empty_extraction` | Consumes **zero** retries, goes terminal and visible |
+| `backoff` | `embedding_provider_error`, `rate_limited`, `pinecone_upsert_failure`, `partial_upsert`, `timeout`, `unknown` | Bounded retries with exponential backoff |
+| `deferred` | `budget_exceeded` | Waits without consuming attempts |
+
+An unrecognised failure classifies as `unknown` and **retries**. Defaulting to
+permanent would strand sources on a provider error whose wording we have not seen
+yet.
+
+### `empty` is a status, not a flavour of `synced`
+
+A zero-chunk ingest — a scanned PDF with no text layer, an empty crawl — used to
+end as `synced` with `chunkCount: 0`, looking identical to a working source while
+retrieving nothing. It now has its own status. This mattered more than it looks:
+the reconcile job only ever revisited `error` and `processing`, so a zero-chunk
+source was never looked at again by anything.
+
+### `IngestionEvent`: a separate collection
+
+One row per stage per attempt, rather than an array on `KnowledgeSource`:
+
+- It grows without bound (five stages per attempt, three retries, re-crawls), and
+  the source document is read during retrieval hydration.
+- The dashboard aggregates **across** sources, which an embedded array cannot
+  answer without unwinding every source in the org.
+- It needs its own 30-day retention.
+
+Events are buffered per run and flushed once rather than issuing five inline
+round trips, and a failed event write never fails the ingest — a diagnostic that
+breaks the thing it diagnoses is worse than none.
+
+A `runId` ties every stage of one attempt together, so an operator sees "this was
+re-ingested four times" rather than twenty ungrouped rows.
+
+### The reconcile job is now discriminating, and visible
+
+It always retried failures and recovered interrupted ingests. What changed:
+
+- Permanent classes are not retried at all. Previously an unsupported file type
+  burned three attempts in three minutes then sat silent forever.
+- Transient classes back off exponentially instead of retrying on a flat 60s
+  loop, which hammered a rate-limited provider at the rate that got us limited.
+- Budget-exceeded waits without consuming attempts, which would otherwise be
+  exhausted before the budget ever reset.
+- Exhausting retries **raises** something instead of going quiet, latched so it
+  does not re-alert every tick.
+- Every retry and recovery emits an event.
+
+### `embeddingError` has two readers
+
+`POST /knowledge/website` parks an in-flight crawl id there as `firecrawl:<id>`
+for the poll job to read back, leaving the source in `processing` while Firecrawl
+works — routinely longer than the stuck threshold.
+
+**The reconcile job now skips website sources whose `embeddingError` holds a
+crawl id.** Without that exemption it re-ingested them at the 15-minute mark,
+clobbering the crawl id and stranding the crawl permanently. That was a live bug,
+not a hypothetical.
+

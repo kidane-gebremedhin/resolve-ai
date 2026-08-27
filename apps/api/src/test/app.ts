@@ -21,7 +21,19 @@ export function createApp(): Express {
   // helmet adds security headers but interferes with nothing supertest needs;
   // we skip it here to keep test responses small and predictable.
   app.use(cors({ origin: "*", credentials: true }));
-  app.use(express.json({ limit: "1mb" }));
+  // The `verify` callback is not optional decoration: provider webhooks verify
+  // an HMAC over the exact bytes that were signed, and this is the only place
+  // those bytes are kept. Omitting it here (as this file used to) makes the
+  // test app diverge from production in precisely the way that hides a broken
+  // signature check, so keep it identical to `src/index.ts`.
+  app.use(
+    express.json({
+      limit: "1mb",
+      verify: (req, _res, buf) => {
+        (req as unknown as { rawBody?: string }).rawBody = buf.toString("utf8");
+      },
+    }),
+  );
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true });

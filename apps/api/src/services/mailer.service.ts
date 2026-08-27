@@ -5,6 +5,7 @@
 // hash of the config).
 
 import nodemailer, { type Transporter } from "nodemailer";
+import { openSecret } from "./security/secret-field.js";
 import { PlatformSetting } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import { env } from "../config/env.js";
@@ -31,7 +32,8 @@ async function loadSmtp(): Promise<SmtpConfig | null> {
       host: smtp.host,
       port: smtp.port ?? 587,
       username: smtp.username ?? "",
-      secret: smtp.secret ?? "",
+      // Stored sealed; openSecret() also passes through legacy plaintext.
+      secret: openSecret(smtp.secret),
       fromEmail: smtp.fromEmail,
       source: "db",
     };

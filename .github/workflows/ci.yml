@@ -24,6 +24,8 @@ jobs:
             widget: ['apps/widget/**', 'packages/ui/**', 'packages/shared-types/**']
             embed: ['apps/embed/**']
             api: ['apps/api/**', 'packages/shared-types/**']
+            admin: ['apps/admin/**', 'packages/ui/**', 'packages/shared-types/**']
+            rag-eval: ['packages/rag-eval/**', 'apps/api/src/services/ai/**', 'apps/api/src/services/kb/**']
             root: ['package.json', 'pnpm-lock.yaml', 'turbo.json', '.github/**']
 
   lint:
@@ -53,6 +55,63 @@ jobs:
         env:
           TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
           TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+
+  rag-eval-smoke:
+    # Scores a 10-case smoke subset against the fixture KB and posts the metric
+    # table to the run summary. Deliberately NOT a merge gate: it spends judge
+    # tokens and calls a third-party model, so a provider outage or an empty
+    # credit balance must not block a merge. `continue-on-error` keeps it
+    # advisory; the numbers are for a human to read, and the full dataset is run
+    # deliberately before and after a retrieval change, not on every push.
+    #
+    # It only runs when the retrieval or generation path actually changed, and
+    # it is skipped entirely without an OpenRouter key so forks do not fail.
+    needs: setup
+    if: contains(needs.setup.outputs.changed, 'rag-eval')
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: '.nvmrc', cache: 'pnpm' }
+      - run: pnpm install --frozen-lockfile
+      - name: Skip without provider credentials
+        id: creds
+        run: echo "have=${{ secrets.OPENROUTER_API_KEY != '' && secrets.PINECONE_API_KEY != '' }}" >> "$GITHUB_OUTPUT"
+      - name: Run the smoke subset
+        if: steps.creds.outputs.have == 'true'
+        run: pnpm eval:rag --limit 10 | tee /tmp/rag-eval.txt
+        env:
+          MONGODB_URI: mongodb://localhost:27017/rag-eval
+          JWT_SECRET: ci-test-secret-please-change-256-bit-xxxxxxxxxxxxxxxxxxxxxxxxxxx
+          API_BASE_URL: http://localhost:4000
+          CORS_ORIGINS: http://localhost:3000
+          NODE_ENV: test
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_INDEX: ${{ secrets.PINECONE_INDEX }}
+          EMBEDDING_MODEL: ${{ vars.EMBEDDING_MODEL || 'text-embedding-3-small' }}
+          AI_MODEL: ${{ vars.AI_MODEL }}
+          RAG_EVAL_JUDGE_MODEL: ${{ vars.RAG_EVAL_JUDGE_MODEL }}
+      - name: Post the metric table
+        if: steps.creds.outputs.have == 'true'
+        run: |
+          {
+            echo '## RAG eval (smoke subset)'
+            echo '```'
+            sed -n '/^RAG eval/,/^report:/p' /tmp/rag-eval.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   test:
     needs: setup
@@ -109,7 +168,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [web, widget, embed, api]
+        app: [web, widget, embed, api, admin]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -132,6 +191,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version-file: '.nvmrc', cache: 'pnpm' }
       - run: pnpm install --frozen-lockfile
+      # Advisory for now, deliberately: the tree currently reports critical and
+      # high advisories (see IMPLEMENTATION_AUDIT.md §3.4). Turning this into a
+      # gate before those are triaged would block every PR on a backlog nobody
+      # has scheduled. Flip `continue-on-error` to false once the count is zero —
+      # that is the point of the item, and leaving it advisory forever is how a
+      # security job becomes decorative.
       - run: pnpm audit --prod --audit-level=high
         continue-on-error: true
       - uses: github/codeql-action/init@v3

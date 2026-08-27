@@ -1,5 +1,17 @@
 import crypto from "node:crypto";
-import { Organization, Subscription, ProcessedWebhook, User, Membership } from "../models/index.js";
+import {
+  Organization,
+  Subscription,
+  ProcessedWebhook,
+  Payment,
+  User,
+  Membership,
+} from "../models/index.js";
+import {
+  applyAdjustmentEvent,
+  applyTransactionEvent,
+  type PaddleWebhookEvent,
+} from "./payment.service.js";
 import { logger } from "../config/logger.js";
 import { ApiError, NotFoundError } from "../utils/errors.js";
 import { planByPriceId, loadPlanCatalog, PLAN_DISPLAY_NAMES, type Plan } from "../config/plans.js";
@@ -89,8 +101,23 @@ type SubscriptionEvent = {
   };
 };
 
-export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void> {
-  if (!event.event_type?.startsWith("subscription.")) return;
+/**
+ * Single entry point for every inbound Paddle webhook.
+ *
+ * Order matters here. The idempotency guard runs FIRST, before the event family
+ * is even inspected, so it is consumed exactly once per event id no matter
+ * which branch handles the event. Putting it inside a branch (as it effectively
+ * was when only `subscription.` events were handled) means a redelivered
+ * transaction books a second payment row, and Paddle does redeliver.
+ *
+ * The guard is also why every handler below must be safe to run once and only
+ * once: a thrown error after the guard has been claimed means Paddle's retry is
+ * swallowed and the event is lost. Handlers therefore do their own writes
+ * idempotently (upsert by provider id) and push anything fallible, like email,
+ * onto a fire-and-forget path.
+ */
+export async function handlePaddleEvent(event: SubscriptionEvent | PaddleWebhookEvent): Promise<void> {
+  const eventType = event.event_type ?? "";
 
   // Idempotency: Paddle retries deliveries. Record the event id and no-op if
   // we've already applied it. A duplicate insert (unique index) means "seen".
@@ -103,6 +130,35 @@ export async function handlePaddleEvent(event: SubscriptionEvent): Promise<void>
     }
   }
 
+  if (eventType.startsWith("subscription.")) {
+    await handleSubscriptionEvent(event as SubscriptionEvent);
+    return;
+  }
+  if (eventType.startsWith("transaction.")) {
+    await applyTransactionEvent(event as PaddleWebhookEvent);
+    return;
+  }
+  if (eventType.startsWith("adjustment.")) {
+    // Refunds and chargebacks arrive here, not as `transaction.*` events.
+    await applyAdjustmentEvent(event as PaddleWebhookEvent, fetchTransactionData);
+    return;
+  }
+  logger.debug("[billing] event type not handled", { eventType });
+}
+
+// Fetch a raw transaction from Paddle. Used when an adjustment arrives for a
+// transaction we have never seen, so the ledger row is built from the real
+// charge rather than inferred from the refund amount.
+async function fetchTransactionData(
+  transactionId: string,
+): Promise<Record<string, unknown> | null> {
+  const result = (await paddleFetch(`/transactions/${transactionId}`)) as {
+    data?: Record<string, unknown>;
+  };
+  return result.data ?? null;
+}
+
+async function handleSubscriptionEvent(event: SubscriptionEvent): Promise<void> {
   const data = event.data;
   const organizationId = data.custom_data?.organizationId;
   if (!organizationId) {
@@ -237,6 +293,48 @@ async function paddleFetch(path: string, init: RequestInit = {}): Promise<unknow
     throw new Error(`Paddle ${path} ${res.status}: ${await res.text()}`);
   }
   return res.json();
+}
+
+/**
+ * Mint a customer-facing invoice PDF link for one payment.
+ *
+ * Paddle does not send a receipt or invoice URL on the webhook, and the link
+ * its API returns **expires after an hour**, so there is nothing worth storing:
+ * a cached URL would be dead by the time anyone clicked it. The link is
+ * therefore minted per click, scoped to the caller's organization so one org
+ * can never mint a document for another's transaction.
+ */
+export async function invoiceUrlForPayment(args: {
+  paymentId: string;
+  organizationId: string;
+}): Promise<string> {
+  const payment = await Payment.findOne({
+    _id: args.paymentId,
+    organizationId: args.organizationId,
+  })
+    .select("providerTransactionId status")
+    .lean();
+  if (!payment) throw new NotFoundError("Payment not found.");
+  if (payment.status === "failed" || payment.status === "pending") {
+    throw new ApiError(
+      400,
+      "no_invoice",
+      "This payment has no invoice: it was never successfully billed.",
+    );
+  }
+
+  const result = (await paddleFetch(
+    `/transactions/${payment.providerTransactionId}/invoice`,
+  )) as { data?: { url?: string } };
+  const url = result.data?.url;
+  if (!url) {
+    throw new ApiError(
+      502,
+      "paddle_unavailable",
+      "The billing provider did not return an invoice link. Please try again in a moment.",
+    );
+  }
+  return url;
 }
 
 export type CheckoutResult = {

@@ -1,0 +1,747 @@
+{
+  "name": "golden",
+  "description": "Seed golden set for the Northwind Tools fixture KB. Source ids are fixture document slugs, resolved to real KnowledgeSource ids at run time.",
+  "cases": [
+    {
+      "id": "fact-team-price",
+      "question": "How much is the Team plan per month?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The Team plan is $99 per month.",
+      "mustContain": [
+        "99"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-scale-seats",
+      "question": "How many seats does the Scale plan include?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The Scale plan includes 50 seats.",
+      "mustContain": [
+        "50"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-refund-window",
+      "question": "How long do I have to get a full refund?",
+      "expectedSourceIds": [
+        "refunds"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Any plan can be refunded in full within 30 days of the initial purchase.",
+      "mustContain": [
+        "30"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-encryption-rest",
+      "question": "What encryption do you use for data at rest?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Data at rest is encrypted with AES-256.",
+      "mustContain": [
+        "AES-256"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-rate-limit",
+      "question": "What is the API rate limit?",
+      "expectedSourceIds": [
+        "api"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "600 requests per minute per workspace.",
+      "mustContain": [
+        "600"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-csv-limit",
+      "question": "How many rows can a CSV import have?",
+      "expectedSourceIds": [
+        "onboarding"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "A CSV import is limited to 50,000 rows per file.",
+      "mustContain": [
+        "50,000"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-support-hours",
+      "question": "When is support available?",
+      "expectedSourceIds": [
+        "onboarding"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Monday to Friday, 9am to 6pm UK time. There is no weekend support.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-key-rotation",
+      "question": "How often are encryption keys rotated?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Encryption keys are rotated every 90 days.",
+      "mustContain": [
+        "90"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-webhook-sig",
+      "question": "How are webhooks signed?",
+      "expectedSourceIds": [
+        "api"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "With HMAC-SHA256, sent in the X-Northwind-Signature header, computed over the raw request body.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-invite-expiry",
+      "question": "How long before a team invitation expires?",
+      "expectedSourceIds": [
+        "onboarding"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "An invitation expires after seven days and can be resent.",
+      "mustContain": [
+        "seven"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-backup-retention",
+      "question": "How long do you keep backups?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Backups are retained for 35 days and then destroyed.",
+      "mustContain": [
+        "35"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-soc2",
+      "question": "Are you SOC 2 certified?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Yes, Northwind Tools is SOC 2 Type II certified.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-failed-payment-retries",
+      "question": "What happens if my payment fails?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The card is retried three times over seven days; the account stays active during that window, then goes read-only until a payment succeeds.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-regions",
+      "question": "Which regions can I host my data in?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "us-east or eu-west, chosen at signup.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "fact-integrations",
+      "question": "Which integrations do you support?",
+      "expectedSourceIds": [
+        "api"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Slack, Zapier, HubSpot and Salesforce.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "fact"
+      ],
+      "history": []
+    },
+    {
+      "id": "hop-annual-refund",
+      "question": "I paid annually four months ago. Can I get money back?",
+      "expectedSourceIds": [
+        "billing",
+        "refunds"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Annual plans are refunded pro rata for whole unused months after the 30-day window, so roughly eight months of the annual price would be refunded.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "multi-hop"
+      ],
+      "history": []
+    },
+    {
+      "id": "hop-eu-annual",
+      "question": "I'm in Germany and bought an annual Team plan 20 days ago. What refund am I entitled to?",
+      "expectedSourceIds": [
+        "refunds",
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Day 20 falls inside the 30-day full-refund window, which is more generous than the EU statutory 14 days, so the annual Team plan ($990) is refunded in full.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "multi-hop"
+      ],
+      "history": []
+    },
+    {
+      "id": "hop-scale-invoice-refund",
+      "question": "We're on Scale and pay by bank transfer. How do we get a refund?",
+      "expectedSourceIds": [
+        "billing",
+        "refunds"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Scale customers can be invoiced by bank transfer on net-30 terms, and refunds follow the same 30-day full-refund policy, requested by emailing billing@northwind.example.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "multi-hop"
+      ],
+      "history": []
+    },
+    {
+      "id": "hop-readonly-seats",
+      "question": "If my payment keeps failing, do I lose my team members?",
+      "expectedSourceIds": [
+        "billing",
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "No. After three failed retries the workspace becomes read-only, but nothing is deleted, and roles and members remain.",
+      "mustContain": [],
+      "mustNotContain": [
+        "deleted immediately"
+      ],
+      "tags": [
+        "multi-hop"
+      ],
+      "history": []
+    },
+    {
+      "id": "hop-personal-email-scale",
+      "question": "Can I sign up for Scale with my gmail address and invite 60 people?",
+      "expectedSourceIds": [
+        "onboarding",
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "No on both counts: Scale requires a verified company domain rather than a personal email, and Scale includes 50 seats with no overage, so a 60th seat is blocked.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "multi-hop"
+      ],
+      "history": []
+    },
+    {
+      "id": "hop-eu-residency-compliance",
+      "question": "We handle EU health data. Can we use you in eu-west?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Data can be hosted in eu-west, but Northwind is not HIPAA compliant and does not sign BAAs, so health data is not supported.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "multi-hop"
+      ],
+      "history": []
+    },
+    {
+      "id": "para-team-cost",
+      "question": "What would I be paying each month for the mid-tier plan?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The Team plan is $99 per month.",
+      "mustContain": [
+        "99"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "paraphrase"
+      ],
+      "history": []
+    },
+    {
+      "id": "para-refund-how",
+      "question": "What's the process for getting my money back?",
+      "expectedSourceIds": [
+        "refunds"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Email billing@northwind.example from the account address; approval takes two business days and the money arrives in five to ten business days.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "paraphrase"
+      ],
+      "history": []
+    },
+    {
+      "id": "para-throttle",
+      "question": "How many calls can I make before you start throttling me?",
+      "expectedSourceIds": [
+        "api"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "600 requests per minute per workspace, after which you get an HTTP 429.",
+      "mustContain": [
+        "600"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "paraphrase"
+      ],
+      "history": []
+    },
+    {
+      "id": "para-where-data-lives",
+      "question": "Where does my information physically live?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "In whichever region you chose at signup, us-east or eu-west; it does not leave that region.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "paraphrase"
+      ],
+      "history": []
+    },
+    {
+      "id": "para-2fa",
+      "question": "Can I force everyone on my team to use an authenticator app?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Yes, an owner can enforce two-factor authentication workspace-wide.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "paraphrase"
+      ],
+      "history": []
+    },
+    {
+      "id": "para-downgrade-timing",
+      "question": "If I move to a cheaper plan, when does it kick in?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Downgrades take effect at the end of the current billing period.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "paraphrase"
+      ],
+      "history": []
+    },
+    {
+      "id": "typo-refund",
+      "question": "waht is yuor refudn policy?",
+      "expectedSourceIds": [
+        "refunds"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Full refund within 30 days of purchase; after that, annual plans are refunded pro rata.",
+      "mustContain": [
+        "30"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "typo"
+      ],
+      "history": []
+    },
+    {
+      "id": "typo-encription",
+      "question": "how do you handel encrpytion of my data?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "TLS 1.3 in transit and AES-256 at rest, with keys rotated every 90 days.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "typo"
+      ],
+      "history": []
+    },
+    {
+      "id": "typo-webhok",
+      "question": "how do i verfy a webhok signatuer?",
+      "expectedSourceIds": [
+        "api"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Verify the HMAC-SHA256 signature in the X-Northwind-Signature header, computed over the raw request body.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "typo"
+      ],
+      "history": []
+    },
+    {
+      "id": "typo-anual",
+      "question": "how mcuh is the anual team plann",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The Team plan is $990 annually.",
+      "mustContain": [
+        "990"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "typo"
+      ],
+      "history": []
+    },
+    {
+      "id": "typo-sopport",
+      "question": "wat hours is sopport open on the weeknd",
+      "expectedSourceIds": [
+        "onboarding"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "There is no weekend support on any plan; support runs Monday to Friday, 9am to 6pm UK time.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "typo"
+      ],
+      "history": []
+    },
+    {
+      "id": "follow-annual",
+      "question": "What about the annual one?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The Team plan is $990 per year.",
+      "mustContain": [
+        "990"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "follow-up"
+      ],
+      "history": [
+        {
+          "role": "customer",
+          "content": "How much is the Team plan per month?"
+        },
+        {
+          "role": "ai",
+          "content": "The Team plan is $99 per month."
+        }
+      ]
+    },
+    {
+      "id": "follow-after-30",
+      "question": "And after that?",
+      "expectedSourceIds": [
+        "refunds"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "After 30 days monthly plans are not refundable, and annual plans are refunded pro rata for whole unused months.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "follow-up"
+      ],
+      "history": [
+        {
+          "role": "customer",
+          "content": "How long is your full refund window?"
+        },
+        {
+          "role": "ai",
+          "content": "You can get a full refund within 30 days of purchase."
+        }
+      ]
+    },
+    {
+      "id": "follow-which-regions",
+      "question": "Which ones can I pick?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "us-east or eu-west.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "follow-up"
+      ],
+      "history": [
+        {
+          "role": "customer",
+          "content": "Do you let me choose where my data is stored?"
+        },
+        {
+          "role": "ai",
+          "content": "Yes, a workspace is hosted in one of two regions, chosen at signup."
+        }
+      ]
+    },
+    {
+      "id": "follow-can-i-change",
+      "question": "Can I change it later?",
+      "expectedSourceIds": [
+        "security"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "Not without a migration performed by the Northwind team; the region cannot be changed after signup on your own.",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "follow-up"
+      ],
+      "history": [
+        {
+          "role": "customer",
+          "content": "Where is my data hosted?"
+        },
+        {
+          "role": "ai",
+          "content": "In the region you chose at signup, either us-east or eu-west."
+        }
+      ]
+    },
+    {
+      "id": "follow-how-many-retries",
+      "question": "How many times?",
+      "expectedSourceIds": [
+        "billing"
+      ],
+      "expectedChunkIds": [],
+      "referenceAnswer": "The card is retried three times over seven days.",
+      "mustContain": [
+        "three"
+      ],
+      "mustNotContain": [],
+      "tags": [
+        "follow-up"
+      ],
+      "history": [
+        {
+          "role": "customer",
+          "content": "What happens when a card payment fails?"
+        },
+        {
+          "role": "ai",
+          "content": "We retry the card before restricting the workspace."
+        }
+      ]
+    },
+    {
+      "id": "neg-mobile-app",
+      "question": "Do you have a mobile app for iOS?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-uptime-sla",
+      "question": "What uptime percentage do you guarantee in your SLA?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-free-trial",
+      "question": "Is there a free trial before I pay?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-student-discount",
+      "question": "Do you offer a student or nonprofit discount?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-sso-saml",
+      "question": "Do you support SAML single sign-on with Okta?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-datacenter-provider",
+      "question": "Which cloud provider runs your infrastructure?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-pdf-export",
+      "question": "Can I export my data as a PDF report?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    },
+    {
+      "id": "neg-phone-number",
+      "question": "What's your support phone number?",
+      "expectedSourceIds": [],
+      "expectedChunkIds": [],
+      "referenceAnswer": "",
+      "mustContain": [],
+      "mustNotContain": [],
+      "tags": [
+        "negative"
+      ],
+      "history": []
+    }
+  ]
+}

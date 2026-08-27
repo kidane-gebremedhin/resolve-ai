@@ -258,10 +258,10 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
 
       {otpDefaultOn && (
         <p className="mt-2 rounded bg-neutral-100 px-2 py-1.5 text-[10px] leading-snug text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-          {isRefund ? "Refunds" : "Subscription changes"} require the customer's account email
+          {isRefund ? "Refunds" : "Subscription changes"} require the customer&apos;s account email
           automatically. Email OTP verification is <strong>on by default</strong> for these
-          actions — you can turn it off below, but it's the strongest protection against
-          someone using another person's email.
+          actions — you can turn it off below, but it&apos;s the strongest protection against
+          someone using another person&apos;s email.
         </p>
       )}
 

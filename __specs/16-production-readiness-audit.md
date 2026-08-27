@@ -232,7 +232,7 @@ For each page visited, use chrome-devtools-mcp to check:
 
 | Route | Method | Test Cases |
 |-------|--------|------------|
-| `/analytics/overview` | GET | Accurate aggregation; websiteId filter; period filter |
+| `/analytics/conversations-daily` | GET | Accurate aggregation; websiteId filter; period filter |
 | `/analytics/conversations` | GET | Time-series data; granularity param |
 
 ### 3.12 Other Routes

@@ -17,6 +17,7 @@
     "clean": "rm -rf .turbo node_modules"
   },
   "devDependencies": {
+    "@csb/config": "workspace:*",
     "eslint": "^9",
     "typescript": "^5"
   }

@@ -13,7 +13,14 @@ import { Membership, User } from "../models/index.js";
 import { sendMail } from "./mailer.service.js";
 import { logger } from "../config/logger.js";
 
-export type ReceiptAction = "created" | "upgraded" | "downgraded" | "canceled";
+export type ReceiptAction =
+  | "created"
+  | "upgraded"
+  | "downgraded"
+  | "canceled"
+  // Raised by the payment ledger, not by a subscription state change: the
+  // provider could not take the money and is now retrying the card.
+  | "payment_failed";
 
 // Decide which receipt (if any) an event warrants. `priorLevel`/`newLevel` are a
 // monotonic measure of plan size — a tier rank for platform plans, or the recurring
@@ -49,6 +56,7 @@ const ACTION_TITLE: Record<ReceiptAction, string> = {
   upgraded: "Plan upgraded",
   downgraded: "Plan changed",
   canceled: "Subscription canceled",
+  payment_failed: "Payment failed",
 };
 
 const ACTION_ACCENT: Record<ReceiptAction, string> = {
@@ -56,6 +64,7 @@ const ACTION_ACCENT: Record<ReceiptAction, string> = {
   upgraded: "#1d4ed8",
   downgraded: "#d97706",
   canceled: "#dc2626",
+  payment_failed: "#dc2626",
 };
 
 function formatMoney(amount: number | null | undefined, currency = "USD"): string | null {
@@ -92,11 +101,13 @@ export function buildSubscriptionReceiptEmail(input: ReceiptEmailInput): { subje
     upgraded: `Your plan has been upgraded to <strong>${planName}</strong>. The prorated difference for the rest of this billing period has been charged.`,
     downgraded: `Your plan has been changed to <strong>${planName}</strong>. The new plan is now in effect.`,
     canceled: `Your <strong>${planName}</strong> subscription has been canceled. You'll keep access until the end of the current billing period.`,
+    payment_failed: `We couldn't take payment for your <strong>${planName}</strong> plan. Your access is unchanged for now while the payment is retried, but please check your payment method to avoid an interruption.`,
   };
 
   const periodLabel = action === "canceled" ? "Access until" : "Next renewal";
   const rows: Array<[string, string]> = [["Plan", planName]];
-  if (action !== "canceled" && priced) rows.push(["Amount", priced]);
+  if (action === "payment_failed" && money) rows.push(["Amount due", money]);
+  else if (action !== "canceled" && priced) rows.push(["Amount", priced]);
   if (periodEnd) {
     rows.push([
       periodLabel,
@@ -112,9 +123,10 @@ export function buildSubscriptionReceiptEmail(input: ReceiptEmailInput): { subje
     )
     .join("");
 
+  const ctaLabel = action === "payment_failed" ? "Update payment method" : "Manage billing";
   const cta = billingUrl
     ? `<p style="margin:24px 0 0">
-         <a href="${billingUrl}" style="background:${accent};color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block">Manage billing</a>
+         <a href="${billingUrl}" style="background:${accent};color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block">${ctaLabel}</a>
        </p>`
     : "";
 
@@ -126,7 +138,7 @@ export function buildSubscriptionReceiptEmail(input: ReceiptEmailInput): { subje
       <table style="border-collapse:collapse;margin:20px 0 0">${rowsHtml}</table>
       ${cta}
       <p style="color:#9ca3af;font-size:12px;margin-top:28px">
-        This is an automated receipt${brand ? ` from ${brand}` : ""}. Keep it for your records.
+        ${action === "payment_failed" ? `This is an automated notice${brand ? ` from ${brand}` : ""}.` : `This is an automated receipt${brand ? ` from ${brand}` : ""}. Keep it for your records.`}
       </p>
     </div>`;
   return { subject, html };
