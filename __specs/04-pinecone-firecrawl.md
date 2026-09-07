@@ -78,6 +78,11 @@ This convention enables:
 
 ---
 
+> **Diagrams.** Ingestion, every `embeddingStatus` transition, the budget gate,
+> the stale-vector cleanup and the P8 stage events are drawn in
+> [`E2E_FLOW.md`](../E2E_FLOW.md) §1; retrieval with the tenancy filter on every
+> leg is §3.
+
 ## Ingestion Pipeline (by source type)
 
 ### Common Pipeline Steps

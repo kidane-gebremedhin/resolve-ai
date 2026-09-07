@@ -103,10 +103,13 @@ export const env = {
     contextTokenBudget: Number(optional("AI_CONTEXT_TOKEN_BUDGET", "3000")),
     /**
      * Share of factual sentences allowed to carry no citation before the turn's
-     * confidence is lowered. This is what turns faithfulness from a metric that
-     * is measured after the fact into a control that acts during the turn: past
-     * this ratio, confidence drops and the existing `AI_CONFIDENCE_THRESHOLD`
-     * escalation catches it.
+     * confidence is lowered. Past this ratio the turn's confidence drops below
+     * `AI_CONFIDENCE_THRESHOLD`, which flags it as `lowConfidence` in RAG
+     * telemetry and surfaces it on the quality dashboard and alert sweep.
+     *
+     * It does not escalate the conversation. Escalation comes only from the
+     * meta-pass returning `action: "escalate"`. See A20 in
+     * __specs/45-deferred-decisions.md.
      */
     maxUncitedRatio: Number(optional("AI_MAX_UNCITED_RATIO", "0.5")),
   },

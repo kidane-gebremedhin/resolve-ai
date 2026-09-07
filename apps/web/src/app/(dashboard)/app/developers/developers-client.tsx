@@ -126,7 +126,7 @@ ${htmlAttrLines}
 const EMBED_URL = "${config.embedUrl}";
 const AGENT_ID = "${config.agentId}";
 
-export function ChataxisWidget() {
+export function AddisAIWidget() {
   useEffect(() => {
     if (document.querySelector(\`script[data-agent="\${AGENT_ID}"]\`)) return;
     const s = document.createElement("script");
@@ -226,7 +226,7 @@ ${nextAttrLines}
             <Package className="mx-auto h-8 w-8 text-muted-foreground" strokeWidth={1.5} />
             <div className="mt-3 font-display text-base font-semibold">NPM package — coming soon</div>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              We&apos;re packaging a typed React component you can install with <code className="font-mono">npm i @chataxis/widget</code>.
+              We&apos;re packaging a typed React component you can install with <code className="font-mono">npm i @addisai/widget</code>.
               For now, use the React snippet above.
             </p>
           </div>

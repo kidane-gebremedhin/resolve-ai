@@ -12,8 +12,8 @@ minute — that each reporting path still works.
 
 ## Prerequisites
 
-- Sentry org `mllabs-xk` with two projects: `chataxispro-backend`,
-  `chataxispro-frontend`.
+- Sentry org `mllabs-xk` with two projects: `addisaipro-backend`,
+  `addisaipro-frontend`.
 - The DSNs available to the Coolify services (runtime for the API, **build arg**
   for the web image).
 

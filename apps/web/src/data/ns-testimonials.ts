@@ -31,7 +31,7 @@ export const testimonials = [
     id: 5,
     name: 'Lisa Thompson',
     position: 'Risk Officer, Global FX Partners',
-    quote: 'Chataxis delivered our entire support stack ahead of schedule. The team is exceptional and the platform performance exceeds all our benchmarks.',
+    quote: 'AddisAI delivered our entire support stack ahead of schedule. The team is exceptional and the platform performance exceeds all our benchmarks.',
     avatar: '/images/avatar/avatar-5.png',
   },
 ];

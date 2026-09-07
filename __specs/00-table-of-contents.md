@@ -107,3 +107,11 @@ This specification describes the complete implementation plan for a production-r
 - **Preserve the template, swap the data** — visual layout, copy tone, and styling of the existing Next.js 16 template (marketing, dashboard, admin) are kept verbatim during the monorepo split; only mock data is replaced with API calls. See [17-template-asset-inventory.md](./17-template-asset-inventory.md).
 - **CI builds; Coolify runs** — GitHub Actions produces immutable images in GHCR; Coolify pulls + serves. No "latest" tags in production.
 - **MCPs are mandatory for QA** — `chrome-devtools-mcp`, `mongo-mcp`, `paddle-mcp` per [16](./16-production-readiness-audit.md); full server roster in [21-mcp-tooling.md](./21-mcp-tooling.md).
+
+## Analysis produced after P1-P11
+
+- [`37-rag-pipeline-audit.md`](./37-rag-pipeline-audit.md) — Stage-by-stage RAG audit: failure modes, severity, measured numbers, top-10 risks
+- [`38-scale-and-load-risks.md`](./38-scale-and-load-risks.md) — What breaks under load: measured ingestion ceiling, index coverage, risk table, tests still to run
+- [`45-deferred-decisions.md`](./45-deferred-decisions.md) — Deferred decisions with data: judge budget, reindex tolerance, rerank provider, full assumption register
+
+See also [`../E2E_FLOW.md`](../E2E_FLOW.md), rewritten with Mermaid diagrams for ingestion, the reply graph, retrieval, escalation and a latency-annotated turn.

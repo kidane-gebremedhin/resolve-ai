@@ -97,6 +97,45 @@ io.use(async (socket, next) => {
 
 ---
 
+## Per-Event Authorization
+
+The middleware above establishes **who** a socket is. It cannot vet the
+conversation ids that arrive afterwards, and every conversation-scoped event
+carries one that the client chose. Authorization for those lives in
+`apps/api/src/socket/authorize.ts`, as one rule shared by every handler:
+
+| Caller | May act on |
+| --- | --- |
+| Operator | any conversation in their own `organizationId` |
+| Contact (widget) | only conversations whose `contactSessionId` is their own |
+
+**Scope it per conversation, not per tenant.** Two visitors on the same
+customer's website share an `organizationId`. An org-only check therefore lets
+one visitor act on the other's conversation: reading it by joining its room,
+writing into it through `message:send` (a message attributed to that visitor,
+plus a billable AI reply on their thread), or putting a false typing indicator
+on it in the operator inbox.
+
+Three properties the implementation must keep:
+
+- **Silent refusal.** A rejected `join:conversation` logs server-side and returns
+  nothing to the client. Telling it whether the id exists makes the handler an
+  existence oracle for other tenants' ids.
+- **Fail closed.** A lookup that throws refuses. It never falls through to a join.
+- **Memoized per socket.** `customer:typing` fires on every keystroke, so the
+  decision is cached per socket. Both inputs are immutable for a connection's
+  life: the socket's identity is fixed at handshake and a conversation never
+  changes owner. Non-existence is deliberately not cached, since the socket may
+  be about to create that conversation.
+
+`socket.to(room)` broadcasts into a room whether or not the sender is a member,
+so a handler that relays into a room must check membership rather than assume it.
+The legacy `typing:start` / `typing:stop` relays do exactly that.
+
+Covered by `socket-room-auth.test.ts` and `socket-message-auth.test.ts`.
+
+---
+
 ## Room Strategy
 
 ```mermaid
@@ -168,7 +207,7 @@ io.on('connection', (socket) => {
 | Event | Target Room | Payload | Description |
 |-------|-------------|---------|-------------|
 | `message:new` | `conversation:{id}` | `{ message: Message }` | New message in conversation. For AI messages, includes `confidence` score (0.0–1.0). |
-| `conversation:status` | `conversation:{id}` + `org:{orgId}` | `{ conversationId, status, resolvedBy?, escalatedBy?, reason? }` | Status change (resolved, escalated, reopened). `reason` is `low_confidence` for auto-escalation. |
+| `conversation:status` | `conversation:{id}` + `org:{orgId}` | `{ conversationId, status, resolvedBy?, escalatedBy?, reason? }` | Status change (resolved, escalated, reopened). Note there is **no** auto-escalation on low confidence: escalation comes only from the meta pass returning `action: "escalate"`. See A20 in `45-deferred-decisions.md`. |
 | `conversation:updated` | `org:{orgId}` | `{ conversationId, lastMessageAt, lastMessagePreview, status, unreadCount }` | Inbox list update (new message arrived, status changed) |
 | `conversation:new` | `org:{orgId}` | `{ conversation: ConversationSummary }` | New conversation started (appears in inbox) |
 | `conversation:assigned` | `org:{orgId}` | `{ conversationId, assignedOperatorId }` | Conversation assigned to operator |

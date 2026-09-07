@@ -42,12 +42,29 @@ function fakeSocket(auth: Record<string, unknown> | undefined) {
   return {
     joined,
     left,
-    /** Fire an event and wait for the handler's async authorization to settle. */
-    async emit(event: string, payload: { conversationId: string }) {
+    /**
+     * Fire an event and wait for the handler's async authorization to settle.
+     *
+     * `join:conversation` is a sync handler wrapping a fire-and-forget async
+     * check, so there is no promise to await. Pass `expectJoin` when the room
+     * SHOULD be joined and the helper polls for it; a fixed sleep there was
+     * flaky, because the DB round trip can outrun it when the suites run in
+     * parallel. A refusal has no effect to poll for, so it gets a window long
+     * enough that a join would have shown up in it.
+     */
+    async emit(
+      event: string,
+      payload: { conversationId: string },
+      opts: { expectJoin?: boolean } = {},
+    ) {
       handlers.get(event)?.(payload);
-      // The handler defers its DB lookup; let the microtask queue drain.
-      await vi.waitFor(() => expect(true).toBe(true));
-      await new Promise((r) => setTimeout(r, 20));
+      if (opts.expectJoin) {
+        await vi.waitFor(() => expect(joined.length + left.length).toBeGreaterThan(0), {
+          timeout: 5_000,
+        });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 250));
     },
   };
 }
@@ -73,7 +90,7 @@ describe("join:conversation", () => {
 
   it("lets an operator join a conversation in their own organization", async () => {
     const s = fakeSocket({ kind: "operator", organizationId: String(orgA), userId: "u1" });
-    await s.emit("join:conversation", { conversationId: convoA });
+    await s.emit("join:conversation", { conversationId: convoA }, { expectJoin: true });
     expect(s.joined).toEqual([`conversation:${convoA}`]);
   });
 
@@ -90,7 +107,7 @@ describe("join:conversation", () => {
       organizationId: String(orgA),
       contactSessionId: String(sessionA),
     });
-    await s.emit("join:conversation", { conversationId: convoA });
+    await s.emit("join:conversation", { conversationId: convoA }, { expectJoin: true });
     expect(s.joined).toEqual([`conversation:${convoA}`]);
   });
 
@@ -140,7 +157,7 @@ describe("join:conversation", () => {
   it("still lets any socket leave a room", async () => {
     // Leaving can only ever remove the caller, so it needs no check.
     const s = fakeSocket({ kind: "contact", organizationId: String(orgB) });
-    await s.emit("leave:conversation", { conversationId: convoA });
+    await s.emit("leave:conversation", { conversationId: convoA }, { expectJoin: true });
     expect(s.left).toEqual([`conversation:${convoA}`]);
   });
 });

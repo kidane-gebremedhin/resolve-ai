@@ -302,6 +302,12 @@ const AGENT_TOOLS: Tool[] = [
 
 ## Agent Execution Flow
 
+> **Diagrams.** The customer message flow, the graph's real conditional edges,
+> retrieval and escalation are drawn in [`E2E_FLOW.md`](../E2E_FLOW.md) §2-§5,
+> with a sequence diagram carrying measured latency per hop. Boxes are labelled
+> with the file that implements them; dashed boxes are documented but not
+> implemented.
+
 ### Graph state
 
 State is **per-turn and in-memory**. MongoDB's `Message` collection remains the single source of
@@ -787,3 +793,119 @@ Conflicts are surfaced to operators as `KnowledgeGap` records with
 filled by writing a document, a conflict by deciding which existing document is
 right.
 
+---
+
+## ReAct conformance
+
+Written for `__specs/37`/P12. Assessed against the graph as it exists, with code
+evidence rather than intent.
+
+### 1. The contract
+
+ReAct (Yao et al., 2022) interleaves **reason → act → observe**, repeating until
+the model decides it can answer, with the reasoning trace generated as text that
+conditions the next action.
+
+### 2. What this graph does per step
+
+`agent.graph.ts:56-66`:
+
+```
+START ──routeFromStart──► agent ──routeFromAgent──► tools ──routeFromTools──► agent
+                            │                         │                          │
+                            └────────► finalize ◄──────┴──────────────────────────┘
+```
+
+| ReAct element | This graph | Where |
+| --- | --- | --- |
+| Reason | Implicit in the model's tool-call decision. No separate thought step | `agent.node.ts` |
+| Act | `tools` node executes every requested call, gated by the input-completeness check | `tools.node.ts` |
+| Observe | Tool results appended as `ToolMessage`s into `state.messages` | `tools.node.ts` |
+| Repeat | `routeFromTools` returns to `agent` unless halted | `agent.graph.ts:41` |
+| Answer | A **separate** `finalize` node, not the loop's exit utterance | `finalize.node.ts` |
+
+**Verdict: this is a tool-calling agent with a ReAct-shaped loop, not a ReAct
+agent.** The loop shape conforms; the reasoning contract does not.
+
+### 3. Deviations
+
+**a) No explicit reasoning trace.** `state.ts:86-155` has 17 channels —
+`messages`, `kbHits`, `toolCallLog`, `retrievalStats`, `queryRewrites`,
+`citations`, `generationStats` and so on — and **none holds a thought**. Whatever
+reasoning happens is latent in the model's choice of tool call and in whatever
+prose it emits alongside. There is no `thought` channel, and nothing prompts for
+one.
+
+**b) No reflection or self-critique step.** Nothing re-reads a draft and revises
+it. The closest thing is the meta pass, which scores a finished answer and cannot
+change it, and the uncited-ratio check, which lowers a number.
+
+**c) `finalize` is a separate answer step *and* a judge pass.** It runs two
+concurrent calls (`finalize.node.ts:180-181`): a streamed prose reply and a
+structured meta pass returning confidence, action and quick replies. In ReAct the
+answer is the loop's final utterance; here the loop never speaks to the customer
+at all. The design comment is explicit about why:
+
+> "Two calls run concurrently. The first streams prose so the customer sees
+> tokens within a few hundred milliseconds... The second is a cheap structured
+> pass... kept separate precisely so the visible reply can stream as plain text
+> instead of arriving as one JSON blob at the end."
+
+**d) The loop is bounded by budget, not by reasoning quality.** `routeFromAgent`
+exits on three conditions (`agent.graph.ts:24-38`): no tool calls, `halt`, or
+`toolTurns >= maxToolTurns`. None of them inspects whether the trajectory is
+making progress. A model looping usefully and a model looping uselessly are cut
+off at the same number.
+
+**e) The `halt` latch breaks the cycle mid-trajectory, and that is correct.**
+Set when a tool hands control to the customer (an inline form, an OTP challenge).
+It latches — `reducer: (l, r) => l || r` (`state.ts:121`) — and forces
+`finalize`. This is a deliberate departure from ReAct, and the right one: the
+trajectory cannot continue because the *next observation depends on a human who
+has not acted yet*. Continuing would let the model narrate an action that has not
+happened. The comment says so:
+
+> "Latches on: once something is awaiting them, no further tool calls may run
+> this turn or the model would claim an action that hasn't happened."
+
+### 4. Bug, trade-off, or gap
+
+| Deviation | Verdict | Basis |
+| --- | --- | --- |
+| a) No reasoning trace | **Gap** | Nothing documents a decision to omit it. It costs debuggability: `toolCallLog` records *what* was called, never *why*. Low severity while trajectories are 1-2 steps |
+| b) No reflection | **Deliberate trade-off** | Every reflection design adds a full model call to the critical path. The system instead validates structurally (verbatim assert, citation validation) which is cheaper and deterministic |
+| c) Split answer/judge | **Deliberate trade-off**, quoted above | Buys first-token latency. Costs one extra call per turn |
+| d) Budget-bounded loop | **Deliberate trade-off** | `agent.graph.ts:30` comment: a model "stuck on a failing tool cannot burn an org's budget". A quality-bounded loop needs a progress signal that does not exist |
+| e) `halt` | **Correct** | See above |
+
+### 5. Is a planning or reflection node worth adding now
+
+**Measured, and the honest answer is that the data does not support the
+question yet.**
+
+Of **4** recorded turns: `toolTurns` was 1 once and 2 three times. Max 2, mean
+1.75. **Zero turns reached the ceiling of 10.** P3's bounded decomposition and
+single follow-up round have never been the binding constraint on any turn this
+system has recorded.
+
+What a planner would cost, priced from real telemetry:
+
+| | Measured basis |
+| --- | --- |
+| Cost per answered turn today | **$0.0158** ($0.9978 / 63 `widget_reply` rows) |
+| Prompt tokens per turn | ~7,358 |
+| A planner adds one model call over the same context | ≈ **+$0.008 to +$0.016 per turn**, i.e. **+50% to +100%** |
+| Latency added | 1.9-4.2s, from the measured finalize-call range |
+
+Against a measured trajectory length of **1.75 steps**, a planning node would
+plan a single search on most turns.
+
+**Recommendation: do not add either node now.** Add a reasoning trace first — it
+is nearly free, it is the deviation with no stated justification, and it is the
+data you would need to tell whether a planner is warranted. Revisit when the
+telemetry shows a non-trivial share of turns at `toolTurns >= 4`; the query
+already exists (`RagTurnMetric.toolTurns`).
+
+**Caveat that matters:** four turns from a development database is not evidence
+about production behaviour. The claim "zero turns hit the ceiling" is true of the
+sample and says little about real traffic.

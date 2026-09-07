@@ -34,7 +34,7 @@ const GROUPS: Array<{
 }> = [
   {
     title: 'Browser',
-    layer: 'chataxispro-frontend · client',
+    layer: 'addisaipro-frontend · client',
     tests: [
       {
         id: 'browser-handled',
@@ -64,7 +64,7 @@ const GROUPS: Array<{
   },
   {
     title: 'Next.js server',
-    layer: 'chataxispro-frontend · server',
+    layer: 'addisaipro-frontend · server',
     tests: [
       {
         id: 'next-server',
@@ -76,7 +76,7 @@ const GROUPS: Array<{
   },
   {
     title: 'Express API',
-    layer: 'chataxispro-backend',
+    layer: 'addisaipro-backend',
     tests: [
       {
         id: 'api-error',

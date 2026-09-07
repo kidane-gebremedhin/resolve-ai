@@ -32,6 +32,7 @@ import {
   RagTurnMetric,
 } from "../../models/index.js";
 import { env } from "../../config/env.js";
+import { logger } from "../../config/logger.js";
 import { maskPii } from "../integrations/piiMask.js";
 import { embed as defaultEmbed } from "../ai/embedding.service.js";
 
@@ -251,9 +252,29 @@ export type IndexHealthReport = {
     deadWeight: number;
     misleading: number;
     retrievedNotCited: number;
+    /** True when the index is larger than `CHUNK_SCAN_LIMIT` and the counts above cover only part of it. */
+    truncated: boolean;
+    /** The cap that was applied, so a caller can say how much of the index the counts cover. */
+    scanLimit: number;
   };
   chunks: ChunkHealth[];
 };
+
+/**
+ * How many chunks a single health scan will read.
+ *
+ * The scan has to list every chunk, because dead weight is defined by the
+ * ABSENCE of telemetry and so cannot be found from the telemetry side. That
+ * makes the query grow with the customer's knowledge base, and this runs on a
+ * dashboard load, so it needs a ceiling.
+ *
+ * The ceiling is not the problem; reporting a capped count as if it were the
+ * whole index is. An org with 25k chunks would be told it had exactly 20,000
+ * chunks and shown a dead-weight number computed from an arbitrary subset, with
+ * nothing to indicate either was partial. The scan now detects the overflow and
+ * says so, and callers surface it rather than quoting the number as complete.
+ */
+export const CHUNK_SCAN_LIMIT = 20_000;
 
 /**
  * The full picture: every chunk in the index, scored, flagged and named.
@@ -280,10 +301,23 @@ export async function scoreChunks(
   // a 200-character preview of at most `limit` of them means a request whose
   // memory is set by the size of the customer's knowledge base. Previews are
   // fetched below, for the handful actually returned.
-  const [stats, chunks] = await Promise.all([
+  const [stats, chunkPage] = await Promise.all([
     retrievedChunkStats({ ...args, since }),
-    KbChunk.find(chunkFilter, { chunkId: 1, sourceId: 1 }).limit(20000).lean(),
+    // One over the cap, so an index that exceeds it is detectable rather than
+    // silently indistinguishable from one that lands exactly on it.
+    KbChunk.find(chunkFilter, { chunkId: 1, sourceId: 1 })
+      .limit(CHUNK_SCAN_LIMIT + 1)
+      .lean(),
   ]);
+
+  const truncated = chunkPage.length > CHUNK_SCAN_LIMIT;
+  const chunks = truncated ? chunkPage.slice(0, CHUNK_SCAN_LIMIT) : chunkPage;
+  if (truncated) {
+    logger.warn("[index-health] chunk scan truncated, totals cover part of the index", {
+      organizationId: String(args.organizationId),
+      scanLimit: CHUNK_SCAN_LIMIT,
+    });
+  }
 
   const statsById = new Map(stats.map((s) => [s.chunkId, s]));
   const sourceIds = [...new Set(chunks.map((c) => String(c.sourceId)))];
@@ -329,6 +363,8 @@ export async function scoreChunks(
       deadWeight: scored.filter((c) => c.flags.includes("dead_weight")).length,
       misleading: scored.filter((c) => c.flags.includes("misleading")).length,
       retrievedNotCited: scored.filter((c) => c.flags.includes("retrieved_not_cited")).length,
+      truncated,
+      scanLimit: CHUNK_SCAN_LIMIT,
     },
     // Worst first: a misleading chunk costs more than a dead one, and within a
     // flag the higher-volume passage is the one to fix first.

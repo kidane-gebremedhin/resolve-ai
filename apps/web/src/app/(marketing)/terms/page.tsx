@@ -109,7 +109,7 @@ export default function Page() {
             <div>
               <h2 className="text-xl font-semibold text-primary mb-3">13. Contact Us</h2>
               <p>If you have questions about these Terms, please contact {APP_LEGAL_NAME} at:</p>
-              <p className="mt-1">Email: <a href="mailto:legal@chataxis.com" className="text-primary underline underline-offset-2">legal@chataxis.com</a></p>
+              <p className="mt-1">Email: <a href="mailto:legal@addisai.com" className="text-primary underline underline-offset-2">legal@addisai.com</a></p>
             </div>
 
           </div>

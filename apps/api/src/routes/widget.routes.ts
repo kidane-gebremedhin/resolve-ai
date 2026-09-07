@@ -342,7 +342,7 @@ router.get(
       upstream = await fetch(target.toString(), {
         redirect: "follow",
         headers: {
-          "user-agent": "Mozilla/5.0 (compatible; ChataxisWidget/1.0)",
+          "user-agent": "Mozilla/5.0 (compatible; AddisAIWidget/1.0)",
           accept: "text/html,application/xhtml+xml,*/*",
         },
         signal: AbortSignal.timeout(10_000),
@@ -384,7 +384,7 @@ router.get(
 
       // 3. Prevent cross-origin CORS errors for fonts. Because this proxy
       //    serves content under a different origin (back.*) than the source
-      //    (chataxis.pro), the browser sends an Origin header when fetching
+      //    (addisai.pro), the browser sends an Origin header when fetching
       //    fonts and blocks them when the source doesn't return
       //    Access-Control-Allow-Origin. We strip <link rel=preload as=font>
       //    prefetch hints (they always fire eagerly and fail loudly) and inject

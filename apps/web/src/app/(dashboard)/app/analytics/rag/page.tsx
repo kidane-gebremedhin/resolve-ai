@@ -131,7 +131,15 @@ type Definitions = { definitions: Record<string, MetricDefinition> };
 type ChunkFlag = "dead_weight" | "misleading" | "retrieved_not_cited";
 type IndexHealth = {
   windowSince: string;
-  totals: { chunks: number; retrieved: number; deadWeight: number; misleading: number; retrievedNotCited: number };
+  totals: {
+    chunks: number;
+    retrieved: number;
+    deadWeight: number;
+    misleading: number;
+    retrievedNotCited: number;
+    truncated?: boolean;
+    scanLimit?: number;
+  };
   chunks: {
     chunkId: string;
     sourceId: string;
@@ -640,6 +648,16 @@ async function RagQuality({
                       </div>
                     ))}
                   </div>
+
+                  {indexHealth.totals.truncated ? (
+                    // These counts are computed from a capped scan. Showing them
+                    // bare would read as a complete census of the index.
+                    <p className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                      Counts cover the first{" "}
+                      {(indexHealth.totals.scanLimit ?? 0).toLocaleString()} passages of a larger
+                      knowledge base, not the whole index.
+                    </p>
+                  ) : null}
 
                   {indexHealth.chunks.length > 0 ? (
                     <ul className="mt-4 divide-y divide-border">

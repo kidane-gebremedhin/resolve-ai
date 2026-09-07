@@ -443,7 +443,7 @@ connection strings into the API's env.
 > | Socket.IO rooms (no Redis adapter) | A visitor connected to instance A never receives events emitted by instance B. Streaming replies, operator messages and typing indicators simply stop arriving for part of your traffic. |
 > | OTP codes (`otpService.ts`) | A code issued by A cannot be verified by B, so identity-verified tool calls fail at random. |
 > | Widget + integration rate limits | Each replica counts separately, so the effective limit multiplies by replica count. |
-> | Background jobs (`setInterval`) | Firecrawl ingestion and embedding reconciliation run concurrently on every replica, duplicating work and cost. |
+> | Background jobs (`setInterval`) | Firecrawl ingestion and embedding reconciliation run concurrently on every replica, duplicating work and cost. The `serialLoop` latch (§11.1b) only prevents a loop overlapping **itself inside one process**; it is not a distributed lock and does nothing across replicas. |
 >
 > Redis is already provisioned and `REDIS_URL` is read, but **nothing connects
 > to it yet** — provisioning it does not make the API scalable. Lifting this
@@ -551,6 +551,36 @@ redeploying the previous API image**, the same as any other part of the API.
 Two knobs bound a turn's cost: `AI_MAX_TOOL_TURNS` (default 10) caps agent↔tool round trips, and
 `AI_LLM_TIMEOUT_MS` / `AI_LLM_MAX_RETRIES` bound each upstream call.
 
+### 11.1b Background job loops
+
+Four loops run on plain `setInterval` timers inside the API process: embedding
+reconciliation (60s), Firecrawl polling (30s), the RAG quality alert sweep, and
+index health. There is no external queue, so a single API process owns them.
+
+Each is wrapped in `serialLoop` (`apps/api/src/jobs/serial-loop.ts`), which
+**drops a tick whose predecessor is still running**. None of these jobs claim
+their work atomically, so overlapping runs would select the same rows twice: the
+reconcile pass picks up to 20 sources by `embeddingStatus` and that status only
+changes when the ingest finishes, meaning a source slower than the 60s interval
+would get embedded twice and billed twice. Skipping loses nothing because each
+loop is a sweep, not a queue consumer.
+
+Two log lines to know:
+
+```bash
+grep -E "tick skipped|tick overran its interval" <api logs>
+```
+
+| Line | Meaning | What to do |
+| --- | --- | --- |
+| `[jobs] tick skipped, previous run still in flight` | A tick fired while the last run was still going. `skipped` counts them for that loop, `runningForMs` says how long the current run has been going | One or two under a large import is normal. A `skipped` count that climbs steadily means the loop never keeps up |
+| `[jobs] tick overran its interval` | A run took longer than the gap between ticks | Normal on a big ingest. Persistent overruns on `reconcile` usually mean sources are failing and being retried in a batch of 20 every minute. See §13.8 |
+
+If a loop goes silent entirely, the process holding it was restarted or the
+latch is stuck behind a run that never settles; restarting the API clears it.
+Because these are in-process timers, **running more than one API replica runs
+every loop more than once**; see the note in §10.3.
+
 ### 11.2 LangSmith tracing (optional)
 
 Tracing records every graph node, LLM call and tool call for the agent — invaluable when a
@@ -581,6 +611,7 @@ tagged `org:<id>` and `agent:<id>`, with the conversation id in metadata.
 - **A `/responses` 404 from OpenRouter** — something is constructing `ChatOpenAI` instead of `ChatOpenAICompletions`. The umbrella class routes newer model ids (gpt-5, o-series) to OpenAI's Responses API, which OpenRouter does not implement. Build models through `createChatModel()` in `services/ai/llm/chat-model.ts`.
 - **Agent stops mid-action without replying** — expected when a tool halts the turn to wait on the customer (an inline form or an OTP challenge). Look for a `form` or `otp` block on the last AI message.
 - **Embed test page shows the error screen** — the `data-agent` is stale or missing. Copy a fresh snippet from `/app/developers` (the DB ships empty, so create an agent first), and serve the HTML over HTTP, not `file://` (see §7).
+- **Widget or inbox stops receiving live events**: check the API log for `[socket] refused conversation join` or `[socket] refused message:send`. Conversation-scoped socket events are authorized per conversation, not per tenant (`socket/authorize.ts`): an operator may act on any conversation in their own org, a contact only on its own session's. A refusal is silent to the client by design, so the log is the only place it appears. A legitimate refusal usually means a stale `conversationId` in the client after a session reset; clear the widget's stored session and reconnect.
 - **Phase-specific failures** — consult the matching plan in [`__plans/`](__plans/) and the procedure in [`__skills/`](__skills/).
 
 ## 13. Paddle Billing — Sandbox vs Production
@@ -936,6 +967,14 @@ sources started being retrieved in the meantime.
 - A blank downvote rate means **nobody rated it**, which is not approval.
 - `Never quoted` only fires on passages that also scored well. A passage that
   scraped into the prompt on a thin query and was ignored is the system working.
+- **The scan reads at most 20,000 passages.** Dead weight is defined by the
+  absence of telemetry, so the scan has to list every chunk and therefore needs a
+  ceiling (`CHUNK_SCAN_LIMIT` in `index-health.service.ts`). Past it the panel
+  says so ("Counts cover the first 20,000 passages of a larger knowledge base"),
+  the `kb_weak_chunks` notification carries the same note, and the API logs
+  `[index-health] chunk scan truncated`. Treat the counts as a sample of the
+  index, not a census, whenever you see that line. Repairs are unaffected: they
+  act on the passages actually listed.
 
 ### Turning on the scheduled half
 
@@ -1162,8 +1201,8 @@ queue, so if the API process is not running, nothing reconciles.
 ## 14. Error monitoring (Sentry)
 
 Spec: [`__specs/35-error-monitoring-sentry.md`](__specs/35-error-monitoring-sentry.md).
-Two projects under the `mllabs-xk` org — `chataxispro-backend` (`apps/api`) and
-`chataxispro-frontend` (`apps/web`, browser + Next.js server). `apps/admin`,
+Two projects under the `mllabs-xk` org — `addisaipro-backend` (`apps/api`) and
+`addisaipro-frontend` (`apps/web`, browser + Next.js server). `apps/admin`,
 `apps/widget` and `apps/embed` are not instrumented.
 
 Everything is optional: with no DSN the SDKs never initialise, every Sentry call

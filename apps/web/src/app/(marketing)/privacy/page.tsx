@@ -94,7 +94,7 @@ export default function Page() {
 
             <div>
               <h2 className="text-xl font-semibold text-primary mb-3">9. Contact Us</h2>
-              <p>Questions should be directed to: <a href="mailto:privacy@chataxis.com" className="text-primary underline underline-offset-2">privacy@chataxis.com</a></p>
+              <p>Questions should be directed to: <a href="mailto:privacy@addisai.com" className="text-primary underline underline-offset-2">privacy@addisai.com</a></p>
             </div>
 
           </div>

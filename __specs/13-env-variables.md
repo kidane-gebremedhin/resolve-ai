@@ -135,7 +135,7 @@ Read at runtime. All optional: with no DSN the SDK never initialises and every
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SENTRY_DSN` | — | — | Backend project DSN (`chataxispro-backend`). Unset → reporting disabled |
+| `SENTRY_DSN` | — | — | Backend project DSN (`addisaipro-backend`). Unset → reporting disabled |
 | `SENTRY_ENVIRONMENT` | — | `NODE_ENV` | Environment tag on each event (`development` / `staging` / `production`) |
 | `SENTRY_RELEASE` | — | — | Build identifier, usually the git SHA. Set by the Coolify compose files |
 
@@ -243,7 +243,7 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `NEXT_PUBLIC_SOCKET_URL` | ✅ | `http://localhost:4000` | Socket.io server URL |
 | `NEXT_PUBLIC_WIDGET_URL` | ✅ | `http://localhost:3001` | Widget app URL (for preview) |
 | `NEXT_PUBLIC_EMBED_URL` | ✅ | `http://localhost:3002/widget.js` | Embed script URL |
-| `NEXT_PUBLIC_APP_NAME` | — | `Chataxis` | App display name. Drives navbar wordmark, document `<title>` template, footer logo alt, marketing body copy via `apps/web/src/lib/app-config.ts`. |
+| `NEXT_PUBLIC_APP_NAME` | — | `AddisAI` | App display name. Drives navbar wordmark, document `<title>` template, footer logo alt, marketing body copy via `apps/web/src/lib/app-config.ts`. |
 | `NEXT_PUBLIC_APP_TAGLINE` | — | `AI customer support for modern websites` | Marketing tagline appended after `APP_NAME` in the home `<title>` and OG description. |
 | `NEXT_PUBLIC_APP_LEGAL_NAME` | — | `${APP_NAME} AI, Inc.` | Footer copyright entity. |
 | `NEXT_PUBLIC_SUPPORT_PHONE` | — | `(239) 555-0108` | Contact section phone. |
@@ -305,7 +305,7 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `NEXT_DEV_ALLOWED_ORIGINS` | — | *(empty)* | **Dev only.** Comma-separated hosts allowed to reach the Next dev server's internal endpoints (HMR, RSC payloads, `/_next/*`). Required when `pnpm dev` is served through a tunnel, e.g. a Cloudflare quick tunnel used to receive Paddle webhooks locally; without it the page loads but never hydrates. Production is served from its own origin and ignores this. |
 | `NEXT_PUBLIC_PADDLE_ENVIRONMENT` | — | `sandbox` | Paddle client-side environment |
 | `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` | — | — | Paddle client-side token (for Paddle.js) |
-| `NEXT_PUBLIC_SENTRY_DSN` | — | — | Frontend project DSN (`chataxispro-frontend`). **Build-time**: inlined into the client bundle, so it must be a docker build arg — setting it only at runtime leaves the browser SDK uninitialised |
+| `NEXT_PUBLIC_SENTRY_DSN` | — | — | Frontend project DSN (`addisaipro-frontend`). **Build-time**: inlined into the client bundle, so it must be a docker build arg — setting it only at runtime leaves the browser SDK uninitialised |
 | `NEXT_PUBLIC_SENTRY_ENVIRONMENT` | — | `NODE_ENV` | Environment tag on browser events |
 
 ### Server-side only
@@ -328,7 +328,7 @@ traces just stay minified.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `SENTRY_ORG` | — | — | Sentry org slug (`mllabs-xk`) |
-| `SENTRY_PROJECT` | — | — | Sentry project slug (`chataxispro-frontend`) |
+| `SENTRY_PROJECT` | — | — | Sentry project slug (`addisaipro-frontend`) |
 | `SENTRY_AUTH_TOKEN` | — | — | Token with `project:releases` scope. Used only in the build stage; never copied into the runtime image |
 
 ---

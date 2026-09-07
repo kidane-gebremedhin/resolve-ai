@@ -233,10 +233,18 @@ export async function finalizeNode(
     });
   }
 
-  // Faithfulness as a live control rather than a metric read later. When too
-  // much of the answer states facts with nothing behind them, drop confidence so
-  // the EXISTING `AI_CONFIDENCE_THRESHOLD` escalation catches the turn — no new
-  // escalation path, just an honest input to the one already there.
+  // Faithfulness folded back into the turn's own confidence score. When too much
+  // of the answer states facts with nothing behind them, the score drops below
+  // `AI_CONFIDENCE_THRESHOLD`.
+  //
+  // Be precise about what that does, because an earlier comment here was not:
+  // it does NOT escalate. Escalation is driven solely by the meta-pass choosing
+  // `action: "escalate"` (see runner.ts). The only consumer of the threshold is
+  // `rag-telemetry.service.ts`, which sets the turn's `lowConfidence` flag, so
+  // this surfaces the turn on the RAG quality dashboard and in the alert sweep,
+  // and stops there. Routing low confidence to a human is a live open decision,
+  // recorded as A20 in __specs/45-deferred-decisions.md; it is a product
+  // behaviour change and is deliberately not made here.
   if (
     context.citations.length > 0 &&
     validated.factualSentences > 0 &&

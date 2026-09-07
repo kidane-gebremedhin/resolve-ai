@@ -27,7 +27,7 @@ ARG NEXT_PUBLIC_SOCKET_URL=http://localhost:4000
 ARG NEXT_PUBLIC_WIDGET_URL=http://localhost:3001
 ARG NEXT_PUBLIC_EMBED_URL=http://localhost:3002/widget.js
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
-ARG NEXT_PUBLIC_APP_NAME=Chataxis
+ARG NEXT_PUBLIC_APP_NAME=AddisAI
 ARG NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=
 ARG NEXT_PUBLIC_PADDLE_ENV=sandbox
 # Sentry. The DSN is inlined into the client bundle, so it MUST be a build arg —

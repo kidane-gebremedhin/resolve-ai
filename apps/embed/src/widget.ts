@@ -161,16 +161,16 @@ function playProactiveBeep(): void {
 
   const ds = currentScript.dataset;
   // Config can arrive two ways:
-  //  1. `window.ChataxisConfig = { apiBase, websiteId, agentId, domain, widgetUrl }`
+  //  1. `window.AddisAIConfig = { apiBase, websiteId, agentId, domain, widgetUrl }`
   //     — the copy-paste snippet the dashboard generates (Websites → Embed).
   //  2. `data-*` attributes on the <script> tag — the legacy/manual form.
-  // data-* wins when present; otherwise fall back to ChataxisConfig. We read the
+  // data-* wins when present; otherwise fall back to AddisAIConfig. We read the
   // global (not just currentScript) because the snippet injects widget.js async,
   // so `document.currentScript` is the injected tag with no attributes on it.
   const cfg =
-    ((window as unknown as { ChataxisConfig?: Record<string, string | undefined> }).ChataxisConfig) ?? {};
+    ((window as unknown as { AddisAIConfig?: Record<string, string | undefined> }).AddisAIConfig) ?? {};
 
-  // Widget origin: explicit data-widget-url / ChataxisConfig.widgetUrl wins, else
+  // Widget origin: explicit data-widget-url / AddisAIConfig.widgetUrl wins, else
   // the build-time VITE_WIDGET_URL. No host is hardcoded; if none set we abort.
   const widgetUrl =
     ds.widgetUrl ??
@@ -179,7 +179,7 @@ function playProactiveBeep(): void {
     "";
   const agentKey = ds.agent ?? ds.agentId ?? cfg.agentId ?? cfg.agent ?? "";
   if (!agentKey) {
-    console.warn("[csb-widget] missing agentId (data-agent / data-agent-id / ChataxisConfig.agentId); aborting.");
+    console.warn("[csb-widget] missing agentId (data-agent / data-agent-id / AddisAIConfig.agentId); aborting.");
     return;
   }
   if (!widgetUrl) {
@@ -236,7 +236,7 @@ function playProactiveBeep(): void {
   if (theme) params.set("theme", theme);
   if (primaryColor) params.set("primaryColor", primaryColor);
   // Domain is only a fallback resolver (the widget resolves by agentId first).
-  // Prefer the operator-configured website domain from ChataxisConfig; otherwise
+  // Prefer the operator-configured website domain from AddisAIConfig; otherwise
   // use the embedding page's hostname.
   try {
     const domain = cfg.domain ?? window.location.hostname;

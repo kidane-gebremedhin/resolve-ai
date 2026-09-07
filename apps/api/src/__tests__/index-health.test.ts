@@ -67,6 +67,7 @@ import {
   flagChunk,
   rankClusters,
   scoreChunks,
+  CHUNK_SCAN_LIMIT,
   type ChunkStats,
 } from "../services/kb/index-health.service.js";
 import { findDriftedSources, indexHealthOnce, isOffPeak } from "../jobs/index-health.job.js";
@@ -323,6 +324,46 @@ describe("index health", () => {
       expect(byId.has(goodChunk)).toBe(false);
       // Worst first: the misleading passage outranks the ignored one.
       expect(report.chunks[0]!.chunkId).toBe(badChunk);
+    });
+
+    it("reports a complete scan as complete", async () => {
+      const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString() });
+      expect(report.totals.truncated).toBe(false);
+      expect(report.totals.scanLimit).toBe(CHUNK_SCAN_LIMIT);
+    });
+
+    it("says so when the index is larger than one scan", async () => {
+      // Dead weight is defined by the ABSENCE of telemetry, so the scan has to
+      // list every chunk and therefore needs a cap. The cap was silent: an org
+      // past it was told it had exactly CHUNK_SCAN_LIMIT chunks, with a
+      // dead-weight count computed from an arbitrary slice and nothing marking
+      // either number as partial.
+      const oversized = Array.from({ length: CHUNK_SCAN_LIMIT + 1 }, (_, i) => ({
+        chunkId: `over:${i}`,
+        sourceId: new mongoose.Types.ObjectId(),
+      }));
+      // Only the index scan is faked. withPreviews issues its own KbChunk.find
+      // for the flagged rows and must keep hitting the real collection.
+      const real = KbChunk.find.bind(KbChunk) as (...args: unknown[]) => unknown;
+      const fake = (...args: unknown[]) => {
+        const proj = args[1] as Record<string, number> | undefined;
+        if (proj && proj.sourceId === 1 && proj.text === undefined) {
+          return { limit: () => ({ lean: async () => oversized }) };
+        }
+        return real(...args);
+      };
+      const spy = vi
+        .spyOn(KbChunk, "find")
+        .mockImplementation(fake as unknown as typeof KbChunk.find);
+      try {
+        const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString() });
+        expect(report.totals.truncated).toBe(true);
+        expect(report.totals.scanLimit).toBe(CHUNK_SCAN_LIMIT);
+        // The probe row must not leak into the counts.
+        expect(report.totals.chunks).toBe(CHUNK_SCAN_LIMIT);
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it("attributes a downvote only to the chunk the answer actually cited", async () => {

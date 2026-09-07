@@ -243,8 +243,8 @@ Create one **shared environment variable group** per project and attach it to ev
 | `CORS_ORIGINS` | `https://dev.customer-service-chatbot.app,https://widget.dev.customer-service-chatbot.app` | `https://staging.customer-service-chatbot.app,https://widget.staging.customer-service-chatbot.app` | `https://app.customer-service-chatbot.app,https://widget.customer-service-chatbot.app` |
 | `MONGO_INITDB_ROOT_PASSWORD`, `REDIS_PASSWORD` | Generated 32-char | Generated 32-char | Generated 32-char |
 | `SENTRY_ENVIRONMENT` | `dev` | `staging` | `production` |
-| `SENTRY_DSN` | `chataxispro-backend` DSN | same | same |
-| `NEXT_PUBLIC_SENTRY_DSN` | `chataxispro-frontend` DSN — **tick "Build Variable"** | same | same |
+| `SENTRY_DSN` | `addisaipro-backend` DSN | same | same |
+| `NEXT_PUBLIC_SENTRY_DSN` | `addisaipro-frontend` DSN — **tick "Build Variable"** | same | same |
 | `SENTRY_ORG` / `SENTRY_PROJECT` / `SENTRY_AUTH_TOKEN` | optional — **build variables** | same | same |
 
 > **Sentry's build-time trap**: `NEXT_PUBLIC_SENTRY_DSN` is inlined into the
@@ -458,7 +458,7 @@ Coolify exposes container logs in its UI. For production, ship to a centralized 
 | Container stdout/stderr | Vector (sidecar) or Coolify's built-in Fluentbit | Better Stack / Grafana Loki |
 | Metrics | `prom-client` in API; Coolify Node Exporter | Grafana Cloud (free tier) |
 | APM | OpenTelemetry from `apps/api` (Express auto-instrumentation) | Honeycomb / Tempo |
-| Errors | Sentry (Next.js + Express SDKs) — **implemented**, see [35](./35-error-monitoring-sentry.md); verify a deploy at `/sentry-example-page` | `chataxispro-frontend` + `chataxispro-backend`, tagged by `SENTRY_ENVIRONMENT` |
+| Errors | Sentry (Next.js + Express SDKs) — **implemented**, see [35](./35-error-monitoring-sentry.md); verify a deploy at `/sentry-example-page` | `addisaipro-frontend` + `addisaipro-backend`, tagged by `SENTRY_ENVIRONMENT` |
 | Uptime | Better Stack / UptimeRobot pinging `/health` | Slack + PagerDuty |
 
 The API exposes `/metrics` on port `9090` (Prometheus format) gated by `METRICS_TOKEN`; Coolify scrapes it via Traefik internal label.

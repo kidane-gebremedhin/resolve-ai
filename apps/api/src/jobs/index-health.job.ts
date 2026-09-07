@@ -120,7 +120,7 @@ async function alertedRecently(organizationId: string): Promise<boolean> {
 /** Score one org's chunks and raise a review notification if anything is weak. */
 async function flagWeakChunksForOrg(organizationId: string): Promise<number> {
   const report = await scoreChunks({ organizationId, limit: 1 });
-  const { misleading, retrievedNotCited, deadWeight } = report.totals;
+  const { misleading, retrievedNotCited, deadWeight, truncated } = report.totals;
   const actionable = misleading + retrievedNotCited;
   if (actionable === 0) return 0;
   if (await alertedRecently(organizationId)) return actionable;
@@ -133,7 +133,12 @@ async function flagWeakChunksForOrg(organizationId: string): Promise<number> {
     body:
       `${misleading} passage(s) are being cited in answers customers thumbed down, and ` +
       `${retrievedNotCited} are retrieved but never quoted, which usually means they are split badly. ` +
-      `${deadWeight} more were never retrieved at all. Nothing has been changed.`,
+      `${deadWeight} more were never retrieved at all. Nothing has been changed.` +
+      // An operator reading "0 were never retrieved" should not be left thinking
+      // the whole index was examined when only the first slice of it was.
+      (truncated
+        ? ` Note: this covers the first ${report.totals.scanLimit.toLocaleString("en-US")} passages of a larger index.`
+        : ""),
     link: "/app/analytics/rag",
   });
   return actionable;

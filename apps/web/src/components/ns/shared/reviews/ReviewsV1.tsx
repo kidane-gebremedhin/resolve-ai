@@ -40,7 +40,7 @@ const ReviewsV1 = ({
           </RevealAnimation>
           <RevealAnimation delay={0.3}>
             <p className="max-w-[490px] max-[426px]:max-w-[320px]">
-              &ldquo;Chataxis delivered our entire support stack ahead of schedule, flawless execution and real partnership.&rdquo;
+              &ldquo;AddisAI delivered our entire support stack ahead of schedule, flawless execution and real partnership.&rdquo;
             </p>
           </RevealAnimation>
         </div>

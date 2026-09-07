@@ -3,6 +3,7 @@ import type { Server as IoServer, Socket } from "socket.io";
 import { Conversation, Message, ContactSession, Agent } from "../../models/index.js";
 import { logger } from "../../config/logger.js";
 import { generateAiReply } from "../../services/ai/index.js";
+import { grantConversationAccess, isConversationVisibleTo } from "../authorize.js";
 
 export function registerMessageHandlers(io: IoServer, socket: Socket): void {
   // Customer (widget) sends a message via Socket.io.
@@ -29,6 +30,7 @@ export function registerMessageHandlers(io: IoServer, socket: Socket): void {
           status: "active",
         });
         conversationId = convo._id.toString();
+        grantConversationAccess(socket, conversationId);
       }
 
       const conversation = await Conversation.findOne({
@@ -36,6 +38,21 @@ export function registerMessageHandlers(io: IoServer, socket: Socket): void {
         organizationId: auth.organizationId,
       });
       if (!conversation) return;
+
+      // The org scope above is not enough. Two visitors on the same customer's
+      // site share an organizationId, so without an owner check one of them can
+      // post into the other's chat by guessing an id, writing a message
+      // attributed to that visitor AND triggering a billable AI reply on their
+      // thread. Operators keep org-wide reach; contacts are held to their own
+      // session. See ../authorize.ts.
+      if (!isConversationVisibleTo(auth, conversation)) {
+        logger.warn("[socket] refused message:send", {
+          conversationId,
+          kind: auth.kind,
+          organizationId: auth.organizationId,
+        });
+        return;
+      }
 
       const message = await Message.create({
         conversationId: conversation._id,

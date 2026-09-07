@@ -13,8 +13,8 @@ Two Sentry projects under the `mllabs-xk` org:
 
 | Project | Covers | SDK |
 |---------|--------|-----|
-| `chataxispro-backend` | `apps/api` (Express, Socket.io, jobs) | `@sentry/node` |
-| `chataxispro-frontend` | `apps/web` — browser **and** Next.js server runtime | `@sentry/nextjs` |
+| `addisaipro-backend` | `apps/api` (Express, Socket.io, jobs) | `@sentry/node` |
+| `addisaipro-frontend` | `apps/web` — browser **and** Next.js server runtime | `@sentry/nextjs` |
 
 `apps/admin`, `apps/widget` and `apps/embed` are **not** instrumented. The widget
 runs on arbitrary customer sites, where third-party script noise would swamp the

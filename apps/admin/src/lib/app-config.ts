@@ -1,8 +1,8 @@
 // Single source of truth for branding strings. Override at build/runtime with
 // `NEXT_PUBLIC_APP_NAME` and friends so we can rebrand without grepping for
-// "NextSaaS" / "Chataxis" across the codebase.
+// "NextSaaS" / "AddisAI" across the codebase.
 
-export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "Chataxis";
+export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "AddisAI";
 
 // Brand name shown specifically in the navbar/logo. Falls back to APP_NAME.
 export const NAVBAR_BRAND_NAME = process.env.NEXT_PUBLIC_NAVBAR_BRAND_NAME ?? APP_NAME;
