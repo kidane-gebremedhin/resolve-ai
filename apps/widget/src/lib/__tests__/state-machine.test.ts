@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { makeInitialState, reducer, type WidgetEvent, type WidgetState } from "../state-machine";
 import type { WidgetMessage } from "../api-client";
 
-const INIT = { domain: "acme.test", agentId: "a1", websiteId: "w1" };
+const INIT = { domain: "example.test", agentId: "a1", websiteId: "w1" };
 
 function bootstrapped(over: Partial<Extract<WidgetEvent, { type: "BOOTSTRAPPED" }>> = {}) {
   return {

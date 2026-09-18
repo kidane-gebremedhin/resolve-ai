@@ -34,9 +34,9 @@ Coolify is the **self-hosted PaaS** that runs the production and staging environ
 
 | Environment | Branch | Domains | DB | Image tag pattern |
 |-------------|--------|---------|----|--------------------|
-| Dev | `dev` | `dev.customer-service-chatbot.app`, `widget.dev.customer-service-chatbot.app`, `api.dev.customer-service-chatbot.app`, `embed.dev.customer-service-chatbot.app` | Single-node Mongo 7 (Coolify-managed) | `ghcr.io/<org>/csb-*:dev` (mutable, redeployed on every `dev` push) |
-| Staging | `staging` | `staging.customer-service-chatbot.app`, `widget.staging.customer-service-chatbot.app`, `api.staging.customer-service-chatbot.app`, `embed.staging.customer-service-chatbot.app` | Single-node Mongo 7 (Coolify-managed) | `ghcr.io/<org>/csb-*:staging` (mutable) |
-| Production | `main` | `app.customer-service-chatbot.app`, `widget.customer-service-chatbot.app`, `api.customer-service-chatbot.app`, `embed.customer-service-chatbot.app` | MongoDB Atlas M10+ **OR** self-hosted Mongo replica set | `ghcr.io/<org>/csb-*:<git-sha>` (immutable, requires manual deploy approval) |
+| Dev | `dev` | `dev.resolve-ai.app`, `widget.dev.resolve-ai.app`, `api.dev.resolve-ai.app`, `embed.dev.resolve-ai.app` | Single-node Mongo 7 (Coolify-managed) | `ghcr.io/<org>/csb-*:dev` (mutable, redeployed on every `dev` push) |
+| Staging | `staging` | `staging.resolve-ai.app`, `widget.staging.resolve-ai.app`, `api.staging.resolve-ai.app`, `embed.staging.resolve-ai.app` | Single-node Mongo 7 (Coolify-managed) | `ghcr.io/<org>/csb-*:staging` (mutable) |
+| Production | `main` | `app.resolve-ai.app`, `widget.resolve-ai.app`, `api.resolve-ai.app`, `embed.resolve-ai.app` | MongoDB Atlas M10+ **OR** self-hosted Mongo replica set | `ghcr.io/<org>/csb-*:<git-sha>` (immutable, requires manual deploy approval) |
 
 > The **dev** environment is for the internal team to integrate work-in-progress from feature branches that have landed on `dev`; it is unstable by design and may be wiped/reset at any time.
 > **Staging** mirrors production shape (TLS, secrets management, observability) but on a smaller node and with sandbox third-party credentials.
@@ -93,11 +93,11 @@ services:
     env_file: ['.env']
     labels:
       - traefik.enable=true
-      - traefik.http.routers.api.rule=Host(`api.staging.customer-service-chatbot.app`)
+      - traefik.http.routers.api.rule=Host(`api.staging.resolve-ai.app`)
       - traefik.http.routers.api.entrypoints=websecure
       - traefik.http.routers.api.tls.certresolver=letsencrypt
       - traefik.http.services.api.loadbalancer.server.port=4000
-      - traefik.http.middlewares.api-cors.headers.accesscontrolalloworiginlist=https://staging.customer-service-chatbot.app,https://widget.staging.customer-service-chatbot.app
+      - traefik.http.middlewares.api-cors.headers.accesscontrolalloworiginlist=https://staging.resolve-ai.app,https://widget.staging.resolve-ai.app
     healthcheck:
       test: ['CMD', 'wget', '-qO-', 'http://localhost:4000/health']
       interval: 30s
@@ -113,15 +113,15 @@ services:
     restart: unless-stopped
     env_file: ['.env']
     environment:
-      NEXT_PUBLIC_API_URL: https://api.staging.customer-service-chatbot.app/api/v1
-      NEXT_PUBLIC_SOCKET_URL: https://api.staging.customer-service-chatbot.app
-      NEXT_PUBLIC_WIDGET_URL: https://widget.staging.customer-service-chatbot.app
-      NEXT_PUBLIC_EMBED_URL: https://embed.staging.customer-service-chatbot.app/widget.js
-      NEXT_PUBLIC_APP_URL: https://staging.customer-service-chatbot.app
-      NEXTAUTH_URL: https://staging.customer-service-chatbot.app
+      NEXT_PUBLIC_API_URL: https://api.staging.resolve-ai.app/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.staging.resolve-ai.app
+      NEXT_PUBLIC_WIDGET_URL: https://widget.staging.resolve-ai.app
+      NEXT_PUBLIC_EMBED_URL: https://embed.staging.resolve-ai.app/widget.js
+      NEXT_PUBLIC_APP_URL: https://staging.resolve-ai.app
+      NEXTAUTH_URL: https://staging.resolve-ai.app
     labels:
       - traefik.enable=true
-      - traefik.http.routers.web.rule=Host(`staging.customer-service-chatbot.app`)
+      - traefik.http.routers.web.rule=Host(`staging.resolve-ai.app`)
       - traefik.http.routers.web.entrypoints=websecure
       - traefik.http.routers.web.tls.certresolver=letsencrypt
       - traefik.http.services.web.loadbalancer.server.port=3000
@@ -132,11 +132,11 @@ services:
     restart: unless-stopped
     env_file: ['.env']
     environment:
-      NEXT_PUBLIC_API_URL: https://api.staging.customer-service-chatbot.app/api/v1
-      NEXT_PUBLIC_SOCKET_URL: https://api.staging.customer-service-chatbot.app
+      NEXT_PUBLIC_API_URL: https://api.staging.resolve-ai.app/api/v1
+      NEXT_PUBLIC_SOCKET_URL: https://api.staging.resolve-ai.app
     labels:
       - traefik.enable=true
-      - traefik.http.routers.widget.rule=Host(`widget.staging.customer-service-chatbot.app`)
+      - traefik.http.routers.widget.rule=Host(`widget.staging.resolve-ai.app`)
       - traefik.http.routers.widget.entrypoints=websecure
       - traefik.http.routers.widget.tls.certresolver=letsencrypt
       - traefik.http.services.widget.loadbalancer.server.port=3001
@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
     labels:
       - traefik.enable=true
-      - traefik.http.routers.embed.rule=Host(`embed.staging.customer-service-chatbot.app`)
+      - traefik.http.routers.embed.rule=Host(`embed.staging.resolve-ai.app`)
       - traefik.http.routers.embed.entrypoints=websecure
       - traefik.http.routers.embed.tls.certresolver=letsencrypt
       - traefik.http.services.embed.loadbalancer.server.port=80
@@ -187,8 +187,8 @@ volumes:
 
 Differences from staging:
 
-- All `*.staging.customer-service-chatbot.app` → `*.dev.customer-service-chatbot.app`
-- All `NEXT_PUBLIC_*_URL`, `NEXTAUTH_URL`, `CORS_ORIGINS` updated to `dev.customer-service-chatbot.app` hosts
+- All `*.staging.resolve-ai.app` → `*.dev.resolve-ai.app`
+- All `NEXT_PUBLIC_*_URL`, `NEXTAUTH_URL`, `CORS_ORIGINS` updated to `dev.resolve-ai.app` hosts
 - `IMAGE_TAG` defaults to `dev` (mutable — every push to the `dev` branch redeploys)
 - Smaller resource limits (Coolify per-service resource constraints): `mem_limit: 512m` per app
 - `restart: on-failure:3` instead of `unless-stopped` — dev is allowed to crash-loop without paging
@@ -199,7 +199,7 @@ Differences from staging:
 
 Differences from staging:
 
-- All `*.staging.customer-service-chatbot.app` → bare `customer-service-chatbot.app`/`*.customer-service-chatbot.app`
+- All `*.staging.resolve-ai.app` → bare `resolve-ai.app`/`*.resolve-ai.app`
 - `mongo` service **removed** — production uses external MongoDB Atlas, `MONGODB_URI` points at the Atlas connection string
 - `IMAGE_TAG` is a full git SHA (injected by `deploy-production.yml` — never `latest`, never branch name)
 - `api` runs with `deploy: replicas: 2` for HA (Coolify v4+ supports replica counts; otherwise scale via UI)
@@ -240,7 +240,7 @@ Create one **shared environment variable group** per project and attach it to ev
 | `SMTP_*` | MailHog | Mailtrap | SES / Resend / Postmark |
 | `STORAGE_PROVIDER` | `s3` (MinIO) | `s3` (MinIO) | `s3` (AWS / R2) | (see disk-storage note below) |
 | `AWS_*` | MinIO local | MinIO local | Real |
-| `CORS_ORIGINS` | `https://dev.customer-service-chatbot.app,https://widget.dev.customer-service-chatbot.app` | `https://staging.customer-service-chatbot.app,https://widget.staging.customer-service-chatbot.app` | `https://app.customer-service-chatbot.app,https://widget.customer-service-chatbot.app` |
+| `CORS_ORIGINS` | `https://dev.resolve-ai.app,https://widget.dev.resolve-ai.app` | `https://staging.resolve-ai.app,https://widget.staging.resolve-ai.app` | `https://app.resolve-ai.app,https://widget.resolve-ai.app` |
 | `MONGO_INITDB_ROOT_PASSWORD`, `REDIS_PASSWORD` | Generated 32-char | Generated 32-char | Generated 32-char |
 | `SENTRY_ENVIRONMENT` | `dev` | `staging` | `production` |
 | `SENTRY_DSN` | `addisaipro-backend` DSN | same | same |
@@ -298,61 +298,61 @@ Full variable catalogue lives in [13-env-variables.md](./13-env-variables.md). T
 
 ## 5. Domains & TLS
 
-Coolify's bundled Traefik handles TLS automatically via **Let's Encrypt** (HTTP-01 challenge). Wildcards (`*.customer-service-chatbot.app`, `*.dev.customer-service-chatbot.app`, `*.staging.customer-service-chatbot.app`) require DNS-01 challenge — configure Cloudflare/Route53 token in Coolify if you need them.
+Coolify's bundled Traefik handles TLS automatically via **Let's Encrypt** (HTTP-01 challenge). Wildcards (`*.resolve-ai.app`, `*.dev.resolve-ai.app`, `*.staging.resolve-ai.app`) require DNS-01 challenge — configure Cloudflare/Route53 token in Coolify if you need them.
 
 **Production**
 
 | Domain | Maps to | Notes |
 |--------|---------|-------|
-| `customer-service-chatbot.app` | (apex redirect) | Redirect to `https://app.customer-service-chatbot.app` |
-| `app.customer-service-chatbot.app` | `web` | NextAuth requires this exact host in `NEXTAUTH_URL` |
-| `widget.customer-service-chatbot.app` | `widget` | Allowed to be embedded in any iframe (`frame-ancestors *` CSP) |
-| `api.customer-service-chatbot.app` | `api` | CORS allowlist driven by `CORS_ORIGINS` + per-website `allowedOrigins` |
-| `embed.customer-service-chatbot.app` | `embed` | Serves `widget.js`; CDN-cached |
+| `resolve-ai.app` | (apex redirect) | Redirect to `https://app.resolve-ai.app` |
+| `app.resolve-ai.app` | `web` | NextAuth requires this exact host in `NEXTAUTH_URL` |
+| `widget.resolve-ai.app` | `widget` | Allowed to be embedded in any iframe (`frame-ancestors *` CSP) |
+| `api.resolve-ai.app` | `api` | CORS allowlist driven by `CORS_ORIGINS` + per-website `allowedOrigins` |
+| `embed.resolve-ai.app` | `embed` | Serves `widget.js`; CDN-cached |
 
 **Staging** (same shape, `staging.` infix)
 
 | Domain | Maps to |
 |--------|---------|
-| `staging.customer-service-chatbot.app` | `web` (staging) |
-| `widget.staging.customer-service-chatbot.app` | `widget` (staging) |
-| `api.staging.customer-service-chatbot.app` | `api` (staging) |
-| `embed.staging.customer-service-chatbot.app` | `embed` (staging) |
+| `staging.resolve-ai.app` | `web` (staging) |
+| `widget.staging.resolve-ai.app` | `widget` (staging) |
+| `api.staging.resolve-ai.app` | `api` (staging) |
+| `embed.staging.resolve-ai.app` | `embed` (staging) |
 
 **Dev** (same shape, `dev.` infix)
 
 | Domain | Maps to |
 |--------|---------|
-| `dev.customer-service-chatbot.app` | `web` (dev) |
-| `widget.dev.customer-service-chatbot.app` | `widget` (dev) |
-| `api.dev.customer-service-chatbot.app` | `api` (dev) |
-| `embed.dev.customer-service-chatbot.app` | `embed` (dev) |
+| `dev.resolve-ai.app` | `web` (dev) |
+| `widget.dev.resolve-ai.app` | `widget` (dev) |
+| `api.dev.resolve-ai.app` | `api` (dev) |
+| `embed.dev.resolve-ai.app` | `embed` (dev) |
 
 Add these DNS records before first deploy:
 
 ```
 # Production
-A     customer-service-chatbot.app                          → <prod-node-ipv4>
-CNAME app.customer-service-chatbot.app                      → customer-service-chatbot.app
-CNAME widget.customer-service-chatbot.app                   → customer-service-chatbot.app
-CNAME api.customer-service-chatbot.app                      → customer-service-chatbot.app
-CNAME embed.customer-service-chatbot.app                    → customer-service-chatbot.app
+A     resolve-ai.app                          → <prod-node-ipv4>
+CNAME app.resolve-ai.app                      → resolve-ai.app
+CNAME widget.resolve-ai.app                   → resolve-ai.app
+CNAME api.resolve-ai.app                      → resolve-ai.app
+CNAME embed.resolve-ai.app                    → resolve-ai.app
 
 # Staging (point at staging node IP; can share with dev to save cost)
-A     staging.customer-service-chatbot.app                  → <staging-node-ipv4>
-CNAME widget.staging.customer-service-chatbot.app           → staging.customer-service-chatbot.app
-CNAME api.staging.customer-service-chatbot.app              → staging.customer-service-chatbot.app
-CNAME embed.staging.customer-service-chatbot.app            → staging.customer-service-chatbot.app
+A     staging.resolve-ai.app                  → <staging-node-ipv4>
+CNAME widget.staging.resolve-ai.app           → staging.resolve-ai.app
+CNAME api.staging.resolve-ai.app              → staging.resolve-ai.app
+CNAME embed.staging.resolve-ai.app            → staging.resolve-ai.app
 
 # Dev
-A     dev.customer-service-chatbot.app                      → <dev-node-ipv4>
-CNAME widget.dev.customer-service-chatbot.app               → dev.customer-service-chatbot.app
-CNAME api.dev.customer-service-chatbot.app                  → dev.customer-service-chatbot.app
-CNAME embed.dev.customer-service-chatbot.app                → dev.customer-service-chatbot.app
+A     dev.resolve-ai.app                      → <dev-node-ipv4>
+CNAME widget.dev.resolve-ai.app               → dev.resolve-ai.app
+CNAME api.dev.resolve-ai.app                  → dev.resolve-ai.app
+CNAME embed.dev.resolve-ai.app                → dev.resolve-ai.app
 ```
 
 > Without DNS pointing at the node, the Let's Encrypt HTTP-01 challenge will fail and Coolify will surface a TLS error.
-> **Optional**: protect `dev.customer-service-chatbot.app` (and `staging.customer-service-chatbot.app` if desired) behind a Cloudflare Access policy or HTTP Basic auth at Traefik so the unstable env isn't publicly indexed.
+> **Optional**: protect `dev.resolve-ai.app` (and `staging.resolve-ai.app` if desired) behind a Cloudflare Access policy or HTTP Basic auth at Traefik so the unstable env isn't publicly indexed.
 
 ---
 
@@ -505,7 +505,7 @@ Coolify v4 supports replica counts on resources (UI: Settings → Replicas). Whe
 - [ ] Add Cloudflare API token for wildcard DNS-01 challenge (optional)
 - [ ] Create environment-variable groups per §4.1; paste secrets (one set per env — never reuse across envs)
 - [ ] Upload `coolify/docker-compose.dev.yml` to dev project; deploy first (lowest risk)
-- [ ] Verify all five healthchecks pass on dev; smoke-test `https://dev.customer-service-chatbot.app`
+- [ ] Verify all five healthchecks pass on dev; smoke-test `https://dev.resolve-ai.app`
 - [ ] Repeat with `coolify/docker-compose.staging.yml` → `csb-staging`
 - [ ] Repeat with `coolify/docker-compose.production.yml` → `csb-production`
 - [ ] Point DNS records per §5 for all three environments

@@ -72,7 +72,7 @@ const PASSWORD_RULES: Array<[RegExp, string]> = [
 }
 
 // The paid workspace every role account belongs to.
-const PAID_ORG = { name: "Acme Support Co", slug: "acme-support-co" } as const;
+const PAID_ORG = { name: "Example Support Co", slug: "example-support-co" } as const;
 const PAID_PLAN = "business" as const;
 
 
@@ -93,14 +93,14 @@ type SeedUser = {
 };
 
 const PAID_ORG_USERS: SeedUser[] = [
-    { email: "owner@acme.test", name: "Olivia Owner", role: "user", membershipRole: "owner" },
-    { email: "admin@acme.test", name: "Adam Admin", role: "user", membershipRole: "admin" },
-    { email: "agent@acme.test", name: "Ana Agent", role: "user", membershipRole: "agent" },
-    { email: "viewer@acme.test", name: "Victor Viewer", role: "user", membershipRole: "viewer" },
+    { email: "owner@example.test", name: "Olivia Owner", role: "user", membershipRole: "owner" },
+    { email: "admin@example.test", name: "Adam Admin", role: "user", membershipRole: "admin" },
+    { email: "agent@example.test", name: "Ana Agent", role: "user", membershipRole: "agent" },
+    { email: "viewer@example.test", name: "Victor Viewer", role: "user", membershipRole: "viewer" },
 ];
 
 const PLATFORM_ADMIN: SeedUser = {
-    email: "platformadmin@acme.test",
+    email: "platformadmin@example.test",
     name: "Priya Platform",
     role: "platform_admin",
 };
@@ -206,10 +206,10 @@ async function seedPaidSubscription(organizationId: mongoose.Types.ObjectId) {
 // Website + its Agent + WidgetSettings, mirroring what POST /websites does.
 async function seedWidgetStack(organizationId: mongoose.Types.ObjectId) {
     const website = (await Website.findOneAndUpdate(
-        { organizationId, domain: "acme.test" },
+        { organizationId, domain: "example.test" },
         {
             $set: {
-                name: "Acme Marketing Site",
+                name: "Example Marketing Site",
                 description: "Seeded website for manual QA of the embeddable widget.",
                 // Local dev origins so the widget can be embedded from a dev server
                 // or the repo's test-widget.html without a CORS rejection.
@@ -289,11 +289,11 @@ async function main() {
     console.log("\n────────────────────────────────────────────────────────────");
     console.log("  Shared password:", PASSWORD);
     console.log("────────────────────────────────────────────────────────────");
-    console.log(`  owner@acme.test          owner    — ${paidOrg.name}`);
-    console.log(`  admin@acme.test          admin    — ${paidOrg.name}`);
-    console.log(`  agent@acme.test          agent    — ${paidOrg.name}`);
-    console.log(`  viewer@acme.test         viewer   — ${paidOrg.name}`);
-    console.log(`  platformadmin@acme.test  platform_admin — admin app`);
+    console.log(`  owner@example.test          owner    — ${paidOrg.name}`);
+    console.log(`  admin@example.test          admin    — ${paidOrg.name}`);
+    console.log(`  agent@example.test          agent    — ${paidOrg.name}`);
+    console.log(`  viewer@example.test         viewer   — ${paidOrg.name}`);
+    console.log(`  platformadmin@example.test  platform_admin — admin app`);
     console.log("────────────────────────────────────────────────────────────");
     console.log(`  Plan: ${PAID_PLAN} · websiteId: ${website._id} · agentId: ${agent._id}`);
     console.log("────────────────────────────────────────────────────────────");

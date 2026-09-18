@@ -62,7 +62,7 @@ A multi-tenant AI customer-support SaaS that lets any business embed a chat widg
 ## Monorepo Layout (Summary)
 
 ```
-customer-service-chatbot/
+resolve-ai/
 ├── apps/
 │   ├── web/           # Next.js — marketing + operator dashboard + developer docs
 │   ├── widget/        # Next.js — customer chat iframe (port 3001)

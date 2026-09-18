@@ -36,7 +36,7 @@ const platformSettingSchema = new Schema(
     ),
     branding: new Schema(
       {
-        platformName: { type: String, default: "Customer Service Chatbot" },
+        platformName: { type: String, default: "ResolveAI" },
         supportEmail: { type: String, default: "" },
       },
       { _id: false },

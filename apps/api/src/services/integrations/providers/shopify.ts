@@ -6,7 +6,7 @@ export class ShopifyAdapter implements ProviderAdapter {
   readonly provider = "shopify";
 
   buildAuthUrl(_orgId: string, state: string, app?: OAuthAppCreds | null): string {
-    // The shop domain is a non-secret, per-operator app extra (e.g. acme.myshopify.com).
+    // The shop domain is a non-secret, per-operator app extra (e.g. example.myshopify.com).
     const shop = String(app?.extra?.shop ?? "");
     const clientId = app?.clientId ?? "";
     if (!shop || !clientId) return "";

@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 
 SRC_ROUTES = Path("/home/kg/Downloads/chat/src/routes")
-TARGET_APP = Path("/home/kg/Desktop/Projects/customer-service-chatbot/src/app")
+TARGET_APP = Path("/home/kg/Desktop/Projects/resolve-ai/src/app")
 
 ROUTE_MAP = {
     "index.tsx": "page.tsx",

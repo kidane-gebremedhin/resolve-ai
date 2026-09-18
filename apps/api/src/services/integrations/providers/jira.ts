@@ -66,7 +66,7 @@ export class JiraAdapter implements ProviderAdapter {
     });
     const clouds = (await cloudRes.json()) as Array<{ id: string; url?: string }>;
     const cloudId = clouds[0]?.id ?? "";
-    // The site URL (e.g. https://acme.atlassian.net) is the human-browsable host —
+    // The site URL (e.g. https://example.atlassian.net) is the human-browsable host —
     // keep it so ticket links point at the UI, not the api.atlassian.com gateway.
     const siteUrl = clouds[0]?.url ?? "";
     return {

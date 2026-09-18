@@ -330,7 +330,7 @@ export const env = {
       (process.env.LANGSMITH_API_KEY ?? "").length > 0,
     apiKey: process.env.LANGSMITH_API_KEY ?? null,
     endpoint: optional("LANGSMITH_ENDPOINT", "https://api.smith.langchain.com"),
-    project: optional("LANGSMITH_PROJECT", "customer-service-chatbot"),
+    project: optional("LANGSMITH_PROJECT", "resolve-ai"),
   },
   // Back-compat alias — older call sites read `env.aiConfidenceThreshold`.
   aiConfidenceThreshold: Number(required("AI_CONFIDENCE_THRESHOLD")),

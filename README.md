@@ -1,4 +1,4 @@
-# Customer Service Chatbot
+# ResolveAI
 
 A **multi-tenant AI customer-support SaaS**. Any business can embed a chat widget on its
 website, backed by an AI agent grounded in that organization's own knowledge base, and
@@ -56,7 +56,7 @@ pnpm dev                  # run all 4 apps via Turborepo
 ```
 
 Then open the dashboard at [http://localhost:3000](http://localhost:3000) and register an
-account through the sign-up flow — or skip straight to `owner@acme.test` /
+account through the sign-up flow — or skip straight to `owner@example.test` /
 `Test1234!` if you ran `db:seed`. See
 [RUNBOOK §5.1](RUNBOOK.md#51-seed-manual-qa-accounts-optional) for the full
 account list and caveats.

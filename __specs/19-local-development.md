@@ -227,8 +227,8 @@ docker compose -f docker-compose.full.yml up --build
 
 ```bash
 # 1. Clone
-git clone git@github.com:org/customer-service-chatbot.git
-cd customer-service-chatbot
+git clone git@github.com:org/resolve-ai.git
+cd resolve-ai
 
 # 2. Pin Node version
 nvm install              # reads .nvmrc
@@ -297,12 +297,12 @@ stays seed-free, and production deploys only run migrations.
 
 It upserts (idempotently, resetting the seeded passwords on every run):
 
-- **Acme Support Co** — an org on the **business** plan with an `active`
+- **Example Support Co** — an org on the **business** plan with an `active`
   `Subscription` and `plan` mirrored onto the Organization, holding one
-  credentials account per membership role: `owner@acme.test`, `admin@acme.test`,
-  `agent@acme.test`, `viewer@acme.test`.
+  credentials account per membership role: `owner@example.test`, `admin@example.test`,
+  `agent@example.test`, `viewer@example.test`.
 - **Platform HQ** — a second org, also on the business plan, owned by
-  `platformadmin@acme.test` (`role: platform_admin`). The extra org is
+  `platformadmin@example.test` (`role: platform_admin`). The extra org is
   deliberate: the admin app only checks the platform role, but a JWT with no
   `organizationId` 403s on every `/app` route, so the account would be unusable
   in the web app without it. It is subscribed because `apps/web`'s `/app` layout

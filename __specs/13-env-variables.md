@@ -154,7 +154,7 @@ flag in a deployment environment cannot switch tracing on by accident.
 | `LANGSMITH_TRACING` | — | `false` | Master switch. Only honoured alongside an API key. |
 | `LANGSMITH_API_KEY` | — | — | LangSmith API key. Absent ⇒ tracing stays off regardless of the flag. |
 | `LANGSMITH_ENDPOINT` | — | `https://api.smith.langchain.com` | LangSmith API endpoint (self-hosted installs override this) |
-| `LANGSMITH_PROJECT` | — | `customer-service-chatbot` | Project traces are grouped under |
+| `LANGSMITH_PROJECT` | — | `resolve-ai` | Project traces are grouped under |
 
 ---
 
@@ -403,8 +403,8 @@ Set per-environment in the Coolify UI (encrypted at rest). Most are the same as 
 | `LOG_SHIPPER_TOKEN` | — | Auth token for Better Stack / Loki log shipping |
 
 > Per-environment overrides (full matrix in §"Environment Differences" below):
-> - **Dev**: `IMAGE_TAG=dev`, sandbox third-party keys, MailHog SMTP, `*.dev.customer-service-chatbot.app` URLs
-> - **Staging**: `IMAGE_TAG=staging`, sandbox third-party keys, Mailtrap SMTP, `*.staging.customer-service-chatbot.app` URLs
+> - **Dev**: `IMAGE_TAG=dev`, sandbox third-party keys, MailHog SMTP, `*.dev.resolve-ai.app` URLs
+> - **Staging**: `IMAGE_TAG=staging`, sandbox third-party keys, Mailtrap SMTP, `*.staging.resolve-ai.app` URLs
 > - **Production**: `IMAGE_TAG=<git-sha>` (immutable), production keys, real SMTP provider, `MONGODB_URI` points at MongoDB Atlas (`mongodb+srv://...`), real AWS/R2 for `STORAGE_PROVIDER=s3`
 
 ---
@@ -432,12 +432,12 @@ Four environments. `local` is your laptop; `dev` / `staging` / `production` are 
 | Variable | Local | Dev | Staging | Production |
 |----------|-------|-----|---------|------------|
 | `NODE_ENV` | `development` | `development` | `staging` | `production` |
-| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | `https://dev.customer-service-chatbot.app,https://widget.dev.customer-service-chatbot.app` | `https://staging.customer-service-chatbot.app,https://widget.staging.customer-service-chatbot.app` | `https://app.customer-service-chatbot.app,https://widget.customer-service-chatbot.app` |
+| `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001` | `https://dev.resolve-ai.app,https://widget.dev.resolve-ai.app` | `https://staging.resolve-ai.app,https://widget.staging.resolve-ai.app` | `https://app.resolve-ai.app,https://widget.resolve-ai.app` |
 | `STORAGE_PROVIDER` | `local` | `s3` (MinIO) | `s3` (MinIO) | `s3` (AWS / R2) |
 | `PADDLE_ENVIRONMENT` | `sandbox` | `sandbox` | `sandbox` | `production` |
 | `LOG_LEVEL` | `debug` | `debug` | `info` | `info` |
 | `SMTP_HOST` | MailHog (`mailhog:1025`) | MailHog | Mailtrap | SES / Resend / Postmark |
-| URLs (`*_URL`) | `localhost:*` | `*.dev.customer-service-chatbot.app` | `*.staging.customer-service-chatbot.app` | `app.customer-service-chatbot.app` / `widget.customer-service-chatbot.app` |
+| URLs (`*_URL`) | `localhost:*` | `*.dev.resolve-ai.app` | `*.staging.resolve-ai.app` | `app.resolve-ai.app` / `widget.resolve-ai.app` |
 | `MONGODB_URI` | Local Docker `mongo:27017` | Coolify-managed Mongo | Coolify-managed Mongo | MongoDB Atlas |
 | `PINECONE_INDEX` | `csb-local` | `csb-dev` | `csb-staging` | `csb-prod` |
 | `SENTRY_ENVIRONMENT` | (unset) | `dev` | `staging` | `production` |

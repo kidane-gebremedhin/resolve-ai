@@ -283,7 +283,7 @@ Build the operator inbox, conversation thread view, message enhancement, and ful
   - [ ] Query org namespace
   - [ ] Return formatted results to agent
 - [ ] **Widget settings UI** (`/app/widget`):
-  - [ ] Layout must match the template at `/app/widget` in `customer-service-chatbot-template` (Widget Studio page with controls panel + live preview)
+  - [ ] Layout must match the template at `/app/widget` in `resolve-ai-template` (Widget Studio page with controls panel + live preview)
   - [ ] Three-tab control panel: Design (accent color, corner radius, position, avatar style), Content (title, subtitle, agent name, placeholder, welcome message), Behavior (launcher label, branding toggle, embed snippet)
   - [ ] Live preview panel: browser chrome mockup with embedded widget preview, desktop/mobile toggle
   - [ ] Branding customization (colors, avatar, title, subtitle)

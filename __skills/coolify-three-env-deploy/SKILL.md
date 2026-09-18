@@ -14,7 +14,7 @@ description: Provision and configure three Coolify projects (dev, staging, produ
 
 - VPS provisioned (Hetzner / DigitalOcean / Linode), ≥4 vCPU / 8 GB RAM / 80 GB disk for the Coolify control plane; separate nodes for staging + production
 - Coolify v4 installed: `curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash`
-- Domain registered (e.g. `customer-service-chatbot.app`) with DNS managed somewhere you control
+- Domain registered (e.g. `resolve-ai.app`) with DNS managed somewhere you control
 - GHCR access token (read-only) added in Coolify → Sources → Container Registry
 - For wildcards: Cloudflare API token with DNS edit permission, added to Coolify for DNS-01 challenge
 
@@ -22,12 +22,12 @@ description: Provision and configure three Coolify projects (dev, staging, produ
 
 1. **Create three Coolify projects**: `csb-dev`, `csb-staging`, `csb-production` (Projects → + New).
 
-2. **DNS records** — see [`__specs/20-coolify-deployment.md`](../../__specs/20-coolify-deployment.md) §5 for the exact record list. Three apex/A records (`dev.customer-service-chatbot.app`, `staging.customer-service-chatbot.app`, `customer-service-chatbot.app`) pointing at each node, with CNAMEs for `widget.*`, `api.*`, `embed.*` per env.
+2. **DNS records** — see [`__specs/20-coolify-deployment.md`](../../__specs/20-coolify-deployment.md) §5 for the exact record list. Three apex/A records (`dev.resolve-ai.app`, `staging.resolve-ai.app`, `resolve-ai.app`) pointing at each node, with CNAMEs for `widget.*`, `api.*`, `embed.*` per env.
 
 3. **Compose files** — write three files under `coolify/`:
    - `coolify/docker-compose.staging.yml` — full body in spec §3.1
-   - `coolify/docker-compose.dev.yml` — staging with `dev.customer-service-chatbot.app` hosts, `IMAGE_TAG=dev`, `mem_limit: 512m`, `restart: on-failure:3`, healthcheck `interval: 60s`, named volume `mongo-data-dev` (spec §3.2)
-   - `coolify/docker-compose.production.yml` — staging with `customer-service-chatbot.app` hosts, `mongo` service **removed** (use Atlas), `IMAGE_TAG` interpolated from deploy webhook (git SHA), `api` with `deploy.replicas: 2` + Traefik rate-limit middleware, `restart: always` (spec §3.3)
+   - `coolify/docker-compose.dev.yml` — staging with `dev.resolve-ai.app` hosts, `IMAGE_TAG=dev`, `mem_limit: 512m`, `restart: on-failure:3`, healthcheck `interval: 60s`, named volume `mongo-data-dev` (spec §3.2)
+   - `coolify/docker-compose.production.yml` — staging with `resolve-ai.app` hosts, `mongo` service **removed** (use Atlas), `IMAGE_TAG` interpolated from deploy webhook (git SHA), `api` with `deploy.replicas: 2` + Traefik rate-limit middleware, `restart: always` (spec §3.3)
 
 4. **Environment variable groups** (Coolify UI per project) — populate from the dev/staging/production columns of [`__specs/20-coolify-deployment.md`](../../__specs/20-coolify-deployment.md) §4.1. Every secret must be **distinct across the three envs**.
 
@@ -50,18 +50,18 @@ description: Provision and configure three Coolify projects (dev, staging, produ
 ## Gotchas
 
 - **DNS must point at the node before deploy** — Let's Encrypt HTTP-01 challenge will fail otherwise. Wildcards (DNS-01) need a Cloudflare token in Coolify.
-- **NextAuth `NEXTAUTH_URL`** must match the exact public origin per env (`https://dev.customer-service-chatbot.app`, `https://staging.customer-service-chatbot.app`, `https://app.customer-service-chatbot.app`).
-- **CORS_ORIGINS** must include the widget host too (`https://widget.<env>.customer-service-chatbot.app`) — the iframe is cross-origin to the dashboard.
+- **NextAuth `NEXTAUTH_URL`** must match the exact public origin per env (`https://dev.resolve-ai.app`, `https://staging.resolve-ai.app`, `https://app.resolve-ai.app`).
+- **CORS_ORIGINS** must include the widget host too (`https://widget.<env>.resolve-ai.app`) — the iframe is cross-origin to the dashboard.
 - **Mongo password rotation** in prod (Atlas): update Atlas user → update `MONGODB_URI` in Coolify env → redeploy `api`. Don't forget the redeploy.
 - **Coolify scaling beyond 1 `api` replica** requires the Socket.io Redis adapter (see [`socketio-realtime`](../socketio-realtime/) — spec §08 already documents this).
 - **`IMAGE_TAG=latest` is forbidden** in production. Always git SHA. Mutable tags (`dev`/`staging`) are OK in their respective envs only.
 - **Don't share secrets across envs**. A leaked dev secret must not grant access to staging/prod (spec §20 §4.1 rule).
-- **Cloudflare Access** in front of `dev.customer-service-chatbot.app` (and optionally `staging.customer-service-chatbot.app`) keeps the unstable env from being publicly indexed — recommended.
+- **Cloudflare Access** in front of `dev.resolve-ai.app` (and optionally `staging.resolve-ai.app`) keeps the unstable env from being publicly indexed — recommended.
 
 ## Acceptance
 
 - [ ] Three Coolify projects exist; each has all 5–6 services healthy (`web`, `widget`, `embed`, `api`, `redis`, plus `mongo` in dev/staging)
-- [ ] `https://<env>.customer-service-chatbot.app` loads with a valid TLS cert in all three environments
+- [ ] `https://<env>.resolve-ai.app` loads with a valid TLS cert in all three environments
 - [ ] Pushing to `dev` auto-deploys within 10 min of CI start
 - [ ] Pushing to `staging` auto-deploys within 10 min of CI start
 - [ ] Pushing to `main` does NOT auto-deploy production — requires manual `deploy-production.yml` approval

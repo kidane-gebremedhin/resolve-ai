@@ -9,7 +9,7 @@ The project uses a **pnpm workspace + Turborepo** monorepo with four apps and th
 ## Directory Tree
 
 ```
-customer-service-chatbot/
+resolve-ai/
 │
 ├── apps/
 │   ├── web/                          # Next.js 15+ (App Router)
@@ -298,7 +298,7 @@ packages:
 
 ```json
 {
-  "name": "customer-service-chatbot",
+  "name": "resolve-ai",
   "private": true,
   "scripts": {
     "dev": "turbo dev",
@@ -430,7 +430,7 @@ Follow [17-template-asset-inventory.md](./17-template-asset-inventory.md) §7 (M
 Each app has its own `.env` file, with shared variables referenced from root:
 
 ```
-customer-service-chatbot/
+resolve-ai/
 ├── .env                    # Shared (DB URLs, API keys)
 ├── apps/web/.env.local     # NextAuth secrets, API URL
 ├── apps/widget/.env.local  # API URL, widget-specific

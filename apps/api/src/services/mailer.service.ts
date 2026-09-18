@@ -84,7 +84,7 @@ export async function sendMail(args: {
   html: string;
   text?: string;
   // Optional display name for the From header (e.g. the operator's brand), so a
-  // customer sees "Acme Support" rather than the bare platform sender address. The
+  // customer sees "Example Support" rather than the bare platform sender address. The
   // sending ADDRESS is always the configured SMTP address (we can't send as the
   // operator's domain) — only the friendly name changes.
   fromName?: string;

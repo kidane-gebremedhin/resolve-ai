@@ -1,6 +1,6 @@
 # Runbook
 
-Step-by-step instructions for setting up, running, and operating the Customer Service Chatbot monorepo (4 apps + shared packages, orchestrated by Turborepo + pnpm, with Docker-backed infrastructure).
+Step-by-step instructions for setting up, running, and operating the ResolveAI monorepo (4 apps + shared packages, orchestrated by Turborepo + pnpm, with Docker-backed infrastructure).
 
 ## 0. Apps
 
@@ -50,7 +50,7 @@ If `pnpm` is missing: `corepack enable && corepack prepare pnpm@9.15.0 --activat
 
 ```bash
 git clone <repo-url>
-cd customer-service-chatbot
+cd resolve-ai
 pnpm install
 ```
 
@@ -131,11 +131,11 @@ so the printed credentials are always the live ones):
 
 | Account | Platform role | Org role | Organization |
 |---------|---------------|----------|--------------|
-| `owner@acme.test` | `user` | `owner` | Acme Support Co (**business** plan) |
-| `admin@acme.test` | `user` | `admin` | Acme Support Co |
-| `agent@acme.test` | `user` | `agent` | Acme Support Co |
-| `viewer@acme.test` | `user` | `viewer` | Acme Support Co |
-| `platformadmin@acme.test` | `platform_admin` | `owner` | Platform HQ (**business** plan) |
+| `owner@example.test` | `user` | `owner` | Example Support Co (**business** plan) |
+| `admin@example.test` | `user` | `admin` | Example Support Co |
+| `agent@example.test` | `user` | `agent` | Example Support Co |
+| `viewer@example.test` | `user` | `viewer` | Example Support Co |
+| `platformadmin@example.test` | `platform_admin` | `owner` | Platform HQ (**business** plan) |
 
 Shared password: `Test1234!` (override with `--password=...`; it must satisfy the
 API's strength policy — ≥8 chars with lower, upper, number, and special).
@@ -161,7 +161,7 @@ Notes:
 - Use these accounts to exercise **role gating**: the dashboard hides write
   actions the caller's membership role can't perform (see
   [`apps/web/src/lib/permissions.ts`](apps/web/src/lib/permissions.ts)). Signed in
-  as `agent@acme.test` there is no "Add website" button; as `viewer@acme.test`
+  as `agent@example.test` there is no "Add website" button; as `viewer@example.test`
   the Inbox composer is replaced by a read-only notice.
 - The connection string comes from `MONGODB_URI` (env or `.env`), or pass
   `--uri=<url>` to target another database, e.g. a shared staging cluster:
@@ -593,7 +593,7 @@ Enable it by setting **both**:
 LANGSMITH_TRACING=true
 LANGSMITH_API_KEY=lsv2_pt_xxx
 # optional
-LANGSMITH_PROJECT=customer-service-chatbot
+LANGSMITH_PROJECT=resolve-ai
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 ```
 
