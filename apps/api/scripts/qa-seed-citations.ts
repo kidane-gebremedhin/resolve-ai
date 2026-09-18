@@ -12,7 +12,7 @@ import { Agent, ContactSession, Conversation, Message, Website } from "../src/mo
 
 async function main(): Promise<void> {
   await connectDb();
-  const website = await Website.findOne({ domain: /acme/ }).lean();
+  const website = await Website.findOne({ domain: /example/ }).lean();
   if (!website) throw new Error("seed the QA accounts first: pnpm --filter @csb/api db:seed");
   const agent = await Agent.findOne({ websiteId: website._id }).lean();
 

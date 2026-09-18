@@ -14,7 +14,7 @@ function WidgetEntry() {
   // The embed script forwards these as query params; the widget tolerates
   // missing values and falls back to a localhost-friendly default for `domain`
   // so visiting /?{nothing} during development still renders the boot screen.
-  const domain = params.get("domain") ?? "customer-service-chatbot.dev";
+  const domain = params.get("domain") ?? "resolve-ai.dev";
   const agentId = params.get("agentId") ?? undefined;
   const websiteId = params.get("websiteId") ?? undefined;
   const theme =

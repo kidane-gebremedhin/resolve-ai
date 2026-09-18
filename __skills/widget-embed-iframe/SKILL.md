@@ -85,7 +85,7 @@ Phase 2, after [`socketio-realtime`](../socketio-realtime/) and the widget publi
 - **Iframe sandbox flags** — `allow-same-origin` is required so localStorage works; without it, sessions reset on every load.
 - **Mobile keyboards** — virtual keyboards resize the viewport; use `100dvh` not `100vh` in widget styles.
 - **Multiple widgets per page** — rare but possible (test environments). Each `<script>` tag injects its own iframe with a unique DOM id.
-- **CSP on host page** — some customers will have strict CSP that blocks the embed. Document the required directives: `script-src https://embed.customer-service-chatbot.app`, `frame-src https://widget.customer-service-chatbot.app`.
+- **CSP on host page** — some customers will have strict CSP that blocks the embed. Document the required directives: `script-src https://embed.resolve-ai.app`, `frame-src https://widget.resolve-ai.app`.
 - **Per AGENTS.md**: Next 16's response-header API may differ — verify CSP header setup against `node_modules/next/dist/docs/`.
 
 ## Acceptance

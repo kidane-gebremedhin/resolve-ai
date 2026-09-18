@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 
 async function main(): Promise<void> {
   await connectDb();
-  const website = await Website.findOne({ domain: /acme/ }).lean();
+  const website = await Website.findOne({ domain: /example/ }).lean();
   if (!website) throw new Error("run pnpm --filter @csb/api db:seed first");
   const agent = await Agent.findOne({ websiteId: website._id }).lean();
 

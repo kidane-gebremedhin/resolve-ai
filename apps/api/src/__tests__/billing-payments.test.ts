@@ -53,7 +53,7 @@ function eventId(): string {
 }
 
 async function seedOrgWithSubscription(status = "active"): Promise<void> {
-  const org = await Organization.create({ name: "Acme", slug: `acme-${Date.now()}`, plan: "pro" });
+  const org = await Organization.create({ name: "Example", slug: `example-${Date.now()}`, plan: "pro" });
   orgId = String(org._id);
   // An owner has to exist for the dunning notice to have anywhere to go.
   const owner = await User.create({

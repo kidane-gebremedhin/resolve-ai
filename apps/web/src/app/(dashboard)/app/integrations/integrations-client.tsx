@@ -715,7 +715,7 @@ function OAuthAppModal({ provider, label, sandbox, onClose }: { provider: string
   async function save(connectAfter: boolean) {
     setError(null);
     if (!clientId.trim()) { setError("Client ID is required."); return; }
-    if (provider === "shopify" && !shop.trim()) { setError("Shop domain is required (e.g. acme.myshopify.com)."); return; }
+    if (provider === "shopify" && !shop.trim()) { setError("Shop domain is required (e.g. example.myshopify.com)."); return; }
     // A confidential OAuth app needs its secret to complete the token exchange. Require
     // it before connecting (unless one is already stored); updating the Client ID alone
     // ("Save Client ID") doesn't force it.
@@ -799,7 +799,7 @@ function OAuthAppModal({ provider, label, sandbox, onClose }: { provider: string
           {provider === "shopify" && (
             <label className="block text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
               Shop domain
-              <input className={fieldCls} value={shop} onChange={(e) => setShop(e.target.value)} placeholder="acme.myshopify.com" />
+              <input className={fieldCls} value={shop} onChange={(e) => setShop(e.target.value)} placeholder="example.myshopify.com" />
             </label>
           )}
           {defaultRedirectUri && (

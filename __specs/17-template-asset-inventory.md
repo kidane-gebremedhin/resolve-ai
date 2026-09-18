@@ -2,7 +2,7 @@
 
 ## Overview
 
-The current `customer-service-chatbot` directory contains a **Next.js 16 marketing + dashboard template** that will be split into the monorepo defined in [02-monorepo-structure.md](./02-monorepo-structure.md). This document enumerates every existing route, layout, shared component, and public asset, and prescribes its destination in the target structure.
+The current `resolve-ai` directory contains a **Next.js 16 marketing + dashboard template** that will be split into the monorepo defined in [02-monorepo-structure.md](./02-monorepo-structure.md). This document enumerates every existing route, layout, shared component, and public asset, and prescribes its destination in the target structure.
 
 > **Rule**: We do **not** rewrite the template. We move the files, rename the navigation entries, delete `Live chat`, and wire the existing pages to the API defined in [07-api-specification.md](./07-api-specification.md). Visual layout, copy tone, and styling must be preserved.
 
@@ -209,7 +209,7 @@ The template ships **22 MB of gradient PNGs** under `public/images/gradient/` an
 |-------|---------|
 | `public/images/avatar/ai-default.png` (new) | Widget AI message bubble |
 | `public/images/avatar/operator-default.png` (new) | Widget operator message bubble |
-| `public/images/widget/branding-mark.svg` (new) | "Powered by customer-service-chatbot" footer in widget (toggleable per widget settings) |
+| `public/images/widget/branding-mark.svg` (new) | "Powered by resolve-ai" footer in widget (toggleable per widget settings) |
 
 These are net-new assets needed beyond the template; cut from existing avatar imagery or new design pass.
 

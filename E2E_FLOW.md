@@ -4,17 +4,6 @@ How a visitor's message becomes a knowledge-grounded answer, as the code stands
 today. Knowledge is keyed by **(organizationId, agentId)**: each agent maps to one
 website and only ever sees its own knowledge base.
 
-> **Rewritten after P2–P11.** The previous version of this document described a
-> dense-only retrieval path feeding a hand-rolled tool loop in
-> `services/ai/agent.service.ts`. That file no longer exists, the loop is a
-> LangGraph graph, retrieval is hybrid and fused, and passages reach the model as
-> a numbered, citation-validated context block. Every claim below was checked
-> against the working tree. See `__specs/37-rag-pipeline-audit.md` for the
-> stage-by-stage audit and the measured numbers.
-
-**Dashed boxes in the diagrams are documented somewhere in `__specs/` but are not
-implemented.**
-
 ---
 
 ## 1. Ingestion

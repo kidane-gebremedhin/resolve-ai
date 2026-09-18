@@ -38,7 +38,7 @@
 | 7 | Wire NextAuth (Google + credentials), session providers, dashboard/admin guards | `apps/web/src/lib/auth.ts`, `apps/web/src/app/api/auth/[...nextauth]/route.ts`, `apps/web/src/app/(dashboard)/layout.tsx`, `apps/web/src/app/(admin)/layout.tsx`, `apps/web/src/components/auth/SocialAuth.tsx` (wire `signIn('google')`), `AppShell` (replace mock workspaces + UserMenu with session data) | `nextauth-google-credentials` | Google sign-in lands on `/app` with session; unauth `/app/inbox` → `/login`; non-admin `/admin` → 404 |
 | 8 | Author 4 Dockerfiles + `.dockerignore` + `apps/web/app/api/health/route.ts` + `apps/embed/nginx.conf` | `apps/web/Dockerfile`, `apps/widget/Dockerfile`, `apps/embed/Dockerfile`, `apps/api/Dockerfile`, `apps/embed/nginx.conf`, `apps/web/src/app/api/health/route.ts`, `apps/api/src/index.ts` (stub `/health`) | `docker-multi-stage-apps` | All 4 `docker build` commands succeed; each image < 250 MB |
 | 9 | Wire GitHub Actions (`ci.yml`, `release-images.yml`, `deploy-production.yml`); add branch protection | `.github/workflows/{ci,release-images,deploy-production}.yml`, repo Settings → Branches | `github-actions-monorepo` | First PR to `dev` runs all 6 CI jobs; merge produces 4 GHCR images |
-| 10 | Stand up `csb-dev` Coolify project; DNS for `*.dev.customer-service-chatbot.app`; TLS | `coolify/docker-compose.dev.yml` (committed for reference), Coolify UI, DNS panel | `coolify-three-env-deploy` | `https://dev.customer-service-chatbot.app` loads with TLS; healthchecks pass on all 5 services |
+| 10 | Stand up `csb-dev` Coolify project; DNS for `*.dev.resolve-ai.app`; TLS | `coolify/docker-compose.dev.yml` (committed for reference), Coolify UI, DNS panel | `coolify-three-env-deploy` | `https://dev.resolve-ai.app` loads with TLS; healthchecks pass on all 5 services |
 | 11 | Author `.mcp.json` at repo root with chrome-devtools, mongo, paddle, pinecone, github, filesystem, docker, context7 (per spec §21) | `.mcp.json` | `mcp-builder` (reference) | `claude .` loads MCPs without error; `mongo` MCP lists local collections |
 | 12 | Bootstrap `docker-compose.yml` + `scripts/mongo-init.js` + add `pnpm dev:infra` script | `docker-compose.yml`, `docker-compose.full.yml`, `scripts/mongo-init.js` | (no skill — direct copy from spec §19 §2+§3) | `pnpm dev:infra` starts mongo + redis + mailhog + minio with healthchecks green |
 
@@ -50,7 +50,7 @@
 - [ ] Visit `http://localhost:3000/app/chat` — returns 404
 - [ ] `grep -rE "Live chat|/app/chat" apps/web/` → zero hits
 - [ ] `pnpm turbo run lint type-check build` → all green
-- [ ] Visit `https://dev.customer-service-chatbot.app` (after Coolify deploy) — same rendering as local
+- [ ] Visit `https://dev.resolve-ai.app` (after Coolify deploy) — same rendering as local
 - [ ] Use [`webapp-testing`](../__skills/webapp-testing/) (Playwright) to script: open homepage, click "Sign in", confirm sign-in form appears
 - [ ] `chrome-devtools-mcp` reports zero console errors on `/`, `/login`, `/app` (after sign-in)
 - [ ] `mongo-mcp` connects to local Mongo (no real schemas yet — Phase 1)

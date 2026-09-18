@@ -122,7 +122,7 @@ Source: `src/components/layouts/app-shell.tsx` `nav` array. The current template
 
 ```
 ┌─────────────────────────┐
-│  customer-service-chatbot  [ADMIN]          │
+│  resolve-ai  [ADMIN]          │
 ├─────────────────────────┤
 │  📊 Dashboard           │ → /admin
 │  👥 Users               │ → /admin/users
@@ -152,7 +152,7 @@ Source: `src/components/layouts/app-shell.tsx` `nav` array. The current template
 
 ## Shared Components (from existing template)
 
-Components to **reuse** from the current `customer-service-chatbot` template. Full inventory in [17-template-asset-inventory.md](./17-template-asset-inventory.md) §4.
+Components to **reuse** from the current `resolve-ai` template. Full inventory in [17-template-asset-inventory.md](./17-template-asset-inventory.md) §4.
 
 | Component | Current Location | Target Location | Reuse? |
 |-----------|------------------|-----------------|--------|

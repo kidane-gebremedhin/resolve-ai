@@ -453,8 +453,8 @@ type Fixture = {
 };
 
 async function makeTurnFixture(): Promise<Fixture> {
-  const org = await Organization.create({ name: "Acme", slug: `acme-${OID()}` });
-  const site = await Website.create({ organizationId: org._id, name: "Acme", domain: `${OID()}.test` });
+  const org = await Organization.create({ name: "Example", slug: `example-${OID()}` });
+  const site = await Website.create({ organizationId: org._id, name: "Example", domain: `${OID()}.test` });
   const agent = await Agent.create({
     organizationId: org._id,
     websiteId: site._id,

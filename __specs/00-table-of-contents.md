@@ -1,6 +1,6 @@
 # Implementation Master Plan — Table of Contents
 
-> **Product**: Customer Service Chatbot — Multi-tenant AI Customer Support SaaS
+> **Product**: ResolveAI — Multi-tenant AI Customer Support SaaS
 > **Date**: 2026-05-22
 > **Status**: Draft v1.0
 

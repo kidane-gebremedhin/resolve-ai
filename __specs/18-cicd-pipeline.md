@@ -479,16 +479,16 @@ pnpm turbo run type-check --filter='[HEAD]'
 
 | Variable | Value |
 |----------|-------|
-| `TURBO_TEAM` | `team-customer-service-chatbot` (or your team slug) |
-| `DEV_WEB_URL` | `https://dev.customer-service-chatbot.app` |
-| `DEV_WIDGET_URL` | `https://widget.dev.customer-service-chatbot.app` |
-| `DEV_API_URL` | `https://api.dev.customer-service-chatbot.app` |
-| `STAGING_WEB_URL` | `https://staging.customer-service-chatbot.app` |
-| `STAGING_WIDGET_URL` | `https://widget.staging.customer-service-chatbot.app` |
-| `STAGING_API_URL` | `https://api.staging.customer-service-chatbot.app` |
-| `PROD_WEB_URL` | `https://app.customer-service-chatbot.app` |
-| `PROD_WIDGET_URL` | `https://widget.customer-service-chatbot.app` |
-| `PROD_API_URL` | `https://api.customer-service-chatbot.app` |
+| `TURBO_TEAM` | `team-resolve-ai` (or your team slug) |
+| `DEV_WEB_URL` | `https://dev.resolve-ai.app` |
+| `DEV_WIDGET_URL` | `https://widget.dev.resolve-ai.app` |
+| `DEV_API_URL` | `https://api.dev.resolve-ai.app` |
+| `STAGING_WEB_URL` | `https://staging.resolve-ai.app` |
+| `STAGING_WIDGET_URL` | `https://widget.staging.resolve-ai.app` |
+| `STAGING_API_URL` | `https://api.staging.resolve-ai.app` |
+| `PROD_WEB_URL` | `https://app.resolve-ai.app` |
+| `PROD_WIDGET_URL` | `https://widget.resolve-ai.app` |
+| `PROD_API_URL` | `https://api.resolve-ai.app` |
 
 ### 6.3 GitHub Environments
 

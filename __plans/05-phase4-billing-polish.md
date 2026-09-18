@@ -33,8 +33,8 @@ Paddle billing is integrated end-to-end: checkout → webhook → subscription r
 | 6 | Analytics routes + `/app/analytics` wired (overview cards, conversation-over-time chart, resolution rate, top KB queries) | `apps/api/src/routes/analytics.routes.ts`, `apps/web/src/app/(dashboard)/app/analytics/page.tsx` | (extends `express-mongoose-scaffold`) | Spec §16 §3.11 + §2.4 |
 | 7 | Audio notifications + TTS options | `apps/widget/src/lib/audio.ts`, `apps/web/src/lib/audio.ts`, user preferences in `/app/settings`, `apps/api/src/services/ai/tts.service.ts` (provider-pluggable: OpenAI TTS, ElevenLabs, browser SpeechSynthesis) | (no skill — direct implementation) | Spec §10 Phase 4 audio acceptance |
 | 8 | Session cleanup cron job (backup for TTL index) | `apps/api/src/jobs/session-cleanup.job.ts` | (extends `express-mongoose-scaffold`) | Job runs in dev; expired sessions removed |
-| 9 | Stand up `csb-production` Coolify project; production DNS for `app.customer-service-chatbot.app`, `widget.customer-service-chatbot.app`, `api.customer-service-chatbot.app`, `embed.customer-service-chatbot.app`; TLS; Atlas connection string; backups; observability sinks | `coolify/docker-compose.production.yml` (committed), Coolify UI, DNS panel, MongoDB Atlas, Sentry/Grafana | `coolify-three-env-deploy` | All 4 services healthy in prod; backups configured; spec §20 §11 checklist green |
-| 10 | Wire `deploy-production.yml` manual approval flow; smoke-deploy a no-op commit | `.github/workflows/deploy-production.yml` already exists from Phase 0; just exercise it | `github-actions-monorepo` (existing) | Deploy completes; `https://app.customer-service-chatbot.app/health` returns 200; rollback tested |
+| 9 | Stand up `csb-production` Coolify project; production DNS for `app.resolve-ai.app`, `widget.resolve-ai.app`, `api.resolve-ai.app`, `embed.resolve-ai.app`; TLS; Atlas connection string; backups; observability sinks | `coolify/docker-compose.production.yml` (committed), Coolify UI, DNS panel, MongoDB Atlas, Sentry/Grafana | `coolify-three-env-deploy` | All 4 services healthy in prod; backups configured; spec §20 §11 checklist green |
+| 10 | Wire `deploy-production.yml` manual approval flow; smoke-deploy a no-op commit | `.github/workflows/deploy-production.yml` already exists from Phase 0; just exercise it | `github-actions-monorepo` (existing) | Deploy completes; `https://app.resolve-ai.app/health` returns 200; rollback tested |
 | 11 | Landing page polish (final copy pass, demo widget embedded on `/`, SEO meta tags, OG image) | `apps/web/src/app/(marketing)/page.tsx`, `apps/web/src/components/marketing/sections/Hero.tsx` (add demo widget embed) | (no skill) | Spec §10 Phase 4 landing acceptance |
 | 12 | Final security review pass — run [`/security-review`](../__specs/16-production-readiness-audit.md) §7 against branch | spec §16 §7 | (no skill; mandatory checklist) | All boxes checked |
 
@@ -52,7 +52,7 @@ Paddle billing is integrated end-to-end: checkout → webhook → subscription r
 - [ ] Analytics `/app/analytics`: numbers match a manual `mongo-mcp` aggregation
 - [ ] Audio: new message sound plays in dashboard inbox + widget composer; can be muted in settings
 - [ ] TTS: AI reply read aloud in widget when enabled
-- [ ] Production: `https://app.customer-service-chatbot.app` loads with TLS, sign in with Google works, can start a widget conversation
+- [ ] Production: `https://app.resolve-ai.app` loads with TLS, sign in with Google works, can start a widget conversation
 - [ ] `paddle-mcp`: production subscription matches `mongo-mcp` `Subscription` rows
 - [ ] [`__specs/16-production-readiness-audit.md`](../__specs/16-production-readiness-audit.md) **entire** audit green (all sections)
 - [ ] Backup restore drill: spin up a copy of staging from yesterday's Atlas snapshot, smoke-test sign-in + chat
