@@ -57,12 +57,6 @@ uploads/
 # apps/widget/scripts/copy-flags.mjs — generated, not authored.
 apps/widget/public/flags/
 
-# NOTE: CHANGELOG_*.md, QA_TEST_RESULTS_*.md and IMPLEMENTATION_AUDIT.md were
-# ignored here. Being untracked, they did not survive a clean — CHANGELOG_1
-# through 3 and every QA_TEST_RESULTS file were lost that way. A record of why a
-# decision was made is worth more than the diff that made it, so they are tracked
-# now. Re-ignore them only if you also decide the history is disposable.
-
 .claude
 
 .envrc
@@ -77,6 +71,8 @@ test-data.md
 
 .playwright-mcp
 
-TODO_PROMPTS.md
-TODO.txt
-
+#TODO_PROMPTS.md
+#TODO*
+#CHANGELOG_*.md
+#IMPLEMENTATION_AUDIT.md
+#QA_TEST_RESULTS_*.md
