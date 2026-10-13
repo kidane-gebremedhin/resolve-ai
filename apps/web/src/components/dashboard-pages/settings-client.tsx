@@ -387,11 +387,19 @@ function TeamTab({ initialMembers }: { initialMembers: Member[] }) {
     setBusy(true);
     setError(null);
     try {
-      await clientApi.post("/orgs/current/members/invite", { email, role: inviteRole });
+      const sent = await clientApi.post<{ emailSent?: boolean }>("/orgs/current/members/invite", {
+        email,
+        role: inviteRole,
+      });
       // Refetch to get the canonical list (the invite response is partial).
       const next = await clientApi.get<Member[]>("/orgs/current/members");
       setMembers(next);
       setInviteEmail("");
+      // The invitee joins through the emailed link, so a failed send means
+      // they have no way in until it is re-sent.
+      if (sent?.emailSent === false) {
+        setError("The invite was saved, but the email could not be sent. Check the SMTP settings and invite again.");
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
     } finally {

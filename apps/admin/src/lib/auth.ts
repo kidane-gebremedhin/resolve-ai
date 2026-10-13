@@ -160,6 +160,23 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
+  // Signing out also revokes the API session. Without this the 7-day refresh
+  // token stayed valid after "Sign out", so a copied cookie kept working.
+  events: {
+    async signOut(message) {
+      const token = "token" in message ? (message.token as Record<string, unknown> | null) : null;
+      const accessToken = token?.accessToken as string | undefined;
+      if (!accessToken) return;
+      try {
+        await fetch(`${apiUrl}/auth/logout`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${accessToken}` },
+        });
+      } catch {
+        // Best effort: the local session is cleared either way.
+      }
+    },
+  },
   callbacks: {
     async signIn({ user, account }) {
       // For credentials: authorize() already set user.role — reject here as a

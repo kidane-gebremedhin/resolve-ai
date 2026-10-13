@@ -15,11 +15,17 @@ export type ScoreBucket = { from: number; to: number; count: number };
 export function ScoreDistribution({
   buckets,
   threshold,
+  belowThreshold,
+  total,
   height = 200,
   width = 720,
 }: {
   buckets: ScoreBucket[];
   threshold: number;
+  /** Turns scoring below the floor, counted by the API against exact scores. */
+  belowThreshold: number;
+  /** Turns with a score at all, from the same aggregation. */
+  total: number;
   height?: number;
   width?: number;
 }) {
@@ -32,96 +38,104 @@ export function ScoreDistribution({
   // line lands where the score actually is even when a bucket is empty.
   const xFor = (score: number) => padding.left + Math.min(Math.max(score, 0), 1) * innerW;
   const thresholdX = xFor(threshold);
-  const cut = buckets.filter((b) => b.to <= threshold).reduce((s, b) => s + b.count, 0);
-  const total = buckets.reduce((s, b) => s + b.count, 0);
+  // Both counts arrive from the API. Summing whole buckets here would be off by
+  // a bucket's share whenever the floor lands mid-bucket.
+  const cut = belowThreshold;
 
   return (
     <div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        height={height}
-        preserveAspectRatio="none"
-        role="img"
-        aria-label={`Score distribution with the retrieval floor at ${threshold}`}
-      >
-        {[0.25, 0.5, 0.75, 1].map((g) => {
-          const y = padding.top + innerH * (1 - g);
-          return (
-            <line
-              key={g}
-              x1={padding.left}
-              x2={padding.left + innerW}
-              y1={y}
-              y2={y}
-              stroke="currentColor"
-              strokeOpacity={0.08}
-              strokeDasharray={g === 1 ? undefined : "2 3"}
-            />
-          );
-        })}
-
-        <text x={padding.left - 4} y={padding.top + 8} fontSize={10} textAnchor="end" fill="currentColor" opacity={0.55}>
-          {max.toLocaleString()}
-        </text>
-        <text x={padding.left - 4} y={padding.top + innerH} fontSize={10} textAnchor="end" fill="currentColor" opacity={0.55}>
-          0
-        </text>
-
-        {buckets.map((b) => {
-          const x = xFor(b.from);
-          const w = Math.max(1, xFor(b.to) - x - 1);
-          const h = (b.count / max) * innerH;
-          const belowFloor = b.to <= threshold;
-          return (
-            <rect
-              key={b.from}
-              x={x.toFixed(2)}
-              y={(padding.top + innerH - h).toFixed(2)}
-              width={w.toFixed(2)}
-              height={Math.max(0, h).toFixed(2)}
-              // Below the floor is drawn muted: those turns only reached the
-              // prompt because widen-on-empty dropped the floor.
-              className={belowFloor ? "fill-muted-foreground/40" : "fill-primary"}
-              rx={1}
-            >
-              <title>{`${b.from.toFixed(2)}-${b.to.toFixed(2)}: ${b.count} turns`}</title>
-            </rect>
-          );
-        })}
-
-        <line
-          x1={thresholdX}
-          x2={thresholdX}
-          y1={padding.top}
-          y2={padding.top + innerH}
-          className="stroke-destructive"
-          strokeWidth={1.5}
-          strokeDasharray="4 3"
-        />
-        <text
-          x={Math.min(thresholdX + 5, width - padding.right - 4)}
-          y={padding.top + 10}
-          fontSize={10}
-          className="fill-destructive"
-        >
-          floor {threshold}
-        </text>
-
-        {[0, 0.25, 0.5, 0.75, 1].map((s) => (
-          <text
-            key={s}
-            x={xFor(s).toFixed(2)}
-            y={height - 8}
-            fontSize={10}
-            textAnchor="middle"
-            fill="currentColor"
-            opacity={0.55}
+      {/* Only the chart scrolls sideways on a phone. The caption below sits
+          outside the min-width box so it wraps at the panel's width instead
+          of being cut off mid-sentence. */}
+      <div className="overflow-x-auto">
+        <div className="min-w-[420px]">
+          <svg
+            viewBox={`0 0 ${width} ${height}`}
+            width="100%"
+            height={height}
+            preserveAspectRatio="none"
+            role="img"
+            aria-label={`Score distribution with the retrieval floor at ${threshold}`}
           >
-            {s.toFixed(2)}
-          </text>
-        ))}
-      </svg>
+            {[0.25, 0.5, 0.75, 1].map((g) => {
+              const y = padding.top + innerH * (1 - g);
+              return (
+                <line
+                  key={g}
+                  x1={padding.left}
+                  x2={padding.left + innerW}
+                  y1={y}
+                  y2={y}
+                  stroke="currentColor"
+                  strokeOpacity={0.08}
+                  strokeDasharray={g === 1 ? undefined : "2 3"}
+                />
+              );
+            })}
+
+            <text x={padding.left - 4} y={padding.top + 8} fontSize={10} textAnchor="end" fill="currentColor" opacity={0.55}>
+              {max.toLocaleString()}
+            </text>
+            <text x={padding.left - 4} y={padding.top + innerH} fontSize={10} textAnchor="end" fill="currentColor" opacity={0.55}>
+              0
+            </text>
+
+            {buckets.map((b) => {
+              const x = xFor(b.from);
+              const w = Math.max(1, xFor(b.to) - x - 1);
+              const h = (b.count / max) * innerH;
+              const belowFloor = b.to <= threshold;
+              return (
+                <rect
+                  key={b.from}
+                  x={x.toFixed(2)}
+                  y={(padding.top + innerH - h).toFixed(2)}
+                  width={w.toFixed(2)}
+                  height={Math.max(0, h).toFixed(2)}
+                  // Below the floor is drawn muted: those turns only reached the
+                  // prompt because widen-on-empty dropped the floor.
+                  className={belowFloor ? "fill-muted-foreground/40" : "fill-primary"}
+                  rx={1}
+                >
+                  <title>{`${b.from.toFixed(2)}-${b.to.toFixed(2)}: ${b.count} turns`}</title>
+                </rect>
+              );
+            })}
+
+            <line
+              x1={thresholdX}
+              x2={thresholdX}
+              y1={padding.top}
+              y2={padding.top + innerH}
+              className="stroke-destructive"
+              strokeWidth={1.5}
+              strokeDasharray="4 3"
+            />
+            <text
+              x={Math.min(thresholdX + 5, width - padding.right - 4)}
+              y={padding.top + 10}
+              fontSize={10}
+              className="fill-destructive"
+            >
+              floor {threshold}
+            </text>
+
+            {[0, 0.25, 0.5, 0.75, 1].map((s) => (
+              <text
+                key={s}
+                x={xFor(s).toFixed(2)}
+                y={height - 8}
+                fontSize={10}
+                textAnchor="middle"
+                fill="currentColor"
+                opacity={0.55}
+              >
+                {s.toFixed(2)}
+              </text>
+            ))}
+          </svg>
+        </div>
+      </div>
       <p className="mt-2 text-[11px] text-muted-foreground">
         Best score per turn, bucketed. The dashed line is the live{" "}
         <code className="font-mono">AI_KB_SEARCH_MIN_SCORE</code> ({threshold}).{" "}

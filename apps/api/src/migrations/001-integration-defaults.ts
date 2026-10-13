@@ -2,8 +2,8 @@ import { Connection, ToolDefinition } from "../models/index.js";
 import { logger } from "../config/logger.js";
 import type { Migration } from "./types.js";
 
-// Keep in sync with dispatcher.ts OTP_DEFAULT_ON_TOOLKEYS / integrations.routes.ts
-// OTP_DEFAULT_ON_KEYS.
+// The key list as of this migration. Later additions to the OTP default
+// (get_subscription) are backfilled by their own migration (004).
 const OTP_DEFAULT_ON_KEYS = [
   "upgrade_subscription",
   "downgrade_subscription",

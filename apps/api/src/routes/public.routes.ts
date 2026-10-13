@@ -1,6 +1,7 @@
 // Public, unauthenticated platform endpoints. Only non-sensitive, cosmetic data.
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import { z } from "zod";
 import { PlatformSetting, Agent, ContactMessage } from "../models/index.js";
 import { validateBody } from "../middleware/validation.middleware.js";
@@ -47,6 +48,7 @@ const contactSchema = z.object({
 });
 
 const contactLimiter = rateLimit({
+  store: new MongoRateStore("public:contact"),
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 5, // 5 submissions per IP per hour
   standardHeaders: true,

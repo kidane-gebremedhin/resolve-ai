@@ -60,7 +60,9 @@ function webhookToolDefaultDescription(key: string): string {
 // tools start with email-OTP identity verification ON — a self-asserted contact email
 // alone isn't proof of account ownership. Operators can turn it off per tool in the
 // Guardrails editor (stored as an explicit false, which the dispatcher honours).
+// Keep in sync with dispatcher.ts OTP_DEFAULT_ON_TOOLKEYS.
 const OTP_DEFAULT_ON_KEYS = new Set([
+  "get_subscription",
   "upgrade_subscription", "downgrade_subscription", "cancel_subscription", "issue_refund", "refund_payment",
 ]);
 function seededGuardrails(key: string): Record<string, unknown> {

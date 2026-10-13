@@ -772,19 +772,37 @@ Flow:
    a single `text` field labelled "Enter the 6-digit code we just sent to your
    email."
 5. The API sends the OTP email via SMTP (`mailer.service.ts`, same pattern as
-   invite emails). OTP: 6-digit, 10-minute TTL, stored in Redis/memory keyed by
-   `otp:<otpToken>:<hash>`.
-6. Customer submits the form. The API validates OTP → marks the session as
-   `identityVerified: true` for 15 minutes (`ContactSession.identityVerifiedUntil`).
-7. AI re-calls the tool. Dispatcher sees `identityVerifiedUntil > now` → proceeds.
+   invite emails). OTP: 6-digit, `OTP_EXPIRY_SECONDS` TTL, stored in MongoDB
+   (`OtpChallenge`: SHA-256 of the code, SHA-256 of the session token, the email it
+   was sent to, an attempt counter, TTL index). Shared by every API replica.
+6. Customer submits the code (`POST /widget/verify-otp`, rate limited per IP and per
+   session). Each check spends one attempt atomically before comparing (constant
+   time); after 5 wrong guesses the code is burned. On success the session gets
+   `identityVerifiedUntil` (15 minutes) and `identityVerifiedEmail` (the exact address
+   the code went to), but only if the session's email is still that address.
+7. AI re-calls the tool. The dispatcher proceeds only if the verification is live
+   AND `identityVerifiedEmail` equals the session's current email.
 
-**Scope**: OTP required for `refund_payment`, `upgrade_subscription`,
-`downgrade_subscription`, `cancel_subscription`. Not required for `book_meeting`
-or `create_support_ticket` (lower risk).
+**Identity binding (pre-release hardening).** For account-scoped tools
+(`book_meeting`, `get_subscription`, `upgrade_subscription`, `downgrade_subscription`,
+`cancel_subscription`) the dispatcher always overwrites `args.email` with the session's
+email (the verified one when OTP applies) and drops `contactEmail`. A valid-looking email
+in the model's or form's arguments is never trusted: that used to let a visitor verify
+their own inbox and then act on someone else's subscription. For refunds (`issue_refund`,
+`refund_payment`) it sets `email` and `customerEmail` to the verified email, and the
+Stripe adapter refuses a charge whose billing, receipt or customer email differs.
+Changing the session email (`POST /widget/sessions/:id/contact`) clears verification.
+
+**Scope**: OTP required by default for `get_subscription` (reading a plan discloses
+another person's billing state), `issue_refund`, `refund_payment`,
+`upgrade_subscription`, `downgrade_subscription`, `cancel_subscription`. Operators can
+turn it off per tool with `requireIdentityVerification: false`. Not required for
+`book_meeting` or `create_support_ticket` (lower risk).
 
 **New fields**:
 - `ContactSession.identityVerifiedUntil?: Date` — set on successful OTP; checked
   by dispatcher for high-stakes tools.
+- `ContactSession.identityVerifiedEmail?: string` — the address the OTP verified.
 - `ToolDefinition.guardrails.requireIdentityVerification?: boolean`
 
 **New env var**: `OTP_EXPIRY_SECONDS` (default: `600`, i.e. 10 minutes).

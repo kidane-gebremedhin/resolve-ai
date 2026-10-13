@@ -1,6 +1,9 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import crypto from "node:crypto";
+import rateLimit from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import {
   Organization,
   Membership,
@@ -34,11 +37,21 @@ import {
   UsageRecord,
 } from "../models/index.js";
 import { getStorage } from "../config/storage.js";
-import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { requireAuth, requireOrg, revokeUserTokens } from "../middleware/auth.middleware.js";
+import { sendMail } from "../services/mailer.service.js";
+import { escapeHtml } from "../utils/html.js";
+import { strongPassword } from "../utils/password.js";
+import { env } from "../config/env.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { enforceTeamMemberQuota } from "../middleware/plan-limit.middleware.js";
-import { ConflictError, ForbiddenError, NotFoundError } from "../utils/errors.js";
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from "../utils/errors.js";
 import { getPineconeIndex } from "../config/pinecone.js";
 import { logger } from "../config/logger.js";
 import { logAuditFromReq } from "../services/audit.service.js";
@@ -213,10 +226,39 @@ function assertCanManageMembers(req: Request): void {
 
 const inviteSchema = z.object({
   email: z.string().email(),
-  name: z.string().min(1).optional(),
+  name: z.string().min(1).max(120).optional(),
   role: z.enum(["admin", "agent", "viewer"]),
 });
 
+const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+function hashInviteToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+async function sendInviteEmail(args: {
+  to: string;
+  token: string;
+  orgName: string;
+  inviterName: string;
+  role: string;
+}): Promise<void> {
+  const link = `${env.webBaseUrl}/accept-invite?token=${args.token}`;
+  await sendMail({
+    to: args.to,
+    subject: `You've been invited to join ${args.orgName}`,
+    html:
+      `<p>${escapeHtml(args.inviterName)} invited you to join <strong>${escapeHtml(args.orgName)}</strong> ` +
+      `as ${escapeHtml(args.role)}.</p>` +
+      `<p><a href="${link}">Accept the invitation</a></p>` +
+      `<p>The link expires in 7 days. If you weren't expecting this, you can ignore this email.</p>`,
+  });
+}
+
+// Inviting creates a PENDING membership plus, for a brand-new email, a
+// password-less placeholder user (so the Team tab can list the invite). The
+// invitee activates it through the emailed link: POST /orgs/invites/accept.
+// Re-inviting a pending member re-sends the email with a fresh token.
 router.post(
   "/current/members/invite",
   requireAuth,
@@ -234,7 +276,6 @@ router.post(
         email,
         name: req.body.name ?? email.split("@")[0],
         provider: "credentials",
-        passwordHash: await bcrypt.hash(`invite-${Date.now()}-${Math.random()}`, 4),
         role: "user",
       });
       isNewUser = true;
@@ -244,30 +285,44 @@ router.post(
       userId: user._id,
       organizationId: req.orgId,
     });
-    if (existing && existing.status !== "revoked") {
+    if (existing && existing.status === "active") {
       throw new ConflictError("User is already a member of this organization.");
     }
 
+    const token = crypto.randomBytes(32).toString("hex");
+    const invite = {
+      role: req.body.role,
+      status: "pending" as const,
+      invitedBy: req.auth!.userId,
+      invitedAt: new Date(),
+      inviteTokenHash: hashInviteToken(token),
+      inviteExpiresAt: new Date(Date.now() + INVITE_TTL_MS),
+    };
     const membership = existing
       ? await Membership.findOneAndUpdate(
           { _id: existing._id },
-          {
-            role: req.body.role,
-            status: "pending",
-            invitedBy: req.auth!.userId,
-            invitedAt: new Date(),
-            acceptedAt: undefined,
-          },
+          { $set: invite, $unset: { acceptedAt: 1 } },
           { new: true },
         )
-      : await Membership.create({
-          userId: user._id,
-          organizationId: req.orgId,
-          role: req.body.role,
-          status: "pending",
-          invitedBy: req.auth!.userId,
-          invitedAt: new Date(),
-        });
+      : await Membership.create({ userId: user._id, organizationId: req.orgId, ...invite });
+
+    const [org, inviter] = await Promise.all([
+      Organization.findById(req.orgId).select("name").lean(),
+      User.findById(req.auth!.userId).select("name email").lean(),
+    ]);
+    let emailSent = true;
+    try {
+      await sendInviteEmail({
+        to: email,
+        token,
+        orgName: org?.name ?? "a workspace",
+        inviterName: inviter?.name || inviter?.email || "A teammate",
+        role: req.body.role,
+      });
+    } catch (err) {
+      emailSent = false;
+      logger.error("[org] invite email failed", { err: (err as Error).message });
+    }
 
     await logAuditFromReq(req, "member.invited", email, { role: req.body.role, isNewUser });
     res.status(201).json({
@@ -276,14 +331,135 @@ router.post(
       status: membership!.status,
       user: { id: user._id, email: user.email, name: user.name },
       isNewUser,
+      emailSent,
     });
   },
 );
+
+// ---- Invite acceptance (public; the emailed token is the credential) --------
+const inviteLimiter = rateLimit({
+  store: new MongoRateStore("org:invite"),
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: "rate_limited", message: "Too many attempts. Please try again later." } },
+});
+
+async function findPendingInvite(token: unknown) {
+  if (typeof token !== "string" || token.length < 16 || token.length > 200) return null;
+  return Membership.findOne({
+    inviteTokenHash: hashInviteToken(token),
+    status: "pending",
+    inviteExpiresAt: { $gt: new Date() },
+  });
+}
+
+// The invitee must choose a password when the account has none, or when its
+// email was never verified (someone else may have registered that address
+// first; the emailed token is the first proof of who owns the inbox).
+function inviteNeedsPassword(user: {
+  passwordHash?: string | null;
+  provider?: string | null;
+  emailVerifiedAt?: Date | null;
+}): boolean {
+  if (!user.emailVerifiedAt) return true;
+  return user.provider === "credentials" && !user.passwordHash;
+}
+
+router.get("/invites/:token", inviteLimiter, async (req: Request, res: Response) => {
+  const membership = await findPendingInvite(req.params.token);
+  if (!membership) throw new NotFoundError("This invitation is invalid or has expired.");
+  const [org, user] = await Promise.all([
+    Organization.findById(membership.organizationId).select("name").lean(),
+    User.findById(membership.userId),
+  ]);
+  if (!user) throw new NotFoundError("This invitation is invalid or has expired.");
+  res.json({
+    organizationName: org?.name ?? "",
+    email: user.email,
+    role: membership.role,
+    needsPassword: inviteNeedsPassword(user),
+  });
+});
+
+const acceptSchema = z.object({
+  token: z.string().min(16).max(200),
+  name: z.string().min(1).max(120).optional(),
+  password: strongPassword.optional(),
+});
+
+router.post("/invites/accept", inviteLimiter, validateBody(acceptSchema), async (req: Request, res: Response) => {
+  const membership = await findPendingInvite(req.body.token);
+  if (!membership) throw new UnauthorizedError("This invitation is invalid or has expired.");
+  const user = await User.findById(membership.userId);
+  if (!user) throw new UnauthorizedError("This invitation is invalid or has expired.");
+
+  if (inviteNeedsPassword(user)) {
+    if (!req.body.password) throw new ValidationError("Choose a password to finish joining.");
+    const hadUnverifiedOwner = !user.emailVerifiedAt && Boolean(user.passwordHash);
+    user.passwordHash = await bcrypt.hash(req.body.password, 12);
+    if (req.body.name) user.name = req.body.name;
+    if (hadUnverifiedOwner) {
+      // Whoever set up this unverified account is not proven to be the owner:
+      // drop their second factor and every session they hold.
+      user.totpEnabled = false;
+      user.totpSecret = undefined;
+      user.recoveryCodes = undefined;
+      user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+    }
+  }
+  user.emailVerifiedAt = user.emailVerifiedAt ?? new Date();
+  user.lastOrganizationId = membership.organizationId;
+  await user.save();
+
+  membership.status = "active";
+  membership.acceptedAt = new Date();
+  membership.inviteTokenHash = undefined;
+  membership.inviteExpiresAt = undefined;
+  await membership.save();
+
+  res.json({ ok: true, email: user.email });
+});
 
 const updateRoleSchema = z.object({
   role: z.enum(["owner", "admin", "agent", "viewer"]).optional(),
   status: z.enum(["active", "pending", "revoked"]).optional(),
 });
+
+// Within-org privilege rules for member changes:
+//   - nobody may change a member who ranks at or above them, except an owner
+//     acting on another owner;
+//   - only an owner may grant the owner role;
+//   - the org must keep at least one active owner.
+async function assertMemberChangeAllowed(
+  req: Request,
+  target: { _id: unknown; role: string; status: string },
+  next: { role?: string; status?: string },
+): Promise<void> {
+  const actorRole = req.auth?.membershipRole ?? "";
+  const actorRank = ROLE_RANK[actorRole] ?? 0;
+  const targetRank = ROLE_RANK[target.role] ?? 0;
+  if (targetRank >= actorRank && !(actorRole === "owner" && target.role === "owner")) {
+    throw new ForbiddenError("You can't change a member whose role is equal to or above yours.");
+  }
+  if (next.role === "owner" && actorRole !== "owner") {
+    throw new ForbiddenError("Only an owner can promote another member to owner.");
+  }
+  const losesOwner =
+    target.role === "owner" &&
+    target.status === "active" &&
+    ((next.role !== undefined && next.role !== "owner") ||
+      (next.status !== undefined && next.status !== "active"));
+  if (losesOwner) {
+    const owners = await Membership.countDocuments({
+      organizationId: req.orgId,
+      role: "owner",
+      status: "active",
+    });
+    if (owners <= 1) throw new ForbiddenError("The organization must keep at least one owner.");
+  }
+}
 
 router.patch(
   "/current/members/:membershipId",
@@ -297,18 +473,20 @@ router.patch(
       organizationId: req.orgId,
     });
     if (!membership) throw new NotFoundError("Membership not found.");
+    await assertMemberChangeAllowed(req, membership, req.body);
 
-    if (req.body.role === "owner" && req.auth?.membershipRole !== "owner") {
-      throw new ForbiddenError("Only an owner can promote another member to owner.");
+    if (req.body.status === "active" && membership.status === "pending") {
+      throw new ValidationError("A pending invitation is activated by the invitee accepting it.");
     }
+    const changed =
+      (req.body.role && req.body.role !== membership.role) ||
+      (req.body.status && req.body.status !== membership.status);
     if (req.body.role) membership.role = req.body.role;
-    if (req.body.status) {
-      membership.status = req.body.status;
-      if (req.body.status === "active" && !membership.acceptedAt) {
-        membership.acceptedAt = new Date();
-      }
-    }
+    if (req.body.status) membership.status = req.body.status;
     await membership.save();
+    // Role and access live in the member's JWT. Revoke it so the change takes
+    // effect now rather than when their access token happens to expire.
+    if (changed) await revokeUserTokens(membership.userId);
     await logAuditFromReq(req, "member.updated", String(req.params.membershipId), {
       role: req.body.role,
       status: req.body.status,
@@ -328,18 +506,12 @@ router.delete(
       organizationId: req.orgId,
     });
     if (!membership) throw new NotFoundError("Membership not found.");
-    if (membership.role === "owner") {
-      const ownerCount = await Membership.countDocuments({
-        organizationId: req.orgId,
-        role: "owner",
-        status: "active",
-      });
-      if (ownerCount <= 1) {
-        throw new ForbiddenError("Cannot remove the last owner.");
-      }
-    }
+    await assertMemberChangeAllowed(req, membership, { status: "revoked" });
     membership.status = "revoked";
+    membership.inviteTokenHash = undefined;
+    membership.inviteExpiresAt = undefined;
     await membership.save();
+    await revokeUserTokens(membership.userId);
     await logAuditFromReq(req, "member.revoked", String(req.params.membershipId), { role: membership.role });
     res.json({ ok: true });
   },

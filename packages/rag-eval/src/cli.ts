@@ -16,6 +16,7 @@
 // MUST be first: populates process.env before any `@api/*` module evaluates.
 import "./load-env.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import mongoose from "mongoose";
@@ -116,10 +117,12 @@ async function main(): Promise<number> {
       if (gen.conversationId) conversationIds.push(gen.conversationId);
 
       const lower = gen.answer.toLowerCase();
-      const mustContainPassed = c.mustContain.length
+      // No answer in --retrieval-only, so there is nothing to check: null, not a
+      // fake 0% pass rate.
+      const mustContainPassed = c.mustContain.length && !retrievalOnly
         ? c.mustContain.every((s) => lower.includes(s.toLowerCase()))
         : null;
-      const mustNotContainPassed = c.mustNotContain.length
+      const mustNotContainPassed = c.mustNotContain.length && !retrievalOnly
         ? !c.mustNotContain.some((s) => lower.includes(s.toLowerCase()))
         : null;
 
@@ -267,7 +270,14 @@ async function main(): Promise<number> {
   console.log(`report: ${path.relative(process.cwd(), outFile)}`);
 
   if (baselinePath) {
-    const baseline = JSON.parse(await readFile(baselinePath, "utf8")) as Report;
+    // `pnpm eval:rag` runs from this package, so a path typed at the repo root
+    // (`packages/rag-eval/baselines/...`) would not resolve. Try where the
+    // command was typed first (pnpm's INIT_CWD), then the package.
+    const resolvedBaseline =
+      [path.resolve(process.env.INIT_CWD ?? process.cwd(), baselinePath), path.resolve(PKG, baselinePath)].find(
+        (p) => existsSync(p),
+      ) ?? baselinePath;
+    const baseline = JSON.parse(await readFile(resolvedBaseline, "utf8")) as Report;
     const regressions = findRegressions(baseline.summary, summary, tolerance);
     console.log(renderRegressions(regressions, tolerance));
     if (regressions.length > 0) return 1;

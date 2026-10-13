@@ -25,6 +25,7 @@ export type IngestionErrorCode =
   | "unsupported_file_type"
   | "parse_failure"
   | "empty_extraction"
+  | "text_too_large"
   | "embedding_provider_error"
   | "rate_limited"
   | "budget_exceeded"
@@ -62,6 +63,13 @@ const CATALOG: Record<IngestionErrorCode, Omit<ClassifiedError, "code" | "raw">>
     message: "The file was read successfully but contains no selectable text.",
     action:
       "This is usually a scanned document or an image-only PDF. Run it through OCR first, or paste the text in as a text source.",
+    retry: "never",
+  },
+  text_too_large: {
+    // The extracted text is stored on the source document, and MongoDB caps a
+    // document at 16MB. A 25MB upload under the size cap can still exceed it.
+    message: "This file contains more text than one source can hold (about 15MB).",
+    action: "Split it into smaller files and upload each one. Retrying this file will not help.",
     retry: "never",
   },
   embedding_provider_error: {
@@ -140,6 +148,9 @@ export function classifyError(err: unknown, stage?: string): ClassifiedError {
 
   if (/unsupported (file )?type|unsupported mime|cannot handle .* type/.test(m)) {
     return describeError("unsupported_file_type", raw);
+  }
+  if (/extracted text too large/.test(m)) {
+    return describeError("text_too_large", raw);
   }
   if (/budget|quota (reached|exceeded)|over budget/.test(m)) {
     return describeError("budget_exceeded", raw);

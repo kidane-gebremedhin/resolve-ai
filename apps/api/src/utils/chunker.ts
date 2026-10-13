@@ -36,6 +36,16 @@ export type Chunk = {
   headingPath?: string[];
 };
 
+/**
+ * `text.lastIndexOf(sep, from)`, but returning -1 for any match before `floor`
+ * without scanning past it. Results at or above `floor` are identical.
+ */
+function lastIndexWithin(text: string, sep: string, from: number, floor: number): number {
+  const lo = Math.max(0, floor);
+  const at = text.slice(lo, from + sep.length).lastIndexOf(sep);
+  return at < 0 ? -1 : lo + at;
+}
+
 export function chunkText(text: string, chunkChars = 1200, overlap = 150): Chunk[] {
   const out: Chunk[] = [];
   if (!text || text.trim().length === 0) return out;
@@ -50,8 +60,13 @@ export function chunkText(text: string, chunkChars = 1200, overlap = 150): Chunk
     // Try to break on a paragraph or sentence boundary near the window end.
     let cut = end;
     if (end < text.length) {
-      const lastPara = text.lastIndexOf("\n\n", end);
-      const lastSentence = text.lastIndexOf(". ", end);
+      // Only a separator in the last ~200 characters can win the max below, so
+      // search just that window. An unbounded `lastIndexOf` scans back to the
+      // start of the whole document whenever the separator is absent (CSV and
+      // HTML-derived text have no blank lines), which made chunking O(n^2): 537s
+      // of blocked event loop for a 25MB CSV. Same cuts, now O(1) per chunk.
+      const lastPara = lastIndexWithin(text, "\n\n", end, end - 200);
+      const lastSentence = lastIndexWithin(text, ". ", end, end - 200);
       cut = Math.max(lastPara, lastSentence, end - 200);
       if (cut <= i) cut = end;
     }

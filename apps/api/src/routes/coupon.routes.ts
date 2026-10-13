@@ -7,6 +7,7 @@
 
 import { Router, type Request, type Response } from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import { z } from "zod";
 import { User } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
@@ -26,8 +27,9 @@ const router = Router();
 // these endpoints are a brute-force oracle against the whole code space. Keyed
 // on the authenticated user when present (so one account can't rotate IPs) and
 // falling back to IP for anything that slips through before requireAuth.
-function couponLimiter(max: number, windowMs: number) {
+function couponLimiter(name: string, max: number, windowMs: number) {
   return rateLimit({
+    store: new MongoRateStore(name),
     windowMs,
     max,
     standardHeaders: true,
@@ -50,8 +52,8 @@ function couponLimiter(max: number, windowMs: number) {
 
 // Validation is a cheap dry run, so it gets the looser budget; redemption is the
 // one that actually grants something.
-const validateLimiter = couponLimiter(20, 15 * 60 * 1000);
-const redeemLimiter = couponLimiter(10, 60 * 60 * 1000);
+const validateLimiter = couponLimiter("coupon:validate", 20, 15 * 60 * 1000);
+const redeemLimiter = couponLimiter("coupon:redeem", 10, 60 * 60 * 1000);
 
 // Same shape for both routes. Length bounds keep absurd payloads out of the
 // index lookup; casing is normalised in the service.

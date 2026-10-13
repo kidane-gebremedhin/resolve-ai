@@ -54,6 +54,8 @@ type Summary = {
 
 type Retrieval = {
   minScoreThreshold: number;
+  belowThresholdTurns: number;
+  distributionTurns: number;
   ks: number[];
   scoredTurns: number;
   totalTurns: number;
@@ -107,7 +109,7 @@ type FailingQueries = {
 
 type SourceHealth = {
   top: { sourceId: string; title: string; type: string | null; retrievalCount: number; topRankCount: number; meanTopScore: number | null }[];
-  neverRetrieved: { sourceId: string; title: string; type: string | null; chunkCount: number }[];
+  neverRetrieved: { sourceId: string; title: string; type: string | null; chunkCount: number; stale: boolean; priority: number }[];
   totals: { sources: number; retrieved: number; neverRetrieved: number };
   ingestion: { totalSources: number; failing: number; failureRate: number; byErrorClass: { message: string; action: string; count: number }[] };
 };
@@ -137,14 +139,14 @@ type IndexHealth = {
     deadWeight: number;
     misleading: number;
     retrievedNotCited: number;
-    truncated?: boolean;
-    scanLimit?: number;
   };
   chunks: {
     chunkId: string;
     sourceId: string;
     title: string | null;
     preview: string | null;
+    sourceStale: boolean;
+    sourcePriority: number;
     flags: ChunkFlag[];
     retrievals: number;
     citationRate: number | null;
@@ -459,13 +461,13 @@ async function RagQuality({
 
               <div className="mt-6">
                 <h3 className="text-xs font-medium text-muted-foreground">Score distribution</h3>
-                <div className="mt-2 overflow-x-auto">
-                  <div className="min-w-[420px]">
-                    <ScoreDistribution
-                      buckets={retrieval?.distribution ?? []}
-                      threshold={retrieval?.minScoreThreshold ?? 0}
-                    />
-                  </div>
+                <div className="mt-2">
+                  <ScoreDistribution
+                    buckets={retrieval?.distribution ?? []}
+                    threshold={retrieval?.minScoreThreshold ?? 0}
+                    belowThreshold={retrieval?.belowThresholdTurns ?? 0}
+                    total={retrieval?.distributionTurns ?? 0}
+                  />
                 </div>
               </div>
             </Panel>
@@ -543,7 +545,7 @@ async function RagQuality({
                         <span className="rounded bg-muted px-1.5 py-0.5 font-mono">{ex.query || "(no query)"}</span>
                         <span>faithfulness {num(ex.score, 2)}</span>
                         <Link
-                          href={`/app/inbox?conversationId=${ex.conversationId}`}
+                          href={`/app/inbox/${ex.conversationId}`}
                           className="underline underline-offset-2 hover:text-foreground"
                         >
                           Open conversation
@@ -635,29 +637,20 @@ async function RagQuality({
                   <div className="grid grid-cols-3 gap-2 text-center">
                     {(
                       [
-                        ["misleading", indexHealth.totals.misleading],
-                        ["retrieved_not_cited", indexHealth.totals.retrievedNotCited],
-                        ["dead_weight", indexHealth.totals.deadWeight],
+                        { flag: "misleading", metric: "misleadingPassage", n: indexHealth.totals.misleading },
+                        { flag: "retrieved_not_cited", metric: "retrievedNotCited", n: indexHealth.totals.retrievedNotCited },
+                        { flag: "dead_weight", metric: "deadWeightPassage", n: indexHealth.totals.deadWeight },
                       ] as const
-                    ).map(([flag, n]) => (
+                    ).map(({ flag, metric, n }) => (
                       <div key={flag} className="rounded-lg bg-muted px-2 py-2.5">
                         <div className="font-display text-xl font-semibold tabular-nums">{n}</div>
-                        <div className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        <div className="mt-0.5 flex items-center justify-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
                           {FLAG_COPY[flag].label}
+                          <DefinitionPopover title={FLAG_COPY[flag].label} definition={defs[metric]} />
                         </div>
                       </div>
                     ))}
                   </div>
-
-                  {indexHealth.totals.truncated ? (
-                    // These counts are computed from a capped scan. Showing them
-                    // bare would read as a complete census of the index.
-                    <p className="mt-3 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-                      Counts cover the first{" "}
-                      {(indexHealth.totals.scanLimit ?? 0).toLocaleString()} passages of a larger
-                      knowledge base, not the whole index.
-                    </p>
-                  ) : null}
 
                   {indexHealth.chunks.length > 0 ? (
                     <ul className="mt-4 divide-y divide-border">
@@ -690,8 +683,8 @@ async function RagQuality({
                             <MarkSourceButton
                               sourceId={c.sourceId}
                               title={c.title ?? "source"}
-                              stale={false}
-                              priority={0}
+                              stale={c.sourceStale}
+                              priority={c.sourcePriority}
                             />
                           </div>
                         </li>
@@ -735,7 +728,7 @@ async function RagQuality({
                         <tr key={it.query}>
                           <td className="py-2 pr-3">
                             <Link
-                              href={`/app/inbox?conversationId=${it.conversationId}`}
+                              href={`/app/inbox/${it.conversationId}`}
                               className="hover:underline"
                             >
                               {it.query || "(empty)"}
@@ -766,7 +759,7 @@ async function RagQuality({
               title="Knowledge health"
               hint="Sources that never get retrieved are dead weight; sources that never indexed cannot be retrieved at all. They look identical until you separate them."
               action={
-                <BulkDeleteDeadWeight count={sources?.totals.neverRetrieved ?? 0} />
+                <BulkDeleteDeadWeight count={sources?.totals.neverRetrieved ?? 0} query={q} />
               }
             >
               <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -782,18 +775,19 @@ async function RagQuality({
                     <li key={s.sourceId} className="flex items-center justify-between gap-2">
                       <span className="min-w-0 flex-1 truncate">{s.title}</span>
                       <span className="shrink-0 text-[11px] text-muted-foreground">{s.chunkCount} chunks</span>
-                      <MarkSourceButton sourceId={s.sourceId} title={s.title} stale={false} priority={0} />
+                      <MarkSourceButton sourceId={s.sourceId} title={s.title} stale={s.stale} priority={s.priority} />
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="mt-2 text-xs text-muted-foreground">
-                  {sources?.totals.sources ? "Every indexed source was retrieved at least once." : "No knowledge sources yet."}
+                  {sources?.totals.sources ? "Every source indexed for the whole window was retrieved at least once. Newer ones are judged once a full window has passed." : "No knowledge sources yet."}
                 </p>
               )}
 
               <div className="mt-5 flex items-center gap-1.5 border-t border-border pt-4 text-xs font-medium text-muted-foreground">
                 Failing ingestion
+                <DefinitionPopover title="Failing ingestion" definition={defs.failingIngestion} />
                 <span className="ml-auto tabular-nums">{count(sources?.ingestion.failing ?? 0)}</span>
               </div>
               {(sources?.ingestion.failing ?? 0) > 0 ? (
@@ -816,7 +810,11 @@ async function RagQuality({
               <div className="mt-5 border-t border-border pt-4">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   Most retrieved
-                  <DefinitionPopover title="Mean top score" definition={defs.sourceMeanTopScore} />
+                  <DefinitionPopover title="Retrieved in" definition={defs.sourceRetrievalCount} />
+                  <span className="ml-auto flex items-center gap-1 font-normal">
+                    turns · mean top score
+                    <DefinitionPopover title="Mean top score" definition={defs.sourceMeanTopScore} />
+                  </span>
                 </div>
                 {(sources?.top.length ?? 0) > 0 ? (
                   <ul className="mt-2 space-y-1.5 text-sm">
@@ -852,10 +850,19 @@ async function RagQuality({
                   <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted-foreground">
                     <th className="pb-2 font-medium">Run</th>
                     <th className="pb-2 text-right font-medium">Cases</th>
-                    <th className="pb-2 text-right font-medium">Recall@5</th>
-                    <th className="pb-2 text-right font-medium">MRR</th>
-                    <th className="pb-2 text-right font-medium">Faithfulness</th>
-                    <th className="pb-2 text-right font-medium">p95</th>
+                    {[
+                      { metric: "recallAtK", label: "Recall@5" },
+                      { metric: "mrr", label: "MRR" },
+                      { metric: "faithfulness", label: "Faithfulness" },
+                      { metric: "latency", label: "p95" },
+                    ].map((h) => (
+                      <th key={h.metric} className="pb-2 text-right font-medium">
+                        <span className="inline-flex items-center justify-end gap-1">
+                          {h.label}
+                          <DefinitionPopover title={h.label} definition={defs[h.metric]} />
+                        </span>
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">

@@ -66,12 +66,22 @@ export function extractHeadingSpans(text: string): HeadingSpan[] {
 
 /** The heading path in force at a character offset. */
 export function headingPathAt(spans: readonly HeadingSpan[], offset: number): string[] {
-  let path: string[] = [];
-  for (const span of spans) {
-    if (span.start > offset) break;
-    path = span.path;
+  // Binary search: spans are in document order. A linear walk here made the
+  // chunker O(chunks x headings), 40.8s for a 25MB file with a heading per
+  // paragraph.
+  let lo = 0;
+  let hi = spans.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid]!.start <= offset) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return path;
+  return found < 0 ? [] : spans[found]!.path;
 }
 
 /** Render a path for prepending to embedded text. Empty for an unheaded document. */
@@ -171,8 +181,21 @@ export function findProtectedBlocks(text: string): ProtectedBlock[] {
  * A cut at a block's exact start or end is already on an edge and is left alone.
  */
 export function safeCut(cut: number, blocks: readonly ProtectedBlock[]): number {
-  for (const block of blocks) {
-    if (cut > block.start && cut < block.end) return block.start;
+  // Blocks are in document order and never overlap (the scan above jumps past
+  // each one), so only the last block starting before `cut` can contain it.
+  // Binary search keeps the chunker linear on documents with many blocks.
+  let lo = 0;
+  let hi = blocks.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (blocks[mid]!.start < cut) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
+  if (found >= 0 && cut < blocks[found]!.end) return blocks[found]!.start;
   return cut;
 }

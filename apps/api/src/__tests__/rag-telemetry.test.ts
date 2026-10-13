@@ -27,6 +27,8 @@ let agentScript: AIMessage[] = [];
 let agentCalls = 0;
 let finalTokens: string[] = [];
 let judgeDelayMs = 0;
+/** The agent's model call never returns, as a stalled provider stream would. */
+let agentHangs = false;
 /** Incremented on entry; `judgeCompleted` only once the call has returned. */
 let judgeCalls = 0;
 let judgeCompleted = 0;
@@ -49,6 +51,7 @@ vi.mock("../services/ai/llm/chat-model.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/ai/llm/chat-model.js")>();
   const binding = {
     invoke: async () => {
+      if (agentHangs) await new Promise(() => undefined);
       const scripted = agentScript[agentCalls];
       agentCalls += 1;
       return scripted ?? new AIMessage("All set.");
@@ -503,6 +506,7 @@ describe("RagTurnMetric wiring", () => {
 
   beforeEach(() => {
     searchResult = FIXTURE_HITS;
+    agentHangs = false;
     judgeCalls = 0;
     judgeDelayMs = 0;
     // Sampling off by default: each test that wants the judge turns it on, so
@@ -514,6 +518,28 @@ describe("RagTurnMetric wiring", () => {
   afterEach(() => {
     env.rag.faithfulnessSampleRate = originalRate;
     vi.restoreAllMocks();
+  });
+
+  it("gives up on a stalled turn at the deadline and replies instead of going silent", async () => {
+    const original = env.ai.turnDeadlineMs;
+    env.ai.turnDeadlineMs = 300;
+    agentHangs = true;
+    try {
+      const { organizationId, conversation } = await makeTurnFixture();
+      const started = Date.now();
+      await generateAiReplyWithGraph(conversation, CUSTOMER_MESSAGE, null);
+      // Before the deadline this never returned at all.
+      expect(Date.now() - started).toBeLessThan(5_000);
+
+      // The customer still gets the guaranteed fallback reply (escalation, or
+      // its no-escalation wording when the org's controls disable handoff).
+      const reply = await Message.findOne({ conversationId: conversation._id, role: "ai" }).lean();
+      expect(reply!.content.length).toBeGreaterThan(0);
+      await flushRagTelemetry();
+      expect((await RagTurnMetric.findOne({ organizationId }).lean())!.status).toBe("fallback");
+    } finally {
+      env.ai.turnDeadlineMs = original;
+    }
   });
 
   it("writes exactly one metric per turn, joined to the message it scores", async () => {

@@ -191,6 +191,25 @@ export class StripeAdapter implements ProviderAdapter {
     }
 
     if (toolKey === "issue_refund") {
+      // Ownership: when the dispatcher has bound a customer (verified) email,
+      // the charge must belong to that customer. Without this, anyone who
+      // verified their own inbox could refund any charge id they could name.
+      const customerEmail = String(args.customerEmail ?? "").toLowerCase().trim();
+      if (customerEmail) {
+        const charge = await stripeFetch(
+          `/charges/${encodeURIComponent(String(args.chargeId))}?expand[]=customer`,
+        );
+        const owners = [
+          (charge.billing_details as { email?: string } | undefined)?.email,
+          charge.receipt_email as string | undefined,
+          (charge.customer as { email?: string } | null | undefined)?.email,
+        ]
+          .filter((e): e is string => typeof e === "string" && e.length > 0)
+          .map((e) => e.toLowerCase().trim());
+        if (!owners.includes(customerEmail)) {
+          throw new Error("That payment isn't linked to your verified email, so it can't be refunded here.");
+        }
+      }
       const amountCents = Math.round(Number(args.amount) * 100);
       const body = new URLSearchParams({
         charge: args.chargeId as string,

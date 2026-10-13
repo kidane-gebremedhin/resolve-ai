@@ -72,6 +72,12 @@ async function main() {
       },
     }),
   );
+  // Widget attachment links authenticate with `?t=<sessionToken>` (an <img>
+  // cannot send headers). Access logs must not keep that bearer credential, so
+  // the URL token is redacted before morgan prints it.
+  morgan.token("url", (req) =>
+    String((req as express.Request).originalUrl ?? req.url ?? "").replace(/([?&]t=)[^&]*/g, "$1[redacted]"),
+  );
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
 
   app.get("/health", async (_req, res) => {

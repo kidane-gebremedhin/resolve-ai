@@ -1,6 +1,6 @@
 import type { Socket } from "socket.io";
 import { verifyAccessToken } from "../utils/jwt.js";
-import { ContactSession } from "../models/index.js";
+import { ContactSession, Membership, User } from "../models/index.js";
 
 export type SocketAuth = {
   kind: "operator" | "contact";
@@ -16,6 +16,21 @@ export async function authenticateSocket(socket: Socket): Promise<SocketAuth> {
   if (typeof token === "string" && token.length > 0) {
     const payload = verifyAccessToken(token);
     if (!payload.organizationId) throw new Error("Operator socket missing organizationId");
+    // Same checks as `requireAuth` + `requireActiveMembership`: a deleted user,
+    // a revoked session or a removed member must not keep a live event feed.
+    const [user, member] = await Promise.all([
+      User.findById(payload.userId).select("tokenVersion").lean(),
+      Membership.exists({
+        userId: payload.userId,
+        organizationId: payload.organizationId,
+        status: "active",
+      }),
+    ]);
+    if (!user) throw new Error("Account no longer exists");
+    if ((payload.tv ?? 0) !== ((user as { tokenVersion?: number }).tokenVersion ?? 0)) {
+      throw new Error("Session revoked");
+    }
+    if (!member) throw new Error("Not an active member of this organization");
     return {
       kind: "operator",
       userId: payload.userId,

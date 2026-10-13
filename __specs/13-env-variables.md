@@ -25,7 +25,7 @@ All environment variables organized by application. Each app has its own `.env` 
 |----------|----------|---------|-------------|
 | `MONGODB_URI` | ✅ | `mongodb://localhost:27017/customer-support` | MongoDB connection string |
 | `MONGODB_DB_NAME` | — | `customer-support` | Database name (overrides URI db name) |
-| `REDIS_URL` | — | `redis://localhost:6379` | Redis for rate limiting / caching (optional) |
+| `REDIS_URL` | — | — | Optional. When set, Socket.io uses the Redis adapter so broadcasts reach sockets on every API replica. Required when running more than one replica. Rate-limit counters and OTP challenges are shared through MongoDB and do not need it. |
 
 ### Authentication
 
@@ -34,7 +34,8 @@ All environment variables organized by application. Each app has its own `.env` 
 | `JWT_SECRET` | ✅ | — | ≥256-bit random secret for signing JWTs |
 | `JWT_ACCESS_EXPIRY` | — | `15m` | Access token TTL |
 | `JWT_REFRESH_EXPIRY` | — | `7d` | Refresh token TTL |
-| `GOOGLE_CLIENT_ID` | ✅ | — | Google OAuth client ID (for token verification) |
+| `GOOGLE_CLIENT_ID` | ✅ | — | Google OAuth client ID. `POST /auth/google` verifies the id_token's signature, issuer and audience against it; comma-separate several IDs when web and admin use different OAuth clients. Google sign-in is refused when unset. |
+| `AUTH_REGISTER_RATE_LIMIT_MAX` | — | `10` | Sign-ups allowed per IP per hour on `POST /auth/register`. |
 | `SESSION_TOKEN_EXPIRY_HOURS` | — | `1` | Contact (widget visitor) session TTL in hours |
 
 ### AI / LLM
@@ -62,6 +63,8 @@ table and `.env.example` so a fresh checkout boots with sane defaults.
 | `AI_LLM_TIMEOUT_MS` | — | `30000` | Per-attempt timeout for a chat-completion call |
 | `AI_LLM_MAX_RETRIES` | — | `2` | Retries after a transient upstream failure (429 / 5xx / socket reset). Handled by LangChain with exponential backoff; 4xx surfaces immediately. |
 | `AI_MAX_TOOL_TURNS` | — | `10` | Hard ceiling on agent↔tool round trips within one turn, so a model stuck on a failing tool cannot burn an org's budget |
+| `AI_TURN_DEADLINE_MS` | no | `90000` | Wall-clock cap on one turn's agent loop (`AbortSignal` on the graph run in `graph/runner.ts`). Past it the turn ends on the fallback reply and telemetry status `fallback`. Bounds how long a turn can hold a concurrency slot |
+| `AI_MAX_CONCURRENT_TURNS` | no | `16` | Per-process cap on concurrent customer turns (`services/ai/turn-gate.ts`). Extra turns wait in arrival order and none is dropped. `0` disables the cap. Per process, so the effective limit is this times the API replica count |
 
 ### Pinecone
 
@@ -213,6 +216,11 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `PII_REDACTION_ENABLED` | — | `false` | Global default for PII redaction before LLM calls. Per-org toggle in `/app/settings` overrides. |
 | `WIDGET_RATE_LIMIT_REQUESTS` | — | `30` | Max messages per rate-limit window per contact session |
 | `WIDGET_RATE_LIMIT_WINDOW_MS` | — | `60000` | Rate-limit window duration in milliseconds |
+| `WIDGET_SESSIONS_PER_IP` | — | `30` | New widget sessions (`/widget/init`, `/widget/sessions`) per IP per window |
+| `WIDGET_SESSIONS_WINDOW_MS` | — | `900000` | Window for `WIDGET_SESSIONS_PER_IP` |
+| `WIDGET_ATTACHMENTS_PER_IP` | — | `20` | Widget attachment uploads per IP per window (also subject to the per-session message limit) |
+| `WIDGET_ATTACHMENTS_WINDOW_MS` | — | `900000` | Window for `WIDGET_ATTACHMENTS_PER_IP` |
+| `GEOIP_EXTERNAL_FALLBACK` | — | `false` | Dev only. Fall back to ip-api.com (plain HTTP, third party) when the offline GeoIP DB has no match. Sends visitor IPs off-site, so keep `false` in production. |
 | `ALLOW_WIDGET_VOICE_INPUT` | — | `false` | Show the voice-input (mic) button in the widget composer. Read by the API and delivered to the widget via `/widget/init` + `/widget/settings` as `features.voiceInput`. `"true"` enables; anything else hides. |
 
 ---
@@ -256,7 +264,7 @@ _No new env vars. Proactive triggers are stored in MongoDB and fetched by the em
 | `EMBEDDING_DIMENSIONS` | — | *(native)* | Output dimensionality. Required for a model whose native size exceeds the index dimension. **Changing the embedding model requires a full reindex**: mixed vector spaces return nonsense |
 | `AI_CONTEXT_TOKEN_BUDGET` | — | `3000` | Token ceiling for the numbered context block. Enforced by dropping whole passages, never truncating one |
 | `AI_MAX_UNCITED_RATIO` | — | `0.5` | Uncited factual sentences allowed before the turn's confidence is lowered, feeding the existing escalation threshold |
-| `KB_INGEST_MAX_RETRIES` | — | `3` | Bounded retries for a **transient** ingest failure. Permanent classes consume none |
+| `KB_INGEST_MAX_RETRIES` | — | `3` | Failed attempts allowed for a **transient** ingest failure, counting the first run (so 3 = first run + two retries). Permanent classes and budget waits consume none |
 | `KB_INGEST_STUCK_PROCESSING_MS` | — | `900000` | A source in `processing` longer than this was interrupted and is re-queued |
 | `KB_INGEST_RETRY_BACKOFF_MS` | — | `60000` | Base retry delay, doubled per attempt |
 | `KB_INGEST_FAILURE_ALERT_RATE` | — | `0.3` | Org failure rate that raises an operator alert |
@@ -330,6 +338,12 @@ traces just stay minified.
 | `SENTRY_ORG` | — | — | Sentry org slug (`mllabs-xk`) |
 | `SENTRY_PROJECT` | — | — | Sentry project slug (`addisaipro-frontend`) |
 | `SENTRY_AUTH_TOKEN` | — | — | Token with `project:releases` scope. Used only in the build stage; never copied into the runtime image |
+
+### Build-time only: standalone output root (web, admin, widget)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_OUTPUT_FILE_TRACING_ROOT` | Only for builds outside Docker | inferred by Next from the nearest lockfile | Folder `next build` traces the standalone output from. Set it to the repo root on a non-Docker build (Render Node runtime: `/opt/render/project/src`). If a parent folder holds another lockfile, Next picks that folder instead, the output lands under the wrong path and the `postbuild` copy fails |
 
 ---
 

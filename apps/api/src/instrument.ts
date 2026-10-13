@@ -26,6 +26,19 @@ if (dsn) {
     // Never attach cookies, auth headers or request bodies to an event: this API
     // carries JWTs, contact PII and customer conversation content.
     sendDefaultPii: false,
+    // Widget attachment URLs carry the visitor's session token as `?t=`.
+    beforeSend(event) {
+      const scrub = (v?: string) => v?.replace(/([?&]t=)[^&]*/g, "$1[redacted]");
+      if (event.request) {
+        event.request.url = scrub(event.request.url);
+        if (typeof event.request.query_string === "string") {
+          event.request.query_string = scrub(`?${event.request.query_string}`)?.slice(1);
+        } else if (event.request.query_string) {
+          event.request.query_string = undefined;
+        }
+      }
+      return event;
+    },
   });
 } else {
   // eslint-disable-next-line no-console

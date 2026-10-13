@@ -1,0 +1,2809 @@
+{
+  "version": 1,
+  "startedAt": "2026-10-13T14:41:29.865Z",
+  "finishedAt": "2026-10-13T14:45:35.149Z",
+  "dataset": "golden.json",
+  "ks": [
+    3,
+    5,
+    10
+  ],
+  "productionTopK": 8,
+  "answeringModel": "openai/gpt-4o",
+  "judgeModel": "(judge skipped)",
+  "summary": {
+    "cases": 45,
+    "errored": 0,
+    "retrieval": {
+      "recallAtK": {
+        "3": 0.9054054054054054,
+        "5": 0.918918918918919,
+        "10": 0.918918918918919
+      },
+      "precisionAtK": {
+        "3": 0.34234234234234256,
+        "5": 0.2108108108108109,
+        "10": 0.10540540540540545
+      },
+      "ndcgAtK": {
+        "3": 0.8885136945921183,
+        "5": 0.8956506708778639,
+        "10": 0.8956506708778639
+      },
+      "mrr": 0.8918918918918919,
+      "hitRateAtProductionK": 0.918918918918919,
+      "widenOnEmptyRate": 0.2
+    },
+    "generation": {
+      "faithfulness": null,
+      "answerRelevance": null,
+      "correctness": null,
+      "contextPrecision": null,
+      "contextRecall": null,
+      "citationAccuracy": null,
+      "refusalCorrectness": null,
+      "mustContainPassRate": null,
+      "mustNotContainPassRate": null
+    },
+    "operational": {
+      "p50LatencyMs": 4012,
+      "p95LatencyMs": 11207,
+      "rewriteP50Ms": null,
+      "rewriteP95Ms": null,
+      "rewriteFailureRate": null,
+      "followUpRate": null,
+      "totalCostUsd": null,
+      "unresolvedCostCases": 45,
+      "totalJudgeCostUsd": null,
+      "judgeCacheHits": 0,
+      "judgeCalls": 0
+    }
+  },
+  "results": [
+    {
+      "id": "fact-team-price",
+      "conversationId": "",
+      "question": "How much is the Team plan per month?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.506570756,
+        "latencyMs": 6936
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 6936,
+          "generation": 0,
+          "total": 6936
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-scale-seats",
+      "conversationId": "",
+      "question": "How many seats does the Scale plan include?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.504886746,
+        "latencyMs": 7038
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 7038,
+          "generation": 0,
+          "total": 7038
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-refund-window",
+      "conversationId": "",
+      "question": "How long do I have to get a full refund?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 2,
+        "topScore": 0.448338687,
+        "latencyMs": 11207
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 11207,
+          "generation": 0,
+          "total": 11207
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-encryption-rest",
+      "conversationId": "",
+      "question": "What encryption do you use for data at rest?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 3,
+        "topScore": 0.547421098,
+        "latencyMs": 5998
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 5998,
+          "generation": 0,
+          "total": 5998
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-rate-limit",
+      "conversationId": "",
+      "question": "What is the API rate limit?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.591399312,
+        "latencyMs": 16980
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 16980,
+          "generation": 0,
+          "total": 16980
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-csv-limit",
+      "conversationId": "",
+      "question": "How many rows can a CSV import have?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.346702099,
+        "latencyMs": 9297
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 9297,
+          "generation": 0,
+          "total": 9297
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-support-hours",
+      "conversationId": "",
+      "question": "When is support available?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.367494613,
+        "latencyMs": 8290
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 8290,
+          "generation": 0,
+          "total": 8290
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-key-rotation",
+      "conversationId": "",
+      "question": "How often are encryption keys rotated?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 1,
+        "topScore": 0.3784751,
+        "latencyMs": 9444
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 9444,
+          "generation": 0,
+          "total": 9444
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-webhook-sig",
+      "conversationId": "",
+      "question": "How are webhooks signed?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 3,
+        "topScore": 0.320662409,
+        "latencyMs": 3701
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3701,
+          "generation": 0,
+          "total": 3701
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-invite-expiry",
+      "conversationId": "",
+      "question": "How long before a team invitation expires?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.232715219,
+        "latencyMs": 5667
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 5667,
+          "generation": 0,
+          "total": 5667
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-backup-retention",
+      "conversationId": "",
+      "question": "How long do you keep backups?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 3,
+        "topScore": 0.344777,
+        "latencyMs": 2735
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2735,
+          "generation": 0,
+          "total": 2735
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-soc2",
+      "conversationId": "",
+      "question": "Are you SOC 2 certified?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 2,
+        "topScore": 0.375620663,
+        "latencyMs": 4607
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 4607,
+          "generation": 0,
+          "total": 4607
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-failed-payment-retries",
+      "conversationId": "",
+      "question": "What happens if my payment fails?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.330386102,
+        "latencyMs": 2193
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2193,
+          "generation": 0,
+          "total": 2193
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-regions",
+      "conversationId": "",
+      "question": "Which regions can I host my data in?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.431393176,
+        "latencyMs": 4829
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 4829,
+          "generation": 0,
+          "total": 4829
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "fact-integrations",
+      "conversationId": "",
+      "question": "Which integrations do you support?",
+      "tags": [
+        "fact"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.437511384,
+        "latencyMs": 2593
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2593,
+          "generation": 0,
+          "total": 2593
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "hop-annual-refund",
+      "conversationId": "",
+      "question": "I paid annually four months ago. Can I get money back?",
+      "tags": [
+        "multi-hop"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.6666666666666666,
+          "5": 0.4,
+          "10": 0.2
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.386028528,
+        "latencyMs": 3469
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3469,
+          "generation": 0,
+          "total": 3469
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "hop-eu-annual",
+      "conversationId": "",
+      "question": "I'm in Germany and bought an annual Team plan 20 days ago. What refund am I entitled to?",
+      "tags": [
+        "multi-hop"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.6666666666666666,
+          "5": 0.4,
+          "10": 0.2
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.513275445,
+        "latencyMs": 4012
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 4012,
+          "generation": 0,
+          "total": 4012
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "hop-scale-invoice-refund",
+      "conversationId": "",
+      "question": "We're on Scale and pay by bank transfer. How do we get a refund?",
+      "tags": [
+        "multi-hop"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.6666666666666666,
+          "5": 0.4,
+          "10": 0.2
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.41040194,
+        "latencyMs": 5510
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 5510,
+          "generation": 0,
+          "total": 5510
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "hop-readonly-seats",
+      "conversationId": "",
+      "question": "If my payment keeps failing, do I lose my team members?",
+      "tags": [
+        "multi-hop"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 0.5,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.4,
+          "10": 0.2
+        },
+        "ndcgAtK": {
+          "3": 0.6131471927654584,
+          "5": 0.8772153153380493,
+          "10": 0.8772153153380493
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.357492715,
+        "latencyMs": 3301
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3301,
+          "generation": 0,
+          "total": 3301
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "hop-personal-email-scale",
+      "conversationId": "",
+      "question": "Can I sign up for Scale with my gmail address and invite 60 people?",
+      "tags": [
+        "multi-hop"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.6666666666666666,
+          "5": 0.4,
+          "10": 0.2
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.497637302,
+        "latencyMs": 2542
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2542,
+          "generation": 0,
+          "total": 2542
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "hop-eu-residency-compliance",
+      "conversationId": "",
+      "question": "We handle EU health data. Can we use you in eu-west?",
+      "tags": [
+        "multi-hop"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.435340524,
+        "latencyMs": 2079
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2079,
+          "generation": 0,
+          "total": 2079
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "para-team-cost",
+      "conversationId": "",
+      "question": "What would I be paying each month for the mid-tier plan?",
+      "tags": [
+        "paraphrase"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.475288242,
+        "latencyMs": 3503
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3503,
+          "generation": 0,
+          "total": 3503
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "para-refund-how",
+      "conversationId": "",
+      "question": "What's the process for getting my money back?",
+      "tags": [
+        "paraphrase"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 3,
+        "topScore": 0.324298352,
+        "latencyMs": 3954
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3954,
+          "generation": 0,
+          "total": 3954
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "para-throttle",
+      "conversationId": "",
+      "question": "How many calls can I make before you start throttling me?",
+      "tags": [
+        "paraphrase"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 6,
+        "topScore": 0.239021733,
+        "latencyMs": 2154
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2154,
+          "generation": 0,
+          "total": 2154
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "para-where-data-lives",
+      "conversationId": "",
+      "question": "Where does my information physically live?",
+      "tags": [
+        "paraphrase"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 2,
+        "topScore": 0.339311093,
+        "latencyMs": 2356
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2356,
+          "generation": 0,
+          "total": 2356
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "para-2fa",
+      "conversationId": "",
+      "question": "Can I force everyone on my team to use an authenticator app?",
+      "tags": [
+        "paraphrase"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.230093837,
+        "latencyMs": 5099
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 5099,
+          "generation": 0,
+          "total": 5099
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "para-downgrade-timing",
+      "conversationId": "",
+      "question": "If I move to a cheaper plan, when does it kick in?",
+      "tags": [
+        "paraphrase"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.409687757,
+        "latencyMs": 2140
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2140,
+          "generation": 0,
+          "total": 2140
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "typo-refund",
+      "conversationId": "",
+      "question": "waht is yuor refudn policy?",
+      "tags": [
+        "typo"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 1,
+        "topScore": 0.425850093,
+        "latencyMs": 1786
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 1786,
+          "generation": 0,
+          "total": 1786
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "typo-encription",
+      "conversationId": "",
+      "question": "how do you handel encrpytion of my data?",
+      "tags": [
+        "typo"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 2,
+        "topScore": 0.422339618,
+        "latencyMs": 2111
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2111,
+          "generation": 0,
+          "total": 2111
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "typo-webhok",
+      "conversationId": "",
+      "question": "how do i verfy a webhok signatuer?",
+      "tags": [
+        "typo"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "precisionAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "ndcgAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "reciprocalRank": 0,
+        "hitAtProductionK": false,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 8306
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 8306,
+          "generation": 0,
+          "total": 8306
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "typo-anual",
+      "conversationId": "",
+      "question": "how mcuh is the anual team plann",
+      "tags": [
+        "typo"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.378603876,
+        "latencyMs": 13181
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 13181,
+          "generation": 0,
+          "total": 13181
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "typo-sopport",
+      "conversationId": "",
+      "question": "wat hours is sopport open on the weeknd",
+      "tags": [
+        "typo"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 2,
+        "topScore": 0.238382116,
+        "latencyMs": 3078
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3078,
+          "generation": 0,
+          "total": 3078
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "follow-annual",
+      "conversationId": "",
+      "question": "What about the annual one?",
+      "tags": [
+        "follow-up"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "reciprocalRank": 1,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 3,
+        "topScore": 0.254062861,
+        "latencyMs": 3825
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3825,
+          "generation": 0,
+          "total": 3825
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "follow-after-30",
+      "conversationId": "",
+      "question": "And after that?",
+      "tags": [
+        "follow-up"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "precisionAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "ndcgAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "reciprocalRank": 0,
+        "hitAtProductionK": false,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 5218
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 5218,
+          "generation": 0,
+          "total": 5218
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "follow-which-regions",
+      "conversationId": "",
+      "question": "Which ones can I pick?",
+      "tags": [
+        "follow-up"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "precisionAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "ndcgAtK": {
+          "3": 0,
+          "5": 0,
+          "10": 0
+        },
+        "reciprocalRank": 0,
+        "hitAtProductionK": false,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 5657
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 5657,
+          "generation": 0,
+          "total": 5657
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "follow-can-i-change",
+      "conversationId": "",
+      "question": "Can I change it later?",
+      "tags": [
+        "follow-up"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 0.6309297535714575,
+          "5": 0.6309297535714575,
+          "10": 0.6309297535714575
+        },
+        "reciprocalRank": 0.5,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 5,
+        "topScore": 0.285212576,
+        "latencyMs": 9380
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 9380,
+          "generation": 0,
+          "total": 9380
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "follow-how-many-retries",
+      "conversationId": "",
+      "question": "How many times?",
+      "tags": [
+        "follow-up"
+      ],
+      "negative": false,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": 1,
+          "5": 1,
+          "10": 1
+        },
+        "precisionAtK": {
+          "3": 0.3333333333333333,
+          "5": 0.2,
+          "10": 0.1
+        },
+        "ndcgAtK": {
+          "3": 0.6309297535714575,
+          "5": 0.6309297535714575,
+          "10": 0.6309297535714575
+        },
+        "reciprocalRank": 0.5,
+        "hitAtProductionK": true,
+        "widenedOnEmpty": false,
+        "retrievedCount": 3,
+        "topScore": 0.7694805194805194,
+        "latencyMs": 11028
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 11028,
+          "generation": 0,
+          "total": 11028
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-mobile-app",
+      "conversationId": "",
+      "question": "Do you have a mobile app for iOS?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 2808
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2808,
+          "generation": 0,
+          "total": 2808
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-uptime-sla",
+      "conversationId": "",
+      "question": "What uptime percentage do you guarantee in your SLA?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 3777
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 3777,
+          "generation": 0,
+          "total": 3777
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-free-trial",
+      "conversationId": "",
+      "question": "Is there a free trial before I pay?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 2633
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2633,
+          "generation": 0,
+          "total": 2633
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-student-discount",
+      "conversationId": "",
+      "question": "Do you offer a student or nonprofit discount?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 7505
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 7505,
+          "generation": 0,
+          "total": 7505
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-sso-saml",
+      "conversationId": "",
+      "question": "Do you support SAML single sign-on with Okta?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 4000
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 4000,
+          "generation": 0,
+          "total": 4000
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-datacenter-provider",
+      "conversationId": "",
+      "question": "Which cloud provider runs your infrastructure?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": true,
+        "retrievedCount": 0,
+        "topScore": null,
+        "latencyMs": 8463
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 8463,
+          "generation": 0,
+          "total": 8463
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-pdf-export",
+      "conversationId": "",
+      "question": "Can I export my data as a PDF report?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.238672063,
+        "latencyMs": 7896
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 7896,
+          "generation": 0,
+          "total": 7896
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    },
+    {
+      "id": "neg-phone-number",
+      "conversationId": "",
+      "question": "What's your support phone number?",
+      "tags": [
+        "negative"
+      ],
+      "negative": true,
+      "answer": "",
+      "action": "skipped",
+      "confidence": null,
+      "rewrite": null,
+      "retrieval": {
+        "recallAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "precisionAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "ndcgAtK": {
+          "3": null,
+          "5": null,
+          "10": null
+        },
+        "reciprocalRank": null,
+        "hitAtProductionK": null,
+        "widenedOnEmpty": false,
+        "retrievedCount": 4,
+        "topScore": 0.275191,
+        "latencyMs": 2878
+      },
+      "generation": {
+        "faithfulness": null,
+        "unsupported": [],
+        "answerRelevance": null,
+        "correctness": null,
+        "contextPrecision": null,
+        "contextRecall": null,
+        "citationAccuracy": null,
+        "refusalCorrect": null,
+        "mustContainPassed": null,
+        "mustNotContainPassed": null
+      },
+      "operational": {
+        "latencyMs": {
+          "retrieval": 2878,
+          "generation": 0,
+          "total": 2878
+        },
+        "promptTokens": null,
+        "completionTokens": null,
+        "costUsd": null,
+        "costResolved": false,
+        "judgeCostUsd": null,
+        "generationIds": []
+      }
+    }
+  ]
+}

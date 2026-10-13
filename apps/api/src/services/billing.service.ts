@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isFreshWebhookTimestamp } from "./integrations/webhookReceiver.js";
 import {
   Organization,
   Subscription,
@@ -75,7 +76,7 @@ export function verifyPaddleSignature(rawBody: string, header: string | undefine
   const parts = Object.fromEntries(header.split(";").map((p) => p.split("=") as [string, string]));
   const ts = parts.ts;
   const h1 = parts.h1;
-  if (!ts || !h1) return false;
+  if (!ts || !h1 || !isFreshWebhookTimestamp(ts)) return false;
   const expected = crypto.createHmac("sha256", secret).update(`${ts}:${rawBody}`).digest("hex");
   try {
     return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(h1, "hex"));

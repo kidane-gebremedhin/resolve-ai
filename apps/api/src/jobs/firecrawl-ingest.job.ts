@@ -1,7 +1,7 @@
 // Firecrawl polling job — runs every 30s.
 // Finds website-type sources currently being crawled, polls Firecrawl for
-// status, and when complete pipes the resulting pages through chunk/embed/upsert
-// via `ingestCrawlResults`.
+// status, and when complete hands the pages to `ingestCrawlResults`, which runs
+// the same `ingestSource` pipeline as every other source type.
 //
 // Crawl IDs are stashed on `embeddingError` as `firecrawl:<id>` by the
 // `POST /knowledge/website` route (see `extractCrawlId` in firecrawl.service).
@@ -102,6 +102,10 @@ export async function firecrawlPollOnce(): Promise<void> {
       continue;
     }
 
+    // Set once `ingestSource` has the source. From then on a failure is already
+    // recorded on the row (classified error, retry count), and writing the raw
+    // message over it here would undo that and count the attempt twice.
+    let handedToPipeline = false;
     try {
       const status = await pollCrawl(crawlId);
       if (status.status === "scraping") {
@@ -127,11 +131,17 @@ export async function firecrawlPollOnce(): Promise<void> {
 
       // status === "completed"
       const pages = status.data ?? [];
+      handedToPipeline = true;
       await ingestCrawlResults(id, pages);
       // Best-effort site defaults → widget title + agent avatar (never regresses sync status).
       await applySiteDefaults(src._id, pages as CrawlPage[]);
     } catch (err) {
       const message = (err as Error).message;
+      const recorded = handedToPipeline && (await KnowledgeSource.exists({ _id: src._id, embeddingStatus: "error" }));
+      if (recorded) {
+        logger.error("[firecrawl-job] ingest failed", { sourceId: id, err: message });
+        continue;
+      }
       try {
         await KnowledgeSource.updateOne(
           { _id: src._id },

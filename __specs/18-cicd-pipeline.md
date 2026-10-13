@@ -193,6 +193,9 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    # `secrets` is not allowed in a step `if:`; GitHub rejects the whole file.
+    env:
+      COOLIFY_WEBHOOK_CONFIGURED: ${{ secrets.COOLIFY_WEBHOOK_URL != '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -245,6 +248,7 @@ jobs:
           cosign sign --yes ghcr.io/${{ github.repository_owner }}/csb-${{ matrix.app }}@${{ steps.meta.outputs.digest }}
 
       - name: Notify Coolify
+        if: env.COOLIFY_WEBHOOK_CONFIGURED == 'true'
         env:
           COOLIFY_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
@@ -254,6 +258,18 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"app\":\"${{ matrix.app }}\",\"branch\":\"${{ github.ref_name }}\",\"sha\":\"${{ github.sha }}\"}"
 ```
+
+Two rules every workflow here depends on, both learned from a period where every
+run failed before reaching a single step of real work (2026-09-18 to 2026-10-13):
+
+- **`.nvmrc` is committed.** Every job reads the Node version from it through
+  `node-version-file`. It was once listed in `.gitignore`, so on GitHub the file
+  did not exist and `actions/setup-node` failed in every job.
+- **Never reference `secrets` in an `if:`.** GitHub only allows `env`, `github`,
+  `inputs`, `job`, `matrix`, `needs`, `runner`, `steps`, `strategy` and `vars`
+  there. A step-level `if: ${{ secrets.X != '' }}` makes GitHub reject the whole
+  file, so the run fails with no jobs. Copy the check into a job-level `env`
+  value and test that. Run `actionlint` on any workflow edit; it catches both.
 
 ### 2.3 `.github/workflows/deploy-production.yml` — manual gate
 
@@ -419,6 +435,27 @@ CMD ["node", "dist/index.js"]
 `/health` returns `200` with `{ ok: true, mongo: 'up' | 'down', pinecone: 'up' | 'down', uptime: number }`.
 
 ---
+
+### 3.4 Lockfile discipline
+
+Every CI job and every Dockerfile installs with `pnpm install --frozen-lockfile`,
+which refuses to run if `pnpm-lock.yaml` disagrees with any manifest or with the
+root `pnpm.overrides`. So:
+
+- **Security overrides live in root `package.json` under `pnpm.overrides`**, never
+  only in the lockfile. A lockfile resolved with overrides that no manifest
+  declares fails every frozen install (`ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`).
+- **Scope an override to the major line it patches.** An unbounded override
+  such as `"brace-expansion": ">=1.1.16"` drags every consumer to the newest
+  major: it resolved `minimatch@3`'s `^1.1.7` to `brace-expansion@5`, whose API
+  is different, and ESLint crashed with `expand is not a function`. Write it as
+  `"brace-expansion@^1": "^1.1.16"` so 1.x consumers get the patched 1.x and
+  everyone else keeps the range they asked for.
+- **A version bump changes the manifest and the lockfile together.** Running
+  `pnpm update` (or a Dependabot lockfile-only PR) and committing just the
+  lockfile leaves a specifier mismatch (`ERR_PNPM_OUTDATED_LOCKFILE`).
+- Check before pushing: `pnpm install --frozen-lockfile --lockfile-only` verifies
+  the two agree in seconds without touching `node_modules`.
 
 ## 4. Caching Strategy
 

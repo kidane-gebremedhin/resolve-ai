@@ -245,7 +245,7 @@ async function Overview() {
               {recent.map((r) => (
                 <tr key={r._id} className="hover:bg-surface">
                   <td className="px-5 py-3 font-medium">
-                    <Link href={`/app/inbox?c=${r._id}`} className="hover:underline">
+                    <Link href={`/app/inbox/${r._id}`} className="hover:underline">
                       {r.subject?.trim() || r.lastMessagePreview?.slice(0, 60) || "(no subject)"}
                     </Link>
                   </td>

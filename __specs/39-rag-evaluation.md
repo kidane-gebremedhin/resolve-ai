@@ -434,7 +434,11 @@ selected window.
 | End-to-end latency | Wall clock from the start of a turn to its persisted reply, p50 and p95 | Includes retrieval, every tool round trip and both finalize calls. It is not the time to first token, which is what the customer actually sees |
 | Source retrieval count | Turns in which this source contributed at least one passage | |
 | Source mean top score | Average top score across the turns where this source ranked **first** | Exact rather than approximate: the turn's top score belongs to the top-ranked source, so turns where this source placed lower are excluded rather than credited with another source's score |
-| Never retrieved | Ready sources that no turn in the window retrieved | Dead weight in the index. Either the content is unreachable by the questions being asked, or nobody is asking about it |
+| Never retrieved | Ready sources, indexed for the whole window, that no turn in the window retrieved | Dead weight in the index. Either the content is unreachable by the questions being asked, or nobody is asking about it. A source added during the window is not judged until a full window has passed |
+| Failing ingestion | Sources whose last ingestion attempt ended in an error or produced no passages | A source that never indexed cannot be retrieved, so it looks like dead weight on a relevance panel. The fix is repairing or re-running the source, not deleting it |
+| Misleading passage | A passage retrieved at least `KB_HEALTH_MIN_RETRIEVALS` times whose citing replies were thumbed down at or above `KB_HEALTH_DOWNVOTE_RATE` | Only thumbs on replies that cited the passage count against it. This is the passage actively costing you, so fix its content first |
+| Retrieved but not cited | A passage retrieved at least `KB_HEALTH_MIN_RETRIEVALS` times, scoring at or above `KB_HEALTH_STRONG_SCORE`, that replies cited at or below `KB_HEALTH_UNCITED_RATE` of the time | Good enough to retrieve, not good enough to quote. Usually a badly split passage rather than an irrelevant one |
+| Dead-weight passage | A passage, indexed for the whole window, that no turn in the window retrieved | The passage-level version of Never retrieved. A document is rarely uniformly good, so one dead passage is not a reason to delete its source |
 
 ### Retention and PII
 
@@ -470,3 +474,25 @@ skipped entirely without provider credentials so forks do not fail.
 
 The full dataset is run deliberately before and after a retrieval change, not on
 every push. See the RUNBOOK.
+
+The job never ran until 2026-10-13: every CI job failed at `setup-node` because
+`.nvmrc` was gitignored (see [`18-cicd-pipeline.md`](18-cicd-pipeline.md)).
+
+## Committed baselines
+
+`reports/` holds run artifacts and is gitignored. A run worth comparing against
+is copied into `baselines/` and committed, named `<scope>-<date>.json`.
+
+| File | Scope | Settings | Retrieval |
+| --- | --- | --- | --- |
+| `baselines/retrieval-2026-10-13.json` | `--retrieval-only`, all 45 cases | `AI_QUERY_REWRITE_ENABLED=false` (the code default), rerank and conflict detection on, `text-embedding-3-small` | Recall@5 0.919, nDCG@5 0.896, MRR 0.892, hit rate @8 0.919 |
+
+There is no generation baseline yet. The 2026-10-13 full run was stopped after
+5 cases because the OpenRouter balance could not cover the answering or judge
+calls (402 on every one), so its generation metrics would have scored fallback
+replies. Run `pnpm eval:rag` once the balance is topped up and commit the result
+as `baselines/full-<date>.json`.
+
+In `--retrieval-only`, `mustContain` / `mustNotContain` are null (there is no
+answer to check) and the rewrite rows are null when rewriting is off. Both used
+to print fake values: a 0% pass rate and a 100% fallback rate.

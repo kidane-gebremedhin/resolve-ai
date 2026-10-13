@@ -42,9 +42,14 @@ function fakeSocket(auth: Record<string, unknown> | undefined, rooms: string[] =
     },
   } as unknown as Socket;
 
+  const broadcast: Array<{ room: string; event: string; payload: unknown }> = [];
   const io = {
-    to() {
-      return { emit() {} };
+    to(room: string) {
+      return {
+        emit(event: string, payload: unknown) {
+          broadcast.push({ room, event, payload });
+        },
+      };
     },
   } as unknown as IoServer;
 
@@ -53,6 +58,7 @@ function fakeSocket(auth: Record<string, unknown> | undefined, rooms: string[] =
 
   return {
     emitted,
+    broadcast,
     async fire(event: string, payload: Record<string, unknown>) {
       await handlers.get(event)?.(payload);
       await new Promise((r) => setTimeout(r, 20));
@@ -124,6 +130,29 @@ describe("conversation-scoped socket events reject a foreign id", () => {
       const messages = await Message.find({ conversationId: convoA });
       expect(messages).toHaveLength(1);
       expect(messages[0]!.role).toBe("operator");
+      expect(generateAiReply).not.toHaveBeenCalled();
+    });
+
+    it("an operator's reply takes the conversation over and reaches the visitor", async () => {
+      const s = fakeSocket({
+        kind: "operator",
+        organizationId: String(orgA),
+        userId: String(new mongoose.Types.ObjectId()),
+      });
+      await s.fire("message:send", { conversationId: convoA, content: "I'll take it from here" });
+
+      const after = await Conversation.findById(convoA).lean();
+      expect(after!.status).toBe("escalated");
+      expect(after!.escalatedAt).toBeInstanceOf(Date);
+      const rooms = s.broadcast.filter((e) => e.event === "message:new").map((e) => e.room);
+      expect(rooms).toEqual(
+        expect.arrayContaining([`org:${orgA}`, `conversation:${convoA}`, `contact:${ownerSession}`]),
+      );
+      expect(s.broadcast.some((e) => e.event === "conversation:updated")).toBe(true);
+
+      // And the AI stays quiet on the customer's next message.
+      const visitor = fakeSocket(asContact(ownerSession));
+      await visitor.fire("message:send", { conversationId: convoA, content: "thanks" });
       expect(generateAiReply).not.toHaveBeenCalled();
     });
 

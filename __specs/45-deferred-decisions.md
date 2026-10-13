@@ -3,225 +3,295 @@
 Every decision parked with a default during P1-P11, presented as: what the
 default was, what the numbers now say, what changing it costs, and a
 recommendation. **The decisions are the owner's; this document stops at the
-recommendation.**
+recommendation.** Updated 2026-10-09; provenance tags as in
+`37-rag-pipeline-audit.md` (**[measured]**, **[recorded]**, **[telemetry]**,
+**[code]**, **[derived]**). Prices marked *list* were fetched on 2026-10-09 from
+`https://openrouter.ai/api/v1/models` and `https://www.pinecone.io/pricing/`.
 
 ---
 
-## 0. A gap in the evidence, stated first
+## 0. The evidence base, stated first
 
-**The P1-P11 changelogs no longer exist.** They were written to
-`CHANGELOG_*.md`, a pattern that `.gitignore` excluded, so they were never
-tracked and did not survive a clean. Git history holds seven changelogs, but they
-are the project's *earlier* work (subscriptions, plans, usage tracking, admin
-sessions) and predate the P-series entirely; none contains a "proceeded under
-assumption" line.
+**Changelogs.** The previous version of this section said the P1-P11 changelogs
+were unrecoverable and that no surviving changelog contained a "proceeded under
+assumption" line. **The second half was wrong.** What git actually holds:
 
-So §4 below is **reconstructed** from code comments, spec text, and
-`IMPLEMENTATION_AUDIT.md`. It is the best register that can be built from what
-survives, and it is not the same thing as reading the originals. The one
-assumption class most likely to be under-represented is P1-P8, whose changelogs
-were written by earlier sessions and whose reasoning survives only where it was
-also written into a spec or a comment.
+| Changelog | Commit | Assumption lines |
+| --- | --- | --- |
+| Seven changelogs from the pre-RAG work (plans, usage, admin sessions) | `30c6602`, `c09c16a`, `298f65d`, `e2e06c8`, `3d14a66` | 0 (checked with `grep -i assum`) |
+| `CHANGELOG_1.md`, "End-to-end review pass" | `3d40ab5` (2026-08-27) | **2** |
+| `CHANGELOG_2.md`, "codebase review and fixes" | `89d2828` (2026-09-07) | **1** |
+| `CHANGELOG_1.md` to `CHANGELOG_5.md` in the working tree (Render guide, P9 audit, follow-up fixes, P11 audit, Render Node runtime) | untracked | **14** |
 
-**This is itself the first decision:** the pattern is now un-ignored, but
-un-ignoring does not save an untracked file from `git clean`. Only committing
-does.
+The per-phase changelogs P1-P8 were never tracked and are gone (`.gitignore` once
+excluded `CHANGELOG_*.md`; the pattern is now commented out at `.gitignore:76`,
+but untracked files still do not survive a clean). Their reasoning survives only
+where a phase also wrote it into a spec or a code comment, which is what the
+reconstructed register in §4.3 is built from.
+
+**Telemetry.** The development database (`csb-dev_mongo-data`, created
+2026-09-07) holds **1** `RagTurnMetric`, **1** `UsageRecord`, **0** knowledge
+sources. The figures the previous version quoted (63 answered turns, 1,516 usage
+rows, 1,453 embedding rows, an 8-chunk KB) came from a database that no longer
+exists on this machine and **cannot be reproduced**; they are not used below.
+
+**Eval reports.** `packages/rag-eval/reports/` is empty and git-ignored. The
+previous version counted 48 reports. Numbers from those runs survive only where a
+phase copied them into a spec, and are cited there as [recorded].
+
+**Provider calls.** No `OPENROUTER_API_KEY`, `EMBEDDING_API_KEY` or
+`PINECONE_API_KEY` is configured here, so nothing below involves a new model,
+judge, embedding or rerank call.
 
 ---
 
 ## 1. Eval judge model and budget
 
 **The default.** `RAG_EVAL_JUDGE_MODEL` and `RAG_FAITHFULNESS_JUDGE_MODEL` both
-default to `anthropic/claude-sonnet-4.5`, with the online sampler at
-`RAG_FAITHFULNESS_SAMPLE_RATE=0.05`. The judge is deliberately shared between the
-offline harness and online sampling so the two faithfulness numbers are
-comparable (`__specs/39`).
+default to `anthropic/claude-sonnet-4.5` (`apps/api/src/config/env.ts:287-290`),
+online sampling at `RAG_FAITHFULNESS_SAMPLE_RATE=0.05` (`config/env.ts:281`). One
+judge for both, so offline and online faithfulness are comparable
+(`__specs/39-rag-evaluation.md`). Judge output is capped at 4,000 tokens
+(`apps/api/src/services/ai/eval/judge.ts:80`).
 
 **What the numbers say.**
 
-| | Value | Source |
+| | Value | Provenance |
 | --- | --- | --- |
-| Stored eval reports | 48 | `packages/rag-eval/reports/` |
-| Reports with a faithfulness score | **0** | every one is `null` |
-| Reports with judge calls | **1** (19 calls) | `2026-08-27T22-18-06` |
-| Judge cost recorded on that run | **null** | cost settling never resolved |
-| Answering cost, that 45-case run | $0.3551 | same report |
-| Cost per answered production turn | **$0.0158** | $0.9978 / 63 `widget_reply` rows |
+| Cost per judged harness case (answer + judge) | **$0.019** | [recorded] `__specs/43-grounded-prompting.md:150-152` |
+| Full 45-case judged run | **≈ $0.86** | [derived] 45 × $0.019 |
+| CI smoke run (`pnpm eval:rag --limit 10`, judge on when secrets exist) | **≈ $0.19** per run that touches the RAG paths | [derived] 10 × $0.019; `.github/workflows/ci.yml:59-93` |
+| Online judge per sampled turn, Sonnet 4.5 | **≈ $0.014-0.023** | [derived] ~3.5-5k prompt tokens (context budget 3,000, `config/env.ts:103`, plus question, answer and instructions) and 300-800 output tokens, at *list* $3/M prompt, $15/M output |
+| Answering cost of a turn | $0.0099 (one turn) | [telemetry] |
+| Online overhead at 5% sampling | **≈ +7% to +12%** of answering spend | [derived] 0.05 × $0.014-0.023 / $0.0099 |
+| Per month | **≈ $1.10 per 1,000 turns** at the midpoint ($0.0185 × 50 sampled) | [derived]; real monthly volume unknown |
+| Faithfulness measured, offline or online | **never** | `__specs/43-grounded-prompting.md:148-152` |
 
-**There is no measured judge cost, and no measured faithfulness number, anywhere
-in this system.** That is the finding. The one run that called the judge recorded
-a null cost, so even that data point is unusable.
+**A cheaper judge.** At *list* prices `anthropic/claude-haiku-4.5` ($1/$5 per M)
+is about **3x cheaper** than Sonnet 4.5, and `openai/gpt-4o-mini` ($0.15/$0.60) about
+**20x**. **Agreement with the current judge is undetermined:** it needs both
+judges run over the same cases, and neither has produced a single faithfulness
+score yet.
 
-**What changing it costs.** Deriving rather than measuring, and flagged as such:
-a judge call carries the question, reference answer, retrieved passages and the
-answer under test, so roughly 1-3k prompt tokens and a few hundred completion
-tokens. At Sonnet-class list pricing that is order **$0.01-0.02 per case**, so a
-45-case run is order **$0.50-0.90** and the 10-case CI smoke order **$0.10-0.20**.
-Online at 5% of turns, the judge adds order **$0.0005-0.001 per turn**, against a
-measured $0.0158 answering cost, i.e. **3-6% overhead**.
+**Cost of changing.** One env var per judge, no code.
 
-Substituting a cheaper judge cannot be assessed: agreement between two judges on
-the same cases needs both to have run, and neither has.
-
-**Recommendation.** Fund one full 45-case run with the judge enabled and one week
-of online sampling at the current rate, then decide. The overhead is small enough
-that the cheaper-judge question is probably not worth answering; the *absence of
-any faithfulness number* is the real problem, and it is ranked #2 in
-`__specs/37`. Budget order $1 offline and single-digit dollars per month online.
-
-**Blocked here:** the OpenRouter balance on this account is exhausted (observed
-`402 ... exceed your available credits` during this audit), so no run was
-possible.
+**Recommendation.** Do not optimise the judge before it has run. Fund one judged
+45-case run (≈ $0.86) and one week of online sampling; then run the same 45 cases
+with Haiku 4.5 and compare per-claim verdicts. Switch only if agreement on
+unsupported claims is high, because the claims a cheaper judge misses are the
+hallucinations this metric exists to catch.
 
 ---
 
 ## 2. Reindex tolerance
 
-**The default.** `scripts/reembed.ts` backfills the `KbChunk` mirror and can
-re-embed a whole corpus after an embedding-model change. `__specs/41` records
-that changing `EMBEDDING_MODEL` **requires a full reindex** because mixed vector
-spaces return nonsense.
+**The default.** `apps/api/scripts/reembed.ts` re-ingests sources through the
+real pipeline; it is both the repair for unembedded sources and the backfill for
+the P4 mirror (`reembed.ts:1-25`). Changing `EMBEDDING_MODEL` requires a full
+re-embed, because mixed vector spaces return nonsense (`__specs/41-hybrid-retrieval.md`).
 
 **What the numbers say.**
 
-| | Value | Source |
+| | Value | Provenance |
 | --- | --- | --- |
-| Largest real KB on this instance | 7 sources, **8 chunks** | `knowledgesources`, `kbchunks` |
-| Measured embedding cost | **$0.0000201 per 1k tokens** | $0.00048284 over 24,142 tokens, 1,453 rows |
-| Derived cost, 25MB document | ~26,162 chunks, ~7.8M tokens, **~$0.16** | measured chunk counts, §1 of `__specs/38` |
-| Derived cost, 100k-chunk corpus | ~30M tokens, **~$0.60** | same rate |
+| Largest real KB on this machine | **none** (0 sources in the dev volume; 2 in the pre-RAG volume) | [telemetry] |
+| Chunks per 25MB source | 24,286-25,833 | [measured] `38-scale-and-load-risks.md` §1 |
+| Chunk time per 25MB source, by shape | 0.1s (plain prose) to **537s** (CSV) | [measured] same |
+| Embedding price, `text-embedding-3-small` | $0.02 per M tokens | [recorded] `__specs/41-hybrid-retrieval.md:204` |
+| Re-embed a 25MB source | ≈ 7.5M tokens, **≈ $0.15** | [derived] 25k chunks × ~300 tokens |
+| Re-embed a 100,000-chunk platform | ≈ 30M tokens, **≈ $0.60** | [derived] |
+| Switch to `text-embedding-3-large` @1536 | $0.13/M, **6.5x**; Recall@3 0.959 → 1.000, MRR 0.912 → 0.923 on the fixture set | [recorded] `__specs/41-hybrid-retrieval.md:201-217` |
+| Wall-clock duration for a large KB | **undetermined**: no corpus to run it on, and no key for the network time | |
 
-**The "largest real KB" is 8 chunks.** There is no large corpus on this instance,
-so the honest answer to "measured duration and USD for the largest real KB" is:
-too small to measure. The rate is solid (1,453 samples); the corpus is not there.
+**What the resumability survives.** `--resume` skips any source whose mirror row
+count already equals its chunk count (`reembed.ts:21-25`). That is correct for
+the **mirror backfill** (same vectors, same space) and survives a crash, kill or
+redeploy, because it reads outcomes rather than a checkpoint. It is **not** safe
+for an **embedding-model change**: a source re-embedded under the old model also
+has a matching mirror, so a resumed run would skip it and leave the corpus in two
+vector spaces. Two more properties [code]: the script loads every selected
+source's full text in one query (`reembed.ts:50-57`, no cursor) and ingests them
+one at a time (`:111-125`), each through the chunker whose cost is in
+`38-scale-and-load-risks.md` §1, **inside whatever process runs it**.
 
-**Resumability survives more than a checkpoint file would.** `reembed.ts:21`:
-resumability is *by observed state*, not a checkpoint — `--resume` skips sources
-already mirrored. That survives a crash, a kill and a redeploy, because the state
-it reads is the outcome, not a note about the outcome.
+**Fixed 2026-10-10** (`37` §8). Each source now records the model its vectors
+were written with (`KnowledgeSource.embeddingModel`, stamped on every successful
+ingest), and `--resume` skips a source only when its mirror is complete **and**
+that model equals the current `EMBEDDING_MODEL`. A resumed run after a model
+change therefore finishes the change instead of stopping at a two-space corpus.
+Sources ingested before the field existed have no stamp and count as stale, so
+the first `--resume` after this change re-embeds them once. The script no longer
+loads text: the cost estimate is summed in MongoDB and sources are walked with a
+cursor. Ingests still run inside the script's process, one at a time.
 
-**What a customer sees while it runs.** Re-embedding writes new vectors under the
-same ids, so retrieval keeps working against the old vectors until each source is
-replaced. The visible risk is not downtime but **a window of mixed vector spaces**
-if the model changed: sources already re-embedded and sources not yet re-embedded
-are in different spaces, and similarity between them is meaningless.
+**What a customer sees while it runs.** Per source: status flips to
+`processing` in the dashboard (`apps/api/src/services/kb/ingestion.service.ts:94`);
+vectors are overwritten in place by id, so dense retrieval keeps working; the
+mirror is deleted then reinserted (`:267-269`), so for that interval the lexical
+leg misses that source. For a model change, every query between the first and last
+source re-embedded compares a new-space query against a mix of old- and new-space
+passages.
 
-**Recommendation.** Two different shapes for two different jobs:
+**Cost of changing the model.** About $0.60 per 100k chunks in embeddings
+[derived], plus the run time, which is dominated by chunking on CSV/HTML-heavy
+corpora until `38` S1 is fixed.
 
-- **Mirror backfill only** (no model change): no window needed. Same vector
-  space, resumable, run it live.
-- **Embedding-model change**: needs a window, because of the mixed-space problem
-  above. Shape it per-agent rather than per-platform: drain one agent, re-embed
-  it, restore it. Agents are independent knowledge bases, so a rolling
-  per-agent migration keeps every other tenant fully live.
+**Recommendation.**
 
-**Who absorbs the cost:** at $0.0000201 per 1k tokens, a full re-embed of a
-100k-chunk corpus is under a dollar. This is not a cost worth billing to a
-customer or gating on approval; absorb it.
+- **Mirror backfill, same model:** no window. Run live with `--resume`.
+- **Embedding-model change:** a window, shaped **per agent**: take one agent's
+  KB, re-embed it fully without `--resume` (or with a resume rule keyed on the
+  model, which does not exist yet), restore it, move to the next. Agents are
+  independent knowledge bases, so every other tenant stays live.
+- **Who absorbs the cost:** at under a dollar per 100k chunks, absorb it. It is
+  not worth a customer-facing approval step.
+- **Fix `38` S1 first,** or a single CSV-heavy agent blocks the process running
+  the migration for minutes per source.
 
 ---
 
 ## 3. Rerank provider
 
-**The default.** `KB_RERANK_ENABLED=false`, and when enabled
-`KB_RERANK_PROVIDER=pinecone` with `bge-reranker-v2-m3`. The alternative is
-`llm`, which reuses `AI_QUERY_REWRITE_MODEL` (`rerank.ts:132-138`).
+**The default.** `KB_RERANK_ENABLED=false` (`config/env.ts:135`). When enabled,
+`KB_RERANK_PROVIDER=pinecone` with `bge-reranker-v2-m3` (`:136-137`); the
+alternative `llm` reuses `AI_QUERY_REWRITE_MODEL`, default
+`anthropic/claude-haiku-4.5` (`apps/api/src/services/ai/retrieval/rerank.ts:132-138`,
+`config/env.ts:82`).
 
-**What the numbers say.** Both providers are reachable in principle
-(`PINECONE_API_KEY` and `OPENROUTER_API_KEY` are both present), but **no
-comparison exists**:
+**What the numbers say.**
 
-| Metric requested | Pinecone | LLM | Status |
+| Metric | Rerank off | Pinecone `bge-reranker-v2-m3` | `llm` (Haiku 4.5) |
 | --- | --- | --- | --- |
-| Precision@5 | — | — | never measured |
-| Faithfulness | — | — | never measured for either (see §1) |
-| p95 latency | — | — | never measured |
-| USD per turn | — | — | never measured |
+| Recall@5, 45 cases | **1.000** | 0.919 | not measured |
+| MRR | **0.912** | 0.892 | not measured |
+| Multi-hop Precision@5 | 0.227 | **0.367** | not measured |
+| Negative cases routed to "no evidence" | 0 of 8 | **8 of 8** | not measured |
+| Faithfulness | not measured | not measured | not measured |
+| p50 / p95 latency, 50 candidates | n/a | 1,155 / 1,295ms (8 calls) | not measured |
+| USD per search | n/a | **$0.002** (*list*: $2 per 1k requests) | **≈ $0.015-0.02** [derived]: 50 candidates × ~300 tokens ≈ 15k prompt tokens at *list* $1/M |
 
-What *is* recorded: `KB_RERANK_MIN_SCORE = 0.0005` was chosen by a measured sweep
-over the eval set (`__specs/42`: 0.02 → 0.422 no-evidence rate, 0.0005 → 0.200
-against an ideal of 0.178). That sweep tells you the floor is calibrated for
-`bge-reranker-v2-m3` specifically, and **not** that reranking beats no reranking.
+Pinecone figures are [recorded] in `__specs/42-reranking.md:144-157,170`. A turn
+makes one search when it searches at all, so Pinecone reranking adds ≈ **$0.002
+per searching turn, about 20%** of the one measured turn's $0.0099, plus about
+1.2s.
 
-**The exact experiment.** Three retrieval-only harness runs on the same fixture
-set, which spends embedding tokens but no judge or answering tokens:
+**Cost of changing.** One env var. The `KB_RERANK_MIN_SCORE` floor (0.0005,
+`config/env.ts:162`) was calibrated for `bge-reranker-v2-m3` specifically
+(`__specs/42-reranking.md:98-106`); switching to `llm` needs a new sweep.
 
-```bash
-KB_RERANK_ENABLED=false pnpm eval:rag --retrieval-only
-KB_RERANK_ENABLED=true KB_RERANK_PROVIDER=pinecone pnpm eval:rag --retrieval-only
-KB_RERANK_ENABLED=true KB_RERANK_PROVIDER=llm     pnpm eval:rag --retrieval-only
-```
-
-Compare Precision@5, MRR and the rerank `latencyMs` and `rankCorrection` fields
-already recorded per turn. `rankCorrection` is the decisive one: a reranker that
-never changes the top result is latency and money for nothing.
-
-**Recommendation.** Keep `pinecone` as the default *when reranking is turned on*:
-it is a hosted cross-encoder, an order of magnitude cheaper per call than asking
-an LLM the same question, and it returns a calibrated score rather than a number
-a language model invented. But **run the three-way comparison before enabling
-reranking at all** — the decision that matters is not which provider, it is
-whether the feature earns its latency, and nothing in this repository answers
-that yet.
-
-**Blocked here:** the harness needs embedding spend and the account balance is
-exhausted.
+**Recommendation.** Keep **Pinecone** as the provider default: it is the only
+one measured, it is about 8-10x cheaper per search than the LLM path, and its
+score is calibrated. Whether to **enable** reranking is the real decision: it
+trades 8 points of Recall@5 on answerable questions and ~1.2s for correctly
+refusing 8 of 8 unanswerable ones. The measurement that would settle it,
+refusal correctness and faithfulness with and without reranking, needs the
+judged run in §1. Run that first; it costs about $1.71 for the pair.
 
 ---
 
 ## 4. Every recorded "proceeded under assumption"
 
-Reconstructed per §0. Grouped by where the assumption still lives.
+### 4.1 From the recovered changelogs (verbatim source, current status)
 
-### Still true and still load-bearing
-
-| # | Assumption | Where it is recorded | Status |
+| # | Assumption | Source | Status today |
 | --- | --- | --- | --- |
-| A1 | Telemetry retention is 90 days, configurable, matching `ToolCallLog` | `__specs/12` §6.8, `RagTurnMetric.ts` | Holds |
-| A2 | Telemetry query text is masked **unconditionally**, not gated on the org's `piiRedaction` setting | `__specs/12` §6.9 | Holds |
-| A3 | Retrieval-confidence weights (0.60/0.25/0.15) are **tuned, not measured** | `__specs/39`, `retrieval-confidence.ts` | Holds. Nothing routes on the number, so the cost of being wrong is low |
-| A4 | A turn's **first** KB search is the one recorded on the metric | `rag-telemetry.service.ts` `queriesOf` | Holds |
-| A5 | Per-source mean score is exact only for rank-1 turns, because P9 stores one `topScore` per turn | `__specs/03` §14b, `__specs/39` | Holds. Fixing it means adding `sourceScores` to the telemetry write |
-| A6 | `RAG_EVAL_REPORTS_DIR` defaults to a monorepo-relative path; an API-only image answers `available: false` | `__specs/13`, `rag-metrics.routes.ts` | Holds |
-| A7 | The knowledge-gap join runs in Node, not `$lookup`, because one side is PII-masked and the other is not | `__specs/07` RAG Metrics | Holds |
-| A8 | Weak chunks are surfaced by notification plus live dashboard, **not** persisted as findings | `__specs/04` "Index health" | Holds |
-| A9 | Drift is defined as "stored text does not hash to the stored `contentHash`" — the only drift detectable without re-fetching the original | `index-health.job.ts` | Holds |
-| A10 | `stale` is a **new field**, not a reuse of `priority`: "out of date" and "we stand behind this less" are different judgements | `KnowledgeSource.ts` | Holds |
-| A11 | Drift scan examines 5,000 sources per night, newest first; bounds work, not memory | `index-health.job.ts` `MAX_DRIFT_SCAN` | Holds |
-| A12 | `KB_HYBRID_ALPHA = 0.7` is **measured**, from a sweep (Recall@5 1.000 / MRR 0.912 vs 0.973 / 0.856 dense-only) | `__specs/41` | Holds |
-| A13 | `KB_RERANK_MIN_SCORE = 0.0005` is **measured**, from a sweep | `__specs/42` | Holds |
-| A14 | `KB_HEALTH_GAP_SIMILARITY = 0.55` is measured but on **7 queries from one corpus** — a starting point, not a tuned optimum | `__specs/04` | Holds, weakly. Re-measure on real gaps |
-| A15 | Judge output capped at 4,000 tokens; conflict check at 512 — because OpenRouter reserves `max_tokens` against the balance before the call | `__specs/05`, `judge.ts`, `conflict.ts` | Holds |
+| C1 | No backfill for historical fake-zero costs; rows with `costUsd: 0`, `promptTokens: 0` and non-empty `generationIds` are give-ups and should be set to null | `3d40ab5:CHANGELOG_1.md` "Proceeded under assumption" | Holds. The dev volume's only usage row is priced ($0.009915), so there is nothing to backfill here |
+| C2 | The drift scan cap is 5,000 sources per night, newest first; bounds time, not memory | `3d40ab5:CHANGELOG_1.md` | Holds: `apps/api/src/jobs/index-health.job.ts:39`. The scan sorts in memory (`38` §3, S9) |
+| C3 | Low confidence stays telemetry-only rather than auto-escalating, until a false-positive rate is measured against real traffic | `89d2828:CHANGELOG_2.md:160-168` | Holds; still open as A20 below. Contradicted by `__specs/05` "Confidence Monitoring & Auto-Escalation", which documents auto-escalation (drawn dashed in `E2E_FLOW.md` §4) |
+| C4 | Render: embed runs as a Docker web service, not a Static Site | working tree `CHANGELOG_1.md` | Holds; `RENDER_DEPLOYMENT_GUIDE.md` |
+| C5 | Render: Redis/Key Value left out, because nothing connects to `REDIS_URL` | `CHANGELOG_1.md` | Holds: `REDIS_URL` is read at `apps/api/src/config/env.ts:47` and used nowhere else |
+| C6 | Render: S3-compatible storage recommended over a disk | `CHANGELOG_1.md` | Holds |
+| C7 | "P9 merged" read as `RagTurnMetric` being on `main` | `CHANGELOG_2.md` | Holds |
+| C8 | The membership guard is scoped to the RAG metrics and index-health routers, not the global `requireOrg` | `CHANGELOG_2.md` | Holds: every other router still trusts the token's `organizationId` until expiry. **A decision:** extend it platform-wide, at one indexed probe per request |
+| C9 | P11's passage flags stay classified in Node over a bounded set | `CHANGELOG_2.md` | Superseded by `CHANGELOG_3` (exact counts, `38` closed items) |
+| C10 | Manifest versions aligned up to the lockfile, not down | `CHANGELOG_3.md` | Holds |
+| C11 | The `brace-expansion` override keeps its 1.1.16 floor for the 1.x line only | `CHANGELOG_3.md` | Holds. **The same unbounded-override mistake exists for `@xmldom/xmldom` and breaks every DOCX upload** (`38` §1 Finding 2); `CHANGELOG_3` carried it into `package.json` without catching it |
+| C12 | Passage flag rules stay in one function (`flagChunk`) rather than duplicated in a pipeline | `CHANGELOG_3.md` | Holds |
+| C13 | The dead-weight age rule uses the scoring window itself; no separate grace setting | `CHANGELOG_4.md` | Holds |
+| C14 | Migration 002 may delete orphan mirror rows automatically, because they belong to deletions already confirmed | `CHANGELOG_4.md` | Holds |
+| C15 | A foreign `agentId` on index-health reads matches nothing instead of falling back to org-wide | `CHANGELOG_4.md` | Holds |
+| C16 | Render Node runtime pinned to Node 20 (`NODE_VERSION=20`), matching the Docker images | `CHANGELOG_5.md` | Holds: `RENDER_DEPLOYMENT_GUIDE.md:176`; root `package.json:32` is `>=20.0.0` with no upper bound, which is why the pin exists |
+| C17 | The API runs migrations in its start command, not a Render pre-deploy command | `CHANGELOG_5.md` | Holds: `RENDER_DEPLOYMENT_GUIDE.md:158`, matching `apps/api/docker-entrypoint.sh` |
 
-### Superseded or resolved since
+### 4.2 Reconstructed register, re-verified
 
-| # | Assumption | What changed |
-| --- | --- | --- |
-| A16 | P9 stored source-level retrieval only | **Superseded.** P11 added `retrieval.chunks`; per-chunk scoring needed it and citation-proxying could not express `retrieved_not_cited` |
-| A17 | Spec claimed per-org Pinecone namespaces as a 🔴 Critical control | **Corrected.** Never implemented; `__specs/12` §1.3 now describes metadata filtering, with namespaces recorded as future hardening in `__specs/04` |
-| A18 | `pnpm audit` gating deferred until the backlog is triaged | **Still deferred**, now with a reason written into `ci.yml`. 63 vulnerabilities, 3 critical |
-| A19 | No backfill for historical fake-zero costs | **Holds**, and the population is now known: 2 of 1,516 usage rows |
+From specs and code comments (§0). Each status checked against the tree on
+2026-10-09.
 
-### Discovered during this audit, not previously recorded
-
-| # | Finding | Where | Status |
+| # | Assumption | Where | Status |
 | --- | --- | --- | --- |
-| A20 | **The P6 uncited-ratio control is not a control.** `finalize.node.ts` lowers confidence, but nothing routes on confidence: the only consumer of `AI_CONFIDENCE_THRESHOLD` is the telemetry flag. It is a signal, not a control | `E2E_FLOW.md` §4, `__specs/37` generation stage | **Comment fixed, decision still open.** The comments in `finalize.node.ts` and `config/env.ts` that claimed an escalation exists have been corrected to describe the actual behaviour. Whether low confidence *should* route to a human is a product change and is deliberately not made: it needs a false-positive rate measured against real traffic first, which needs the faithfulness sampling in risk 2 of `__specs/37` to have run |
-| A21 | No reasoning trace exists in graph state, and no document justifies its absence | `__specs/05` "ReAct conformance" §4a | Open |
-| A22 | Four scheduled loops have **no overlap guard** | `__specs/38` S1, S2 | **FIXED.** `jobs/serial-loop.ts` drops a tick whose predecessor is still running, for all four loops. `serial-loop.test.ts` |
+| A1 | Telemetry retention is 90 days, configurable | `apps/api/src/config/env.ts:271` | Holds |
+| A2 | Telemetry query text is PII-masked unconditionally | `__specs/12` §6.9, `models/RagTurnMetric.ts:31-35` | Holds |
+| A3 | Retrieval-confidence weights 0.60 / 0.25 / 0.15 are tuned, not measured | `apps/api/src/services/ai/retrieval/retrieval-confidence.ts:29-33` | Holds; nothing routes on it |
+| A4 | A turn's first KB search is the one recorded on the metric | `rag-telemetry.service.ts` | Holds |
+| A5 | Per-source mean score is exact only for rank-1 turns | `__specs/39` | Holds |
+| A6 | `RAG_EVAL_REPORTS_DIR` defaults to a monorepo path; an API-only image answers `available: false` | `config/env.ts`, `rag-metrics.routes.ts` | Holds |
+| A7 | The knowledge-gap join runs in Node because one side is masked | `rag-metrics.routes.ts` | Holds |
+| A8 | Weak chunks surface by notification and dashboard, not persisted findings | `__specs/04` | Holds |
+| A9 | Drift = stored text no longer hashes to `contentHash` | `jobs/index-health.job.ts` | Holds; a drift into a sibling's content is now skipped (`CHANGELOG_4`) |
+| A10 | `stale` is a field separate from `priority` | `models/KnowledgeSource.ts` | Holds, **but neither affects retrieval by default** (`37` R6): `stale` is read by nothing, `priority` only by conflict detection, which is off |
+| A11 | Drift scan examines 5,000 sources per night | `index-health.job.ts:39` | Holds (= C2) |
+| A12 | `KB_HYBRID_ALPHA = 0.7` is measured | `config/env.ts:124`; `__specs/41:164-182` | Holds [recorded] |
+| A13 | `KB_RERANK_MIN_SCORE = 0.0005` is measured | `config/env.ts:162`; `__specs/42:98-106` | Holds [recorded], for `bge-reranker-v2-m3` only |
+| A14 | `KB_HEALTH_GAP_SIMILARITY = 0.55` measured on 7 queries from one corpus | `config/env.ts:249` | Holds, weakly |
+| A15 | Judge output capped at 4,000 tokens, conflict check at 512 | `judge.ts:80`, `services/kb/conflict.ts:176` | Holds |
+| A16 | P9 stored source-level retrieval only | n/a | Superseded by P11 per-chunk records |
+| A17 | Per-org Pinecone namespaces as a critical control | `__specs/12` | Corrected: metadata filtering; namespaces are future hardening (`ingestion.service.ts:216-219`) |
+| A18 | `pnpm audit` advisory, not gating | `.github/workflows/ci.yml:194-201` | Holds. **Now 57 advisories, 5 critical, 21 high** [measured], against 63 / 3 critical recorded earlier |
+| A19 | No backfill of fake-zero costs | = C1 | Holds |
+| A20 | The uncited-ratio control is a signal, not a control | `finalize.node.ts:236-247` | **Open decision** |
+| A21 | No reasoning trace in graph state, and nothing justifies its absence | `__specs/05` "ReAct conformance" | Open |
+| A22 | Scheduled loops overlapped | `jobs/serial-loop.ts` | Fixed per process, and production now runs 1 API replica (`38` S4, fixed 2026-10-10) |
+
+### 4.3 Discovered during this audit, not previously recorded
+
+These were never written down as assumptions, but the code behaves as if each
+one were true:
+
+| # | Implicit assumption | Evidence | Reality |
+| --- | --- | --- | --- |
+| N1 | "Recent history" is the last messages | `apps/api/src/services/ai/graph/runner.ts:82` comment | The query returned the **first** 20. **Fixed 2026-10-10** (`services/ai/graph/history.ts`) |
+| N2 | Crawled websites go through the same pipeline as uploads | `ingestion.service.ts:126-131` comment ("mirroring the live-crawl path") | They did not on first ingest. **Fixed 2026-10-10**: crawls call `ingestSource` |
+| N3 | The lexical leg is served by the `{organizationId, agentId}` index | `models/KbChunk.ts:67-68` | It was not. **Fixed 2026-10-10**: the text index carries the tenant prefix |
+| N4 | Security overrides can be unbounded | root `package.json` `pnpm.overrides` | Broke `minimatch@3` and `mammoth`. **Both fixed**: overrides are scoped by major |
+| N5 | The API runs as one replica | `RUNBOOK.md` §10.3 | Production compose said 2. **Fixed 2026-10-10** |
+| N7 | Any extracted text fits on the source row | `models/KnowledgeSource.ts` `extractedText` | MongoDB caps a document at 16MB; a 25MB upload under the size cap could not be saved. **Fixed 2026-10-10**: a 15MB cap with a readable refusal (`text_too_large`) |
+| N6 | Marking a source stale or lowering its authority changes answers | P11 dashboard copy; `RUNBOOK.md` §13.5c | Not in the default configuration (A10) |
 
 ---
 
-## 5. What could not be determined
+## 5. Decisions, ordered by what needs the owner first
+
+| Order | Decision | Default today | Recommendation | Cost of changing |
+| --- | --- | --- | --- | --- |
+| 1 | **Fund the first judged eval run and a week of sampling** (§1) | Never run | Fund it; everything in §1 and §3 waits on it | ≈ $0.86 per run, ≈ $1.10 per 1,000 production turns |
+| 2 | **Enable reranking?** (§3) | Off | Decide after decision 1; keep Pinecone as provider | One env var; ≈ $0.002 and ~1.2s per searching turn |
+| 3 | **Low confidence → human?** (A20 / C3) | Telemetry only | Keep telemetry-only until decision 1 yields a false-positive rate; then decide | A routing change in `runner.ts` plus the measured false-positive rate |
+| 4 | **Membership check platform-wide?** (C8) | RAG routes only | Extend: revoked members otherwise keep access until token expiry | One indexed probe per authenticated request |
+| 5 | **Embedding model** (§2) | `text-embedding-3-small` | Stay until a judged run shows `3-large`'s +0.041 Recall@3 matters to answers | ≈ $0.60 per 100k chunks once, then 6.5x embedding cost |
+| 6 | **Make `stale` / `priority` mean something by default** (A10, N6) | Inert without conflict detection | Either feed `priority` into fusion ordering or change the dashboard copy to say it only matters with conflict detection on | Small code change, or a copy change |
+| 7 | **Commit changelogs and QA results** (§0) | Untracked, lost on clean | Commit them, or move them under `__specs/` | None |
+
+Defects with a known fix that need no decision were listed in
+`37-rag-pipeline-audit.md` §7 and `38-scale-and-load-risks.md` §6. All of them
+were fixed on 2026-10-10 (`37` §8). One new decision came out of that pass:
+
+| Order | Decision | Default today | Recommendation | Cost of changing |
+| --- | --- | --- | --- | --- |
+| 8 | **Large uploads in a 512MB container** (`38` S5) | 25MB upload cap, 15MB text cap, ingestion in the API process | Lower the cap for text-heavy types (CSV, TXT, MD, HTML) to ~5MB, or run ingestion in a worker. Measured on top of a 404MB idle process: +70MB at 5MB of text, +295-360MB at 14.5MB. The production process baseline (compiled, not `tsx`) has not been measured | A config change for the cap; a deploy topology change for the worker |
+
+## 6. What could not be determined
 
 | Question | Why | What would settle it |
 | --- | --- | --- |
-| Faithfulness of this system, offline or online | Never measured; 48/48 reports null | One 45-case run with the judge funded |
-| USD per judge call | The one run that called the judge recorded a null cost | Same run, with cost settling working |
-| Cheaper-judge agreement | Needs two judges over the same cases; neither has run | Two runs, same fixture set |
-| Rerank provider comparison | Neither provider has been benchmarked | The three commands in §3 |
-| Reindex duration for a large KB | The largest KB here is 8 chunks | Run `reembed.ts` against a real corpus |
-| `topK` vs corpus size | No large corpus, no seeding script | Test T1 in `__specs/38` §4 |
-| Concurrent turn ceiling | Every turn spends answering tokens; balance exhausted | Test T2 in `__specs/38` §4 |
-| Production latency distribution | 4 telemetry rows; the p95 is not a p95 | Accumulate real traffic |
-| The original P1-P8 assumption text | Changelogs unrecoverable (§0) | Nothing. Reconstruct forward, and commit from now on |
+| Faithfulness, offline or online | The judge has never produced a score | One judged 45-case run (≈ $0.86) and a week of sampling |
+| Cheaper-judge agreement | Needs two judges over the same cases | The same run repeated with Haiku 4.5 |
+| LLM rerank provider quality, latency | Never benchmarked | `KB_RERANK_ENABLED=true KB_RERANK_PROVIDER=llm pnpm eval:rag --retrieval-only`, then a new floor sweep |
+| p50 / p95 per hop, real traffic | One real turn exists | Real traffic; percentiles are already computed by `GET /rag-metrics/summary` |
+| Share of turns needing >1 search / hitting the tool ceiling | One turn (`toolTurns: 1`) | Same |
+| Whether the ceiling path really returns the apology (`37` G4) | No provider key | One turn against `openai/gpt-4o` with `AI_MAX_TOOL_TURNS=1` and a tool the model will call twice |
+| Reindex wall-clock for a large KB | No corpus; no key | `reembed.ts --all --dry-run`, then a real run, on a copy of a large tenant |
+| `topK` versus corpus size | No corpus larger than the fixture KB | `38` T1 |
+| Concurrent turn ceiling, OpenRouter rate limit | Needs live calls | `38` T2 (≈ $6) |
+| Filtered-query latency versus namespaces | No Pinecone key | `38` T3 |
+| The original P1-P8 assumption text | Never tracked | Nothing; reconstruct forward and commit from now on |

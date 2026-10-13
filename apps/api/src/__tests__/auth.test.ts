@@ -2,7 +2,18 @@
 // We construct a fresh app per suite so module-level state from other test
 // files cannot leak through.
 
-import { describe, expect, it, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll, vi } from "vitest";
+
+// The id_token is verified against Google's keys in production; here the
+// verifier returns a fixed, already-verified identity.
+vi.mock("../services/security/google-id-token.js", () => ({
+  verifyGoogleIdToken: vi.fn(async () => ({
+    sub: "google-sub-newcomer",
+    email: "google-newcomer@example.com",
+    emailVerified: true,
+    name: "Google Newcomer",
+  })),
+}));
 import request from "supertest";
 import type { Express } from "express";
 import { createApp } from "../test/app.js";

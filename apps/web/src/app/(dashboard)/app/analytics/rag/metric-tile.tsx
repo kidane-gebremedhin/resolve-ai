@@ -33,7 +33,9 @@ export function DefinitionPopover({
       >
         <Info className="h-3.5 w-3.5" aria-hidden />
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 text-xs leading-relaxed">
+      {/* collisionPadding keeps the card off the screen edge on a phone,
+          where a 288px popover is most of the viewport. */}
+      <PopoverContent align="start" collisionPadding={12} className="w-72 text-xs leading-relaxed">
         <div className="font-display text-sm font-semibold">{title}</div>
         <p className="mt-1.5 text-muted-foreground">{definition.definition}</p>
         {definition.example && (

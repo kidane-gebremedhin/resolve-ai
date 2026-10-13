@@ -32,7 +32,6 @@ import {
   RagTurnMetric,
 } from "../../models/index.js";
 import { env } from "../../config/env.js";
-import { logger } from "../../config/logger.js";
 import { maskPii } from "../integrations/piiMask.js";
 import { embed as defaultEmbed } from "../ai/embedding.service.js";
 
@@ -68,6 +67,9 @@ export type ChunkStats = {
 export type ChunkHealth = ChunkStats & {
   flags: ChunkFlag[];
   title: string | null;
+  /** The owning source's stored stale flag and authority, for the repair dialog. */
+  sourceStale: boolean;
+  sourcePriority: number;
   /** First ~200 characters, so an operator can recognise the passage. */
   preview: string | null;
 };
@@ -142,8 +144,20 @@ export function flagChunk(
 type ScopeArgs = {
   organizationId: string;
   agentId?: string | null;
+  /**
+   * A pre-validated agent clause, as `agentScopeFilter` builds it from
+   * `?agentId` or `?websiteId`. Takes precedence over `agentId`, so the routes
+   * scope exactly like every other panel on the page.
+   */
+  agentScope?: Record<string, unknown>;
   since?: Date;
 };
+
+function agentClause(args: ScopeArgs): Record<string, unknown> {
+  if (args.agentScope) return args.agentScope;
+  if (args.agentId) return { agentId: new mongoose.Types.ObjectId(args.agentId) };
+  return {};
+}
 
 function windowSince(args: ScopeArgs): Date {
   return args.since ?? new Date(Date.now() - env.kb.healthWindowDays * 24 * 60 * 60 * 1000);
@@ -163,8 +177,8 @@ export async function retrievedChunkStats(args: ScopeArgs): Promise<ChunkStats[]
     organizationId: new mongoose.Types.ObjectId(args.organizationId),
     createdAt: { $gte: since },
     "retrieval.chunks.0": { $exists: true },
+    ...agentClause(args),
   };
-  if (args.agentId) match.agentId = new mongoose.Types.ObjectId(args.agentId);
 
   const rows = await RagTurnMetric.aggregate<{
     _id: string;
@@ -246,42 +260,55 @@ export async function retrievedChunkStats(args: ScopeArgs): Promise<ChunkStats[]
 
 export type IndexHealthReport = {
   windowSince: Date;
+  /** Exact counts over the whole index, however large it is. */
   totals: {
     chunks: number;
     retrieved: number;
     deadWeight: number;
     misleading: number;
     retrievedNotCited: number;
-    /** True when the index is larger than `CHUNK_SCAN_LIMIT` and the counts above cover only part of it. */
-    truncated: boolean;
-    /** The cap that was applied, so a caller can say how much of the index the counts cover. */
-    scanLimit: number;
   };
   chunks: ChunkHealth[];
 };
 
-/**
- * How many chunks a single health scan will read.
- *
- * The scan has to list every chunk, because dead weight is defined by the
- * ABSENCE of telemetry and so cannot be found from the telemetry side. That
- * makes the query grow with the customer's knowledge base, and this runs on a
- * dashboard load, so it needs a ceiling.
- *
- * The ceiling is not the problem; reporting a capped count as if it were the
- * whole index is. An org with 25k chunks would be told it had exactly 20,000
- * chunks and shown a dead-weight number computed from an arbitrary subset, with
- * nothing to indicate either was partial. The scan now detects the overflow and
- * says so, and callers surface it rather than quoting the number as complete.
- */
-export const CHUNK_SCAN_LIMIT = 20_000;
+/** A chunk no turn in the window retrieved: no telemetry, so every rate is null. */
+function emptyStats(chunkId: string, sourceId: string): ChunkStats {
+  return {
+    chunkId,
+    sourceId,
+    retrievals: 0,
+    meanRank: null,
+    meanScore: null,
+    meanRerankScore: null,
+    citedCount: 0,
+    citationRate: null,
+    escalatedCount: 0,
+    escalationRate: null,
+    thumbsUp: 0,
+    thumbsDown: 0,
+    downvoteRate: null,
+    lastRetrieved: null,
+  };
+}
 
 /**
  * The full picture: every chunk in the index, scored, flagged and named.
  *
- * Dead weight is computed from the CHUNK side rather than the telemetry side —
- * a chunk that was never retrieved leaves no telemetry row at all, so the only
- * place it can be found is the index itself.
+ * Exact for an index of any size, without listing it. The two flags that need
+ * telemetry (`misleading`, `retrieved_not_cited`) can only apply to a chunk
+ * that was retrieved, so they are scored over the retrieved set, which is
+ * bounded by traffic rather than by the size of the knowledge base. Dead weight
+ * is the set difference: every chunk in the index, counted by MongoDB, minus
+ * the retrieved chunks that still exist in it. Only the handful of dead-weight
+ * rows actually returned are read, with a bounded `$nin` query.
+ *
+ * Dead weight is judged only among passages that were in the index for the
+ * whole window: a passage written yesterday has not had a window to be
+ * retrieved in. So `retrieved + deadWeight` can be less than `chunks`; the
+ * difference is passages too new to judge.
+ *
+ * This replaces a scan that listed every chunk up to a 20,000-row cap and, past
+ * it, reported counts for an arbitrary slice of the index (__specs/38 S9).
  */
 export async function scoreChunks(
   args: ScopeArgs & { limit?: number; thresholds?: WeakChunkThresholds },
@@ -290,81 +317,77 @@ export async function scoreChunks(
   const thresholds = args.thresholds ?? defaultThresholds();
   const limit = Math.min(Math.max(args.limit ?? 100, 1), 500);
 
-  const chunkFilter: Record<string, unknown> = { organizationId: args.organizationId };
-  if (args.agentId) chunkFilter.agentId = args.agentId;
+  const chunkFilter: Record<string, unknown> = {
+    organizationId: args.organizationId,
+    ...agentClause(args),
+  };
 
-  // NOTE the projection: no `text`.
-  //
-  // Every chunk in the index has to be listed, because dead weight is a chunk
-  // with no telemetry and the only place it exists is the index itself. But
-  // this runs on a dashboard load, and pulling the TEXT of every chunk to show
-  // a 200-character preview of at most `limit` of them means a request whose
-  // memory is set by the size of the customer's knowledge base. Previews are
-  // fetched below, for the handful actually returned.
-  const [stats, chunkPage] = await Promise.all([
+  const oldEnough = { ...chunkFilter, createdAt: { $lt: since } };
+  const [stats, chunkCount, eligibleCount] = await Promise.all([
     retrievedChunkStats({ ...args, since }),
-    // One over the cap, so an index that exceeds it is detectable rather than
-    // silently indistinguishable from one that lands exactly on it.
-    KbChunk.find(chunkFilter, { chunkId: 1, sourceId: 1 })
-      .limit(CHUNK_SCAN_LIMIT + 1)
-      .lean(),
+    KbChunk.countDocuments(chunkFilter),
+    KbChunk.countDocuments(oldEnough),
   ]);
 
-  const truncated = chunkPage.length > CHUNK_SCAN_LIMIT;
-  const chunks = truncated ? chunkPage.slice(0, CHUNK_SCAN_LIMIT) : chunkPage;
-  if (truncated) {
-    logger.warn("[index-health] chunk scan truncated, totals cover part of the index", {
-      organizationId: String(args.organizationId),
-      scanLimit: CHUNK_SCAN_LIMIT,
-    });
-  }
-
-  const statsById = new Map(stats.map((s) => [s.chunkId, s]));
-  const sourceIds = [...new Set(chunks.map((c) => String(c.sourceId)))];
-  const sources = await KnowledgeSource.find(
-    { _id: { $in: sourceIds } },
-    { title: 1 },
+  // Telemetry outlives the index: a chunk retrieved last week may since have
+  // been deleted or re-chunked. Only chunks still in the index are scored.
+  const live = await KbChunk.find(
+    { ...chunkFilter, chunkId: { $in: stats.map((s) => s.chunkId) } },
+    { chunkId: 1, sourceId: 1, createdAt: 1 },
   ).lean();
-  const titleById = new Map(sources.map((s) => [String(s._id), s.title as string]));
+  const liveIds = new Set(live.map((c) => String(c.chunkId)));
+  const retrieved = stats
+    .filter((s) => liveIds.has(s.chunkId))
+    .map((s) => ({ ...s, flags: flagChunk(s, thresholds) }));
 
-  const scored: ChunkHealth[] = chunks.map((c) => {
-    const chunkId = String(c.chunkId);
-    const s: ChunkStats = statsById.get(chunkId) ?? {
-      chunkId,
-      sourceId: String(c.sourceId),
-      retrievals: 0,
-      meanRank: null,
-      meanScore: null,
-      meanRerankScore: null,
-      citedCount: 0,
-      citationRate: null,
-      escalatedCount: 0,
-      escalationRate: null,
-      thumbsUp: 0,
-      thumbsDown: 0,
-      downvoteRate: null,
-      lastRetrieved: null,
-    };
+  const retrievedEligible = live.filter((c) => (c.createdAt as Date | undefined) && (c.createdAt as Date) < since).length;
+  const deadWeightCount = Math.max(0, eligibleCount - retrievedEligible);
+  const weak = retrieved.filter((c) => c.flags.length > 0);
+
+  // Dead-weight rows, only as many as there is room for after the passages
+  // that actively need fixing. They sort last anyway.
+  const deadRoom = Math.max(0, limit - weak.length);
+  const deadRows =
+    deadRoom > 0 && deadWeightCount > 0
+      ? await KbChunk.find(
+          { ...oldEnough, chunkId: { $nin: [...liveIds] } },
+          { chunkId: 1, sourceId: 1 },
+        )
+          .limit(deadRoom)
+          .lean()
+      : [];
+  const dead = deadRows.map((c) => {
+    const s = emptyStats(String(c.chunkId), String(c.sourceId));
+    return { ...s, flags: flagChunk(s, thresholds) };
+  });
+
+  const listed = [...weak, ...dead];
+  const sources = await KnowledgeSource.find(
+    { _id: { $in: [...new Set(listed.map((c) => c.sourceId))] } },
+    { title: 1, stale: 1, priority: 1 },
+  ).lean();
+  const sourceById = new Map(sources.map((s) => [String(s._id), s]));
+  const flagged: ChunkHealth[] = listed.map((c) => {
+    const src = sourceById.get(c.sourceId);
     return {
-      ...s,
-      flags: flagChunk(s, thresholds),
-      title: titleById.get(String(c.sourceId)) ?? null,
+      ...c,
+      title: (src?.title as string | undefined) ?? null,
+      // The source's current repair state, so a repair dialog opens on what is
+      // stored rather than on defaults that a Save would write back.
+      sourceStale: Boolean(src?.stale),
+      sourcePriority: (src?.priority as number | undefined) ?? 0,
       preview: null as string | null,
     };
   });
 
-  const flagged = scored.filter((c) => c.flags.length > 0);
-
   return {
     windowSince: since,
     totals: {
-      chunks: scored.length,
-      retrieved: statsById.size,
-      deadWeight: scored.filter((c) => c.flags.includes("dead_weight")).length,
-      misleading: scored.filter((c) => c.flags.includes("misleading")).length,
-      retrievedNotCited: scored.filter((c) => c.flags.includes("retrieved_not_cited")).length,
-      truncated,
-      scanLimit: CHUNK_SCAN_LIMIT,
+      chunks: chunkCount,
+      retrieved: retrieved.length,
+      deadWeight: deadWeightCount,
+      misleading: retrieved.filter((c) => c.flags.includes("misleading")).length,
+      retrievedNotCited: retrieved.filter((c) => c.flags.includes("retrieved_not_cited")).length,
     },
     // Worst first: a misleading chunk costs more than a dead one, and within a
     // flag the higher-volume passage is the one to fix first.
@@ -530,8 +553,8 @@ export async function clusterGaps(
     organizationId: args.organizationId,
     status: "open",
     kind: "gap",
+    ...agentClause(args),
   };
-  if (args.agentId) filter.agentId = args.agentId;
 
   const gaps = await KnowledgeGap.find(filter)
     .sort({ occurrenceCount: -1, updatedAt: -1 })

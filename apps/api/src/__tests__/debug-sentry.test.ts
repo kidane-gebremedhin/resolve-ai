@@ -32,10 +32,11 @@ describe("sentry debug endpoints", () => {
   });
 
   it("rate limits the debug endpoints at 5 requests/minute", async () => {
-    // The limiter is shared by both routes and keyed per IP; the two requests
-    // above already count, so the 6th call in this window is the one rejected.
+    // The limiter is shared by both routes and keyed per IP. Its counters live
+    // in MongoDB (shared across replicas), which the harness clears between
+    // tests, so this test makes all six calls itself; the 6th is rejected.
     const statuses: number[] = [];
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       const res = await request(app).get("/api/v1/debug-sentry/message");
       statuses.push(res.status);
     }

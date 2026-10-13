@@ -1,6 +1,6 @@
 import { parse as parseHtml } from "node-html-parser";
 import { LRUCache } from "lru-cache";
-import { assertSafeUrl } from "../integrations/ssrf.js";
+import { assertSafeUrl, safeFetch } from "../integrations/ssrf.js";
 import { logger } from "../../config/logger.js";
 import type { LinkPreviewBlock } from "../../types/messageBlocks.js";
 
@@ -30,11 +30,11 @@ export async function fetchOgPreview(url: string): Promise<OgData | null> {
   }
 
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       method: "GET",
       headers: { "User-Agent": "CSBotPreviewBot/1.0", Accept: "text/html" },
-      signal: AbortSignal.timeout(5000),
-      redirect: "follow",
+      timeoutMs: 5000,
+      maxBytes: 2 * 1024 * 1024,
     });
     if (!res.ok) {
       cache.set(url, { data: null });

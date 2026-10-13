@@ -22,6 +22,28 @@ let metaResult: { confidence: number; action: string; quickReplies: string[] | n
   quickReplies: null,
 };
 
+/**
+ * What real providers enforce: every assistant `tool_calls` entry must be
+ * answered by a ToolMessage with its id, or the request is a 400. The scripted
+ * model used to accept anything, which is how the tool-turn ceiling shipped a
+ * transcript no real provider would take (__specs/05 ReAct conformance §3f).
+ */
+function assertToolPairing(messages: unknown): void {
+  const list = (Array.isArray(messages) ? messages : []) as unknown[];
+  const answered = new Set(
+    list.filter((m): m is ToolMessage => m instanceof ToolMessage).map((m) => m.tool_call_id),
+  );
+  for (const m of list) {
+    if (m instanceof AIMessage) {
+      for (const call of m.tool_calls ?? []) {
+        if (!answered.has(call.id ?? "")) {
+          throw new Error(`400: assistant tool_call ${call.id} has no tool result`);
+        }
+      }
+    }
+  }
+}
+
 vi.mock("../services/ai/llm/chat-model.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/ai/llm/chat-model.js")>();
   // Mirrors the real call chain exactly: `bindTools` and `withStructuredOutput`
@@ -29,18 +51,23 @@ vi.mock("../services/ai/llm/chat-model.js", async (importOriginal) => {
   // Keeping that shape here is what would catch a call site that configures the
   // model before binding its tools.
   const binding = {
-    invoke: async () => {
+    invoke: async (messages: unknown) => {
+      assertToolPairing(messages);
       if (agentShouldThrow) throw new Error("upstream exploded");
       const scripted = agentScript[agentCalls];
       agentCalls += 1;
       return scripted ?? new AIMessage("All set.");
     },
-    stream: async function* () {
+    stream: async function* (messages: unknown) {
+      assertToolPairing(messages);
       for (const token of finalTokens) yield new AIMessageChunk({ content: token });
     },
   };
   const structuredBinding = {
-    invoke: async () => ({ raw: new AIMessage(""), parsed: metaResult }),
+    invoke: async (messages: unknown) => {
+      assertToolPairing(messages);
+      return { raw: new AIMessage(""), parsed: metaResult };
+    },
   };
   const stub = {
     bindTools: () => ({ withConfig: () => binding }),
@@ -227,6 +254,31 @@ describe("customer reply graph", () => {
     expect(agentCalls).toBe(3);
     expect(toolRuns).toHaveLength(2);
     // The turn still ends with a reply for the customer.
+    expect(state.replyText).toBe("Your order has shipped.");
+  });
+
+  it("runs nothing else in the same step once a call hands control to the customer", async () => {
+    // One step, two calls. The first halts (a form or OTP); the second must not
+    // execute, or the reply would describe an action taken before the customer
+    // answered.
+    agentScript = [
+      new AIMessage({
+        content: "",
+        tool_calls: [
+          { name: "lookup_order", args: { orderId: "A-1" }, id: "call-a", type: "tool_call" },
+          { name: "lookup_order", args: { orderId: "A-2" }, id: "call-b", type: "tool_call" },
+        ],
+      }),
+    ];
+    const haltingTool = makeTool({ status: "success", halt: true });
+    const state = await run(makeContext(makeRegistry(haltingTool)));
+
+    expect(toolRuns).toEqual([{ orderId: "A-1" }]);
+    expect(state.halt).toBe(true);
+    // The skipped call is still answered, so the transcript stays valid.
+    const results = state.messages.filter((m: unknown) => m instanceof ToolMessage) as ToolMessage[];
+    expect(results.map((m) => m.tool_call_id)).toEqual(["call-a", "call-b"]);
+    expect(String(results[1]!.content)).toContain("notRun");
     expect(state.replyText).toBe("Your order has shipped.");
   });
 

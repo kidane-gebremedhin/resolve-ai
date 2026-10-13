@@ -36,3 +36,5 @@ export { CouponRedemption, type CouponRedemptionDocType } from "./CouponRedempti
 export { Payment, type PaymentDocType } from "./Payment.js";
 export { KbChunk, type KbChunkDocType } from "./KbChunk.js";
 export { IngestionEvent, type IngestionEventDocType } from "./IngestionEvent.js";
+export { OtpChallenge, type OtpChallengeDocType } from "./OtpChallenge.js";
+export { RateCounter, type RateCounterDocType } from "./RateCounter.js";

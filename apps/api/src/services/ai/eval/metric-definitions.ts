@@ -164,8 +164,37 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
   neverRetrieved: {
     label: "Never retrieved",
     spec: "Never retrieved",
-    definition: "Ready sources that no turn in the window retrieved",
-    note: "Dead weight in the index. Either the content is unreachable by the questions being asked, or nobody is asking about it",
+    definition: "Ready sources, indexed for the whole window, that no turn in the window retrieved",
+    note: "Dead weight in the index. Either the content is unreachable by the questions being asked, or nobody is asking about it. A source added during the window is not judged until a full window has passed",
+  },
+  failingIngestion: {
+    label: "Failing ingestion",
+    spec: "Failing ingestion",
+    definition:
+      "Sources whose last ingestion attempt ended in an error or produced no passages",
+    note: "A source that never indexed cannot be retrieved, so it looks like dead weight on a relevance panel. The fix is repairing or re-running the source, not deleting it",
+  },
+
+  // ---- Passage-level index health ----
+  misleadingPassage: {
+    label: "Misleading",
+    spec: "Misleading passage",
+    definition:
+      "A passage retrieved at least KB_HEALTH_MIN_RETRIEVALS times whose citing replies were thumbed down at or above KB_HEALTH_DOWNVOTE_RATE",
+    note: "Only thumbs on replies that cited the passage count against it. This is the passage actively costing you, so fix its content first",
+  },
+  retrievedNotCited: {
+    label: "Never quoted",
+    spec: "Retrieved but not cited",
+    definition:
+      "A passage retrieved at least KB_HEALTH_MIN_RETRIEVALS times, scoring at or above KB_HEALTH_STRONG_SCORE, that replies cited at or below KB_HEALTH_UNCITED_RATE of the time",
+    note: "Good enough to retrieve, not good enough to quote. Usually a badly split passage rather than an irrelevant one",
+  },
+  deadWeightPassage: {
+    label: "Dead weight",
+    spec: "Dead-weight passage",
+    definition: "A passage, indexed for the whole window, that no turn in the window retrieved",
+    note: "The passage-level version of Never retrieved. A document is rarely uniformly good, so one dead passage is not a reason to delete its source",
   },
 };
 

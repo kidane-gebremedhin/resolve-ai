@@ -2,12 +2,9 @@
 // as its own knowledge source. Phase 3 wiring; the call shape matches Firecrawl v1.
 
 import { KnowledgeSource } from "../../models/index.js";
-import { chunkText } from "../../utils/chunker.js";
-import { embed } from "../ai/embedding.service.js";
-import { getPineconeIndex } from "../../config/pinecone.js";
 import { logger } from "../../config/logger.js";
-import { hashContent, emitKnowledgeUpdate } from "./ingestion.service.js";
-import { orgBudgetStatus } from "../budget-alert.service.js";
+import { assertStorableText, emitKnowledgeUpdate, hashContent, ingestSource } from "./ingestion.service.js";
+import { classifyError } from "./ingestion-errors.js";
 
 const baseUrl = process.env.FIRECRAWL_BASE_URL ?? "https://api.firecrawl.dev/v1";
 const apiKey = process.env.FIRECRAWL_API_KEY;
@@ -72,127 +69,56 @@ export async function pollCrawl(id: string): Promise<CrawlStatus> {
 }
 
 /**
- * Ingest a completed crawl's pages into Pinecone for a website KnowledgeSource.
- * Each page is chunked, embedded, and upserted; the resulting vector IDs are
- * stored on the source document along with the concatenated extracted text.
+ * Ingest a completed crawl's pages for a website KnowledgeSource.
  *
- * On success: status='synced', chunkCount + pineconeIds set, lastSyncedAt now.
- * On failure: status='error', retryCount++ — the caller (the job) handles the
- * outer try/catch so it can log per-source.
+ * Stores the pages as one text ("# <pageUrl>" blocks, which `splitCrawledPages`
+ * reads back so every chunk keeps its exact page URL for citations), then runs
+ * the same `ingestSource` pipeline as every other source type.
+ *
+ * This used to chunk, embed and upsert on its own. That copy never wrote the
+ * KbChunk mirror (so crawled pages were invisible to the lexical leg and served
+ * truncated text), recorded no ingestion events, dropped heading paths, and
+ * reported an empty crawl as `synced` (__specs/37 I1). One pipeline means a
+ * fix to ingestion is a fix for crawls too.
+ *
+ * Failures inside `ingestSource` are already recorded on the source (status,
+ * classified error, retry count) before it rethrows.
  */
 export async function ingestCrawlResults(sourceId: string, pages: CrawlPage[]): Promise<void> {
   const source = await KnowledgeSource.findById(sourceId);
   if (!source) throw new Error(`KB source not found: ${sourceId}`);
 
-  // Chunk each page SEPARATELY so every chunk keeps the exact page URL it came
-  // from — this is what powers per-page citations in the widget (not just the
-  // site's base URL). We still persist a concatenated extractedText for display
-  // and re-ingest dedup.
   const validPages = pages.filter((p) => p.markdown?.trim().length > 0);
   const text = validPages
     .map((p) => `# ${p.url}\n\n${p.markdown}`)
     .join("\n\n---\n\n");
 
+  try {
+    assertStorableText(text);
+  } catch (err) {
+    // Recorded here, classified, because the row cannot reach `ingestSource`.
+    const e = classifyError(err, "parse");
+    source.embeddingStatus = "error";
+    source.embeddingError = e.message;
+    source.embeddingErrorCode = e.code;
+    source.embeddingErrorAction = e.action;
+    await source.save();
+    emitKnowledgeUpdate(source);
+    logger.warn("[kb] crawl text too large to store", { sourceId, pages: pages.length });
+    return;
+  }
+
   source.extractedText = text;
   source.contentHash = hashContent(text || `${source._id.toString()}:${pages.length}`);
+  // `ingestSource` reloads the row, so it cannot see that the hash moved.
+  // Stamp content recency here, where the change is known.
+  if (source.isModified("contentHash") || !source.sourceUpdatedAt) {
+    source.sourceUpdatedAt = new Date();
+  }
   await source.save();
 
-  // Flatten per-page chunks into a single indexed list, carrying each chunk's
-  // originating page URL alongside its text.
-  const taggedChunks: { index: number; text: string; url: string }[] = [];
-  let globalIdx = 0;
-  for (const page of validPages) {
-    for (const c of chunkText(page.markdown)) {
-      taggedChunks.push({ index: globalIdx++, text: c.text, url: page.url });
-    }
-  }
-
-  if (taggedChunks.length === 0) {
-    // A re-crawl that now yields no text must drop the previous run's vectors,
-    // else stale content keeps surfacing in RAG.
-    const prev = source.pineconeIds ?? [];
-    if (prev.length > 0) {
-      try {
-        await getPineconeIndex().deleteMany(prev);
-      } catch (err) {
-        logger.warn("[kb] crawl empty-result cleanup failed", { sourceId, err: (err as Error).message });
-      }
-    }
-    source.pineconeIds = [];
-    source.embeddingStatus = "synced";
-    source.chunkCount = 0;
-    source.lastSyncedAt = new Date();
-    source.embeddingError = undefined;
-    await source.save();
-    emitKnowledgeUpdate(source);
-    logger.info("[kb] crawl produced no text", { sourceId, pages: pages.length });
-    return;
-  }
-
-  // Budget gate: skip embedding a crawl when the org is over its monthly AI
-  // budget (see ingestion.service for the same guard).
-  const budget = await orgBudgetStatus(source.organizationId.toString());
-  if (budget.exceeded) {
-    source.embeddingStatus = "error";
-    source.embeddingError =
-      "AI budget reached — knowledge indexing is paused until next month or a plan upgrade.";
-    await source.save();
-    emitKnowledgeUpdate(source);
-    logger.warn("[kb] crawl embedding skipped — org over budget", { sourceId });
-    return;
-  }
-
-  const vectors = await embed(taggedChunks.map((c) => c.text), {
-    organizationId: source.organizationId.toString(),
-  });
-  const pinecone = getPineconeIndex();
-  const previousIds = source.pineconeIds ?? [];
-  const ids = taggedChunks.map((c) => `${source._id.toString()}:${c.index}`);
-  // NOTE: per __specs/04-pinecone-firecrawl.md upsert into namespace=orgId
-  // once the parallel pinecone.ts rewrite exposes `.namespace(orgId)`.
-  await pinecone.upsert(
-    taggedChunks.map((c, i) => ({
-      id: ids[i]!,
-      values: vectors[i]!,
-      metadata: {
-        organizationId: source.organizationId.toString(),
-        // MUST tag `agentId` to match the text/file ingestion path: knowledge is
-        // keyed by (organizationId, agentId) and `searchKb` filters on agentId,
-        // so crawl vectors without it were silently invisible to the agent's RAG.
-        agentId: source.agentId.toString(),
-        sourceId: source._id.toString(),
-        chunkIndex: c.index,
-        // Exact page URL this chunk came from — surfaced as the citation link.
-        url: c.url,
-        // Store the full chunk (capped at 8000) like the text/file path, not a
-        // 500-char preview — retrieval returns this text to the model verbatim.
-        text: c.text.slice(0, 8000),
-      },
-    })),
-  );
-
-  // Re-crawl cleanup: per-page chunking can yield a different chunk count than a
-  // previous run, so drop any vectors from the old run the new set no longer
-  // covers — otherwise stale chunks (with old text/URLs) linger and pollute
-  // citations. Upsert first, then delete, so a failure never leaves zero vectors.
-  const newIdSet = new Set(ids);
-  const staleIds = previousIds.filter((id) => !newIdSet.has(id));
-  if (staleIds.length > 0) {
-    try {
-      await pinecone.deleteMany(staleIds);
-    } catch (err) {
-      logger.warn("[kb] crawl stale-vector cleanup failed", { sourceId, err: (err as Error).message });
-    }
-  }
-
-  source.pineconeIds = ids;
-  source.chunkCount = taggedChunks.length;
-  source.embeddingStatus = "synced";
-  source.lastSyncedAt = new Date();
-  source.embeddingError = undefined;
-  await source.save();
-  emitKnowledgeUpdate(source);
-  logger.info("[kb] crawl ingested", { sourceId, pages: pages.length, chunks: taggedChunks.length });
+  await ingestSource(sourceId);
+  logger.info("[kb] crawl ingested", { sourceId, pages: pages.length, withText: validPages.length });
 }
 
 /**

@@ -82,6 +82,17 @@ export function MarkSourceButton({
   const [nextPriority, setNextPriority] = useState(priority);
   const [busy, setBusy] = useState(false);
 
+  // Start every edit from what is stored. `useState` only reads its initial
+  // value once, so after a refresh the form would otherwise open on whatever it
+  // held last time, and a Save would write that back over the real state.
+  function openWithStoredValues(next: boolean) {
+    if (next) {
+      setNextStale(stale);
+      setNextPriority(priority);
+    }
+    setOpen(next);
+  }
+
   async function save() {
     setBusy(true);
     try {
@@ -101,10 +112,10 @@ export function MarkSourceButton({
 
   return (
     <>
-      <Button size="sm" variant="ghost" onClick={() => setOpen(true)}>
+      <Button size="sm" variant="ghost" onClick={() => openWithStoredValues(true)}>
         {stale ? "Stale" : "Mark…"}
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={openWithStoredValues}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Mark “{title}”</DialogTitle>
@@ -254,7 +265,18 @@ type PreviewSource = { _id: string; title: string; chunkCount: number };
  * confirm whose set does not match, has expired, or covers a source that has
  * started being retrieved in the meantime.
  */
-export function BulkDeleteDeadWeight({ count }: { count: number }) {
+export function BulkDeleteDeadWeight({
+  count,
+  query,
+}: {
+  count: number;
+  /**
+   * The page's own scope (date range and website), sent with the preview AND
+   * the confirm. Without it the review used a fixed 30-day, org-wide window, so
+   * with one website selected it offered every website's dead weight.
+   */
+  query: string;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -267,7 +289,7 @@ export function BulkDeleteDeadWeight({ count }: { count: number }) {
     setLoading(true);
     try {
       const res = await clientApi.post<{ sources: PreviewSource[]; token: string | null }>(
-        "/index-health/sources/bulk-delete/preview",
+        `/index-health/sources/bulk-delete/preview?${query}`,
       );
       setSources(res.sources);
       setToken(res.token);
@@ -283,7 +305,7 @@ export function BulkDeleteDeadWeight({ count }: { count: number }) {
     if (!token) return;
     setBusy(true);
     try {
-      const res = await clientApi.post<{ deleted: number }>("/index-health/sources/bulk-delete", {
+      const res = await clientApi.post<{ deleted: number }>(`/index-health/sources/bulk-delete?${query}`, {
         sourceIds: sources.map((s) => s._id),
         token,
         confirm: true,

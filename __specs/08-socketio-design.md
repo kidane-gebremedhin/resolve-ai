@@ -165,7 +165,22 @@ flowchart TD
 | Room | Format | Joined By | Purpose |
 |------|--------|-----------|---------|
 | Conversation | `conversation:{conversationId}` | Widget client + operators viewing the thread | Message delivery, typing indicators, status changes |
-| Organization | `org:{organizationId}` | All dashboard clients for that org | Inbox list updates (new conversations, status changes, new messages) |
+| Organization | `org:{organizationId}` | Operator (dashboard) sockets ONLY | Inbox list updates, internal `notification:new` alerts, knowledge-base events |
+| Contact | `contact:{contactSessionId}` | The widget visitor's own sockets | Everything the widget needs: `message:new`, `message:delta`/`done`, `operator:typing`, `conversation:updated` |
+| User | `user:{userId}` | Operator sockets | Per-operator events |
+
+**Visitors never join the org room** (`joinInitialRooms` in `apps/api/src/socket/index.ts`).
+They used to, which broadcast internal alerts and every conversation's events to anonymous
+visitors. Every `conversation:updated` the widget relies on is therefore also emitted to
+`contact:{contactSessionId}`.
+
+**Handshake checks.** Operator sockets are refused when the JWT is not an access token,
+its `tv` is older than the user's `tokenVersion`, the user no longer exists, or the user is
+not an active member of the token's org.
+
+**Multiple replicas.** When `REDIS_URL` is set the server attaches
+`@socket.io/redis-adapter` (ioredis), so a broadcast from one replica reaches sockets on
+all of them. Without it the server is single-instance.
 
 ### Join Logic
 

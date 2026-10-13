@@ -66,12 +66,30 @@ export function registerMessageHandlers(io: IoServer, socket: Socket): void {
       conversation.lastMessageAt = message.createdAt as Date;
       conversation.lastMessagePreview = payload.content.slice(0, 140);
       conversation.messageCount = (conversation.messageCount ?? 0) + 1;
+      // Same rule as `POST /conversations/:id/messages`: an operator speaking in
+      // an AI conversation takes it over. Without this, the next customer
+      // message still triggered an AI reply on top of the human's.
+      const takenOver = auth.kind !== "contact" && conversation.status === "active";
+      if (takenOver) {
+        conversation.status = "escalated";
+        conversation.escalatedAt = conversation.escalatedAt ?? new Date();
+      }
       await conversation.save();
 
-      io.to(`org:${auth.organizationId}`).emit("message:new", {
+      // All three rooms, as the REST route does. Org-only meant an operator's
+      // socket reply never reached the visitor's widget until it reloaded.
+      const payloadNew = {
         conversationId: conversation._id.toString(),
         messageId: message._id.toString(),
-      });
+      };
+      io.to(`org:${auth.organizationId}`).emit("message:new", payloadNew);
+      io.to(`conversation:${conversation._id.toString()}`).emit("message:new", payloadNew);
+      io.to(`contact:${conversation.contactSessionId.toString()}`).emit("message:new", payloadNew);
+      if (takenOver) {
+        const update = { conversationId: conversation._id.toString(), status: conversation.status };
+        io.to(`org:${auth.organizationId}`).emit("conversation:updated", update);
+        io.to(`contact:${conversation.contactSessionId.toString()}`).emit("conversation:updated", update);
+      }
 
       // Trigger AI reply only when customer messages an active conversation.
       if (auth.kind === "contact" && conversation.status === "active") {

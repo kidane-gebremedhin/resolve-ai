@@ -8,6 +8,18 @@
 
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import mongoose from "mongoose";
+
+const budget = vi.hoisted(() => ({ exceeded: false }));
+
+vi.mock("../services/budget-alert.service.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/budget-alert.service.js")>();
+  return {
+    ...actual,
+    orgBudgetStatus: async (organizationId: string) =>
+      budget.exceeded ? { exceeded: true, spent: 10, limit: 10 } : actual.orgBudgetStatus(organizationId),
+  };
+});
+
 import { env } from "../config/env.js";
 import { IngestionEvent, KnowledgeSource } from "../models/index.js";
 import {
@@ -185,13 +197,34 @@ describe("the reconcile job's retry policy", () => {
       updatedAt: new Date(0),
     });
 
-    await reconcileOnce();
+    budget.exceeded = true;
+    try {
+      await reconcileOnce();
+    } finally {
+      budget.exceeded = false;
+    }
 
     const after = await KnowledgeSource.findById(source._id).lean();
     expect(after!.retryCount).toBe(0);
+    expect(after!.embeddingStatus).toBe("error");
+    // The ingest gate recorded the pause once; waiting adds nothing per tick.
+    expect(await IngestionEvent.countDocuments({ sourceId: source._id })).toBe(0);
+  });
+
+  it("resumes a budget-paused source once the budget has reset", async () => {
+    // Nothing else picks these up: without the re-check they waited forever,
+    // although the error text promises indexing resumes on its own.
+    const source = await seedSource({
+      embeddingErrorCode: "budget_exceeded",
+      retryCount: 0,
+      updatedAt: new Date(0),
+    });
+
+    await reconcileOnce();
+
     const events = await IngestionEvent.find({ sourceId: source._id, stage: "retry" }).lean();
-    expect(events[0]!.status).toBe("skipped");
-    expect(events[0]!.errorMessage).toMatch(/budget/i);
+    expect(events[0]!.status).toBe("ok");
+    expect(events[0]!.errorMessage).toMatch(/after budget_exceeded/);
   });
 
   it("retries a transient failure, and records the attempt", async () => {
@@ -204,8 +237,6 @@ describe("the reconcile job's retry policy", () => {
 
     await reconcileOnce();
 
-    const after = await KnowledgeSource.findById(source._id).lean();
-    expect(after!.retryCount).toBe(1);
     const events = await IngestionEvent.find({ sourceId: source._id, stage: "retry" }).lean();
     expect(events[0]!.status).toBe("ok");
     expect(events[0]!.errorMessage).toMatch(/attempt 1 of/);

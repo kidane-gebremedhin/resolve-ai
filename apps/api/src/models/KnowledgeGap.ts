@@ -69,5 +69,9 @@ const schema = new Schema<KnowledgeGapDocType>(
 // query are different problems with different fixes, and collapsing them would
 // let one silently overwrite the other.
 schema.index({ organizationId: 1, agentId: 1, queryUsed: 1, kind: 1 }, { unique: true });
+// The RAG Quality page's failing-queries join reads an org's highest-volume
+// gaps. Without `occurrenceCount` in the key that is an in-memory sort over
+// every gap the org has ever recorded.
+schema.index({ organizationId: 1, kind: 1, occurrenceCount: -1 });
 
 export const KnowledgeGap = model<KnowledgeGapDocType>("KnowledgeGap", schema);

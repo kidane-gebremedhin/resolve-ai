@@ -14,6 +14,9 @@ const contactSessionSchema = new Schema(
     expiresAt: { type: Date, required: true },
     lastActiveAt: { type: Date, required: true, default: () => new Date() },
     identityVerifiedUntil: { type: Date },
+    // The exact address the OTP was sent to and verified for. Account-scoped
+    // tools act only on this email, and changing `email` clears it.
+    identityVerifiedEmail: { type: String },
     abuseSuspected: { type: Boolean, default: false },
   },
   { timestamps: true },

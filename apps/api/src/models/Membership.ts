@@ -8,6 +8,9 @@ const membershipSchema = new Schema(
     invitedBy: { type: Schema.Types.ObjectId, ref: "User" },
     invitedAt: { type: Date },
     acceptedAt: { type: Date },
+    // Pending invite. Only the SHA-256 of the emailed token is stored.
+    inviteTokenHash: { type: String },
+    inviteExpiresAt: { type: Date },
     status: {
       type: String,
       enum: ["active", "pending", "revoked"],
@@ -21,6 +24,7 @@ const membershipSchema = new Schema(
 membershipSchema.index({ userId: 1, organizationId: 1 }, { unique: true });
 membershipSchema.index({ organizationId: 1, role: 1 });
 membershipSchema.index({ userId: 1, status: 1 });
+membershipSchema.index({ inviteTokenHash: 1 }, { sparse: true });
 
 export type MembershipDocType = InferSchemaType<typeof membershipSchema>;
 export const Membership: Model<MembershipDocType> =

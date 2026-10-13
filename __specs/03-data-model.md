@@ -40,7 +40,11 @@ All collections enforce **`organizationId`** scoping. Every query from authentic
 | `provider` | `string` | ✅ | `credentials` / `google` |
 | `providerId` | `string` | — | Google sub ID (for OAuth) |
 | `role` | `string` | ✅ | `user` / `platform_admin` |
-| `emailVerifiedAt` | `Date` | — | Email verification timestamp |
+| `emailVerifiedAt` | `Date` | — | Email verification timestamp. Set by the verify-email link, a password reset, accepting an invite, or Google sign-in. Accounts that predate verification were backfilled by migration 003. |
+| `emailVerifyTokenHash` | `string` | — | SHA-256 of the emailed verification token (24h) |
+| `emailVerifyExpires` | `Date` | — | |
+| `tokenVersion` | `number` | — | Default `0`. Embedded in every JWT as `tv`; incrementing it revokes all of the user's tokens (logout, password reset, role change, removal) |
+| `lastOrganizationId` | `ObjectId` | — | Org the user last joined (accepted invite); login and refresh land there while the membership is active |
 | `lastLoginAt` | `Date` | — | |
 | `createdAt` | `Date` | auto | |
 | `updatedAt` | `Date` | auto | |
@@ -64,7 +68,9 @@ Links users to organizations with role-based access.
 | `invitedBy` | `ObjectId` | — | Ref → `users` |
 | `invitedAt` | `Date` | — | |
 | `acceptedAt` | `Date` | — | |
-| `status` | `string` | ✅ | `active` / `pending` / `revoked` |
+| `inviteTokenHash` | `string` | — | SHA-256 of the emailed invite token while `pending` |
+| `inviteExpiresAt` | `Date` | — | Invite link expiry (7 days) |
+| `status` | `string` | ✅ | `active` / `pending` / `revoked`. `pending` becomes `active` only through `POST /orgs/invites/accept`. |
 | `createdAt` | `Date` | auto | |
 | `updatedAt` | `Date` | auto | |
 
@@ -72,6 +78,7 @@ Links users to organizations with role-based access.
 - `{ userId: 1, organizationId: 1 }` — unique (one membership per user-org pair)
 - `{ organizationId: 1, role: 1 }` — for listing org members by role
 - `{ userId: 1, status: 1 }` — for user's active orgs
+- `{ inviteTokenHash: 1 }` — sparse, invite lookup
 
 ---
 
@@ -141,6 +148,8 @@ persona + model config; unset model-tuning fields fall back to env defaults.
 | `userAgent` | `string` | — | Browser UA string |
 | `expiresAt` | `Date` | ✅ | Session expiration (24h from creation) |
 | `lastActiveAt` | `Date` | ✅ | Last activity timestamp |
+| `identityVerifiedUntil` | `Date` | — | Email-OTP verification window (15 min) for high-stakes tools |
+| `identityVerifiedEmail` | `string` | — | The exact address the OTP verified. Cleared when `email` changes. Account-scoped tools act only on this address. |
 | `createdAt` | `Date` | auto | |
 | `updatedAt` | `Date` | auto | |
 
@@ -245,9 +254,10 @@ escalated → active (operator reopens)
 | `fileSize` | `number` | — | File size in bytes |
 | `sourceUrl` | `string` | — | Original URL (for website/HTML type) |
 | `contentHash` | `string` | ✅ | SHA-256 of normalized extracted text |
-| `extractedText` | `string` | — | Full extracted text (post-processing) |
+| `extractedText` | `string` | no | Full extracted text (post-processing). Capped at 15MB of UTF-8 (`MAX_EXTRACTED_TEXT_BYTES`), because the document itself cannot exceed MongoDB's 16MB; larger uploads are refused with `text_too_large` |
 | `chunkCount` | `number` | — | Number of chunks created |
-| `pineconeIds` | `string[]` | — | Vector IDs in Pinecone (for cleanup on delete) |
+| `pineconeIds` | `string[]` | no | Vector IDs in Pinecone (for cleanup on delete). Written with every id a run may upsert **before** the first upsert, trimmed to the final set on success, so a run that dies halfway leaves no vector unrecorded |
+| `embeddingModel` | `string` | no | Embedding model the current vectors came from (`EMBEDDING_MODEL` at ingest). `scripts/reembed.ts --resume` re-embeds any source where this differs from the current model; unset on sources ingested before the field existed |
 | `embeddingStatus` | `string` | ✅ | `pending` / `processing` / `synced` / `error` / `deleting` |
 | `embeddingError` | `string` | — | Last error message if embedding failed |
 | `lastSyncedAt` | `Date` | — | Last successful Pinecone sync |
@@ -263,6 +273,7 @@ escalated → active (operator reopens)
 - `{ organizationId: 1, type: 1 }` — filter by type
 - `{ organizationId: 1, embeddingStatus: 1 }` — find pending/error for retry
 - `{ embeddingStatus: 1, retryCount: 1 }` — reconciliation job query
+- `{ embeddingStatus: 1, updatedAt: -1 }`: the nightly drift scan walks ready sources newest first from the index (a `SORT_MERGE` of the two status ranges) instead of sorting in memory
 
 **Content hash dedup flow:**
 1. On create/upload: extract text → normalize (lowercase, trim, collapse whitespace) → SHA-256
@@ -394,11 +405,16 @@ second is why the first was affordable:
 
 **Indexes:**
 - `{ chunkId: 1 }` — unique; the fusion join key
-- `{ text: "text", headingPath: "text" }` weighted 1 / 3 — lexical retrieval. A
-  single text index per collection is a MongoDB limit, so the heading path is
-  folded in rather than indexed separately
-- `{ organizationId: 1, agentId: 1 }` — every lexical query filters on both
-  before scoring
+- `{ organizationId: 1, agentId: 1, text: "text", headingPath: "text" }`
+  (`kb_chunk_text_tenant`), weighted 1 / 3: lexical retrieval. The equality
+  prefix makes MongoDB read only the querying tenant's postings; without it a
+  `$text` query matched across every tenant and filtered afterwards (40,400 keys
+  in 279ms vs 400 keys in 2ms next to a 100x neighbour). Every `$text` query
+  must therefore supply both ids. A single text index per collection is a
+  MongoDB limit, so the heading path is folded in rather than indexed separately
+- `{ organizationId: 1, agentId: 1 }`: non-text queries on one tenant's chunks
+- `{ organizationId: 1, createdAt: 1 }`: index health judges dead weight only
+  among passages indexed before the window began
 - `{ sourceId: 1, chunkIndex: 1 }` — re-ingest replaces a source's chunks
 
 Deleting a source deletes its chunks: leaving them would keep a deleted document
@@ -571,6 +587,37 @@ org/website) — these are unauthenticated and org-agnostic (Changelog 2).
 
 **Indexes:**
 - `{ createdAt: -1 }`
+
+---
+
+### 16. `otpchallenges`
+
+Email one-time codes for widget identity verification. In MongoDB (not process memory)
+so every API replica sees the same challenge.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `handle` | `string` | ✅ | Unique. Public `otpToken` returned to the widget |
+| `sessionTokenHash` | `string` | ✅ | SHA-256 of the requesting session's token |
+| `codeHash` | `string` | ✅ | SHA-256 of `handle:code` |
+| `email` | `string` | ✅ | Address the code was sent to |
+| `attempts` | `number` | ✅ | Wrong guesses so far; the code is burned at 5 |
+| `expiresAt` | `Date` | ✅ | `OTP_EXPIRY_SECONDS` after send |
+
+**Indexes:** `{ handle: 1 }` unique, `{ sessionTokenHash: 1 }`, `{ expiresAt: 1 }` TTL.
+
+### 17. `ratecounters`
+
+Fixed-window counters for every API rate limiter (express-rate-limit store and the
+per-session widget limiter), shared across replicas.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `key` | `string` | ✅ | Unique. `<limiter>:<client key>` |
+| `count` | `number` | ✅ | Hits in the current window |
+| `resetAt` | `Date` | ✅ | Window end |
+
+**Indexes:** `{ key: 1 }` unique, `{ resetAt: 1 }` TTL.
 
 ---
 

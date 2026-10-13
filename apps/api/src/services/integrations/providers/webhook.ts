@@ -1,7 +1,7 @@
 import Ajv from "ajv";
 import type { ProviderAdapter, RawCredentials, ToolTemplate } from "./types.js";
 import type { EncryptedBlob } from "../../security/crypto.service.js";
-import { assertSafeUrl } from "../ssrf.js";
+import { assertSafeUrl, safeFetch } from "../ssrf.js";
 import { env } from "../../../config/env.js";
 
 // coerceTypes so numeric/boolean args arriving as strings validate and are coerced
@@ -80,7 +80,7 @@ export class WebhookAdapter implements ProviderAdapter {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), env.webhookTimeoutMs);
     try {
-      const res = await fetch(url, { method: httpMethod, headers, body, signal: controller.signal, redirect: "follow" });
+      const res = await safeFetch(url, { method: httpMethod, headers, body, timeoutMs: env.webhookTimeoutMs, maxBytes: 1_000_000 });
       if (res.ok) return { ok: true }; // 2xx from the real endpoint
       // Reachable but did NOT return success — surface why so the operator can fix it.
       const reason =
@@ -173,11 +173,14 @@ export class WebhookAdapter implements ProviderAdapter {
 
     let result: unknown;
     try {
-      const res = await fetch(requestUrl, {
+      const res = await safeFetch(requestUrl, {
         method: httpMethod,
         headers,
         body,
-        signal: controller.signal,
+        timeoutMs: env.webhookTimeoutMs,
+        // Bodies over 100 kB are rejected below anyway; stop reading well before
+        // a hostile endpoint can exhaust memory.
+        maxBytes: 1_000_000,
       });
 
       if (!res.ok) {

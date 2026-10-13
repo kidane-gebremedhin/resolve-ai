@@ -214,11 +214,24 @@ async function hydrate(hits: KbHit[], organizationId: string): Promise<KbHit[]> 
   );
   const chunkById = new Map(chunks.map((c) => [c.chunkId, c]));
 
-  return hits.map((h) => {
+  // A hit whose source row is gone belongs to deleted knowledge whose vectors
+  // survived (a failed vector delete, or ids a partial upsert never recorded).
+  // It used to be served anyway, titled "Untitled" with its stale Pinecone
+  // metadata text (__specs/37 R4). The source lookup above is org-scoped, so
+  // this also drops anything that is not this organization's.
+  const live = hits.filter((h) => titleById.has(h.sourceId));
+  if (live.length < hits.length) {
+    logger.warn("[kb] dropped hits whose source no longer exists", {
+      organizationId,
+      dropped: hits.length - live.length,
+    });
+  }
+
+  return live.map((h) => {
     const mirror = h.chunkId ? chunkById.get(h.chunkId) : undefined;
     return {
       ...h,
-      sourceTitle: titleById.get(h.sourceId) ?? "Untitled",
+      sourceTitle: titleById.get(h.sourceId) ?? "",
       text: mirror?.text ?? h.text,
       ...(mirror?.headingPath?.length ? { headingPath: mirror.headingPath } : {}),
       // Denormalised onto the chunk at ingest so conflict resolution can order

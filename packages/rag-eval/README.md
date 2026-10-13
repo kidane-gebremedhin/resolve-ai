@@ -10,6 +10,8 @@ pnpm eval:rag --limit 10         # smoke subset
 pnpm eval:rag --baseline <file>  # exit 1 on regression
 ```
 
+Committed baselines live in `baselines/` (`reports/` is gitignored run output).
+
 Full documentation: [`__specs/39-rag-evaluation.md`](../../__specs/39-rag-evaluation.md).
 Operational workflow: RUNBOOK section 13.5.
 

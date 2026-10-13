@@ -9,7 +9,7 @@ import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceKnowledgeQuota } from "../middleware/plan-limit.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { ConflictError, NotFoundError, ValidationError } from "../utils/errors.js";
-import { ingestSource, purgeSourceVectors } from "../services/kb/ingestion.service.js";
+import { MAX_EXTRACTED_TEXT_BYTES, ingestSource, purgeSourceVectors } from "../services/kb/ingestion.service.js";
 import { startCrawl } from "../services/kb/firecrawl.service.js";
 import { parseFile, sourceTypeFor } from "../services/kb/parsers.js";
 import { assertSignatureMatches, FileSignatureError } from "../services/kb/file-signature.js";
@@ -145,6 +145,13 @@ router.post(
     });
     if (!parsed.text || parsed.text.trim().length === 0) {
       throw new ValidationError("Could not extract any text from the uploaded file.");
+    }
+    // The text is stored on the source row, which MongoDB caps at 16MB. Without
+    // this, a large upload failed the insert with a raw BSON error and a 500.
+    if (Buffer.byteLength(parsed.text, "utf8") > MAX_EXTRACTED_TEXT_BYTES) {
+      throw new ValidationError(
+        `This file contains more text than one source can hold (about ${MAX_EXTRACTED_TEXT_BYTES / 1048576}MB). Split it into smaller files.`,
+      );
     }
 
     const agentId = await resolveAgentId(req.orgId!, req.body?.agentId);

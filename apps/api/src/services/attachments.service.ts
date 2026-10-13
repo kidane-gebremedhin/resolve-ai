@@ -113,11 +113,18 @@ export async function streamStoredAttachment(
   }
   const fileName = meta.fileName ?? meta.filename;
 
-  res.setHeader("Content-Type", obj.contentType ?? "application/octet-stream");
+  const contentType = obj.contentType ?? "application/octet-stream";
+  // Raster images render inline (chat previews). Everything else, SVG included
+  // since it can carry script, is a download: an uploaded HTML file must never
+  // render as a page on the API's origin.
+  const inline = /^image\/(png|jpe?g|gif|webp|avif|bmp)$/i.test(contentType);
+  // Header-safe filename: strip quotes, control characters and non-ASCII
+  // (a CR/LF in an uploaded name used to make setHeader throw a 500).
+  const safeName = (fileName ?? "attachment").replace(/[^\x20-\x7e]|"/g, "_").slice(0, 200);
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  if (fileName) {
-    res.setHeader("Content-Disposition", `inline; filename="${fileName.replace(/"/g, "")}"`);
-  }
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${safeName}"`);
   obj.stream.pipe(res);
 }
 

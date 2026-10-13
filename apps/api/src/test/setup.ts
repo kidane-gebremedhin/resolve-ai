@@ -43,6 +43,12 @@ process.env.AI_KB_SEARCH_TOP_K ??= "8";
 process.env.AI_KB_SEARCH_MIN_SCORE ??= "0.2";
 process.env.CORS_ORIGINS ??= "http://localhost:3000";
 process.env.API_BASE_URL ??= "http://localhost:4000";
+// Per-IP abuse limits. Every supertest request comes from one address, so the
+// suites raise these; the limiters themselves are tested with explicit values.
+process.env.AUTH_REGISTER_RATE_LIMIT_MAX ??= "100000";
+process.env.WIDGET_SESSIONS_PER_IP ??= "100000";
+process.env.WIDGET_ATTACHMENTS_PER_IP ??= "100000";
+process.env.GOOGLE_CLIENT_ID ??= "test-google-client-id.apps.googleusercontent.com";
 
 import { MongoMemoryServer } from "mongodb-memory-server";
 import mongoose from "mongoose";

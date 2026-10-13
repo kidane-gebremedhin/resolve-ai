@@ -137,9 +137,10 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
   // cancel's guardrails (e.g. to set allowed emails) would persist requireIdentityVerification
   // false and silently disable the OTP the dispatcher otherwise applies by default.
   const isSubscription = /^(upgrade|downgrade|cancel)_subscription$/.test(tool.key);
-  // High-stakes tools where OTP is ON by default (mirrors the server's OTP_DEFAULT_ON set):
-  // subscription changes and refunds.
-  const otpDefaultOn = isSubscription || isRefund;
+  // Tools where OTP is ON by default (mirrors the server's OTP_DEFAULT_ON set):
+  // subscription lookups and changes, and refunds.
+  const isSubscriptionLookup = tool.key === "get_subscription";
+  const otpDefaultOn = isSubscription || isRefund || isSubscriptionLookup;
 
   const [maxAmount, setMaxAmount] = useState(g.maxAmount != null ? String(g.maxAmount) : "");
   const [maxDays, setMaxDays] = useState(g.maxDaysSincePurchase != null ? String(g.maxDaysSincePurchase) : "");
@@ -258,7 +259,7 @@ function GuardrailRow({ tool, onSaved }: { tool: ToolDef; onSaved?: (g: Guardrai
 
       {otpDefaultOn && (
         <p className="mt-2 rounded bg-neutral-100 px-2 py-1.5 text-[10px] leading-snug text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
-          {isRefund ? "Refunds" : "Subscription changes"} require the customer&apos;s account email
+          {isRefund ? "Refunds" : isSubscriptionLookup ? "Subscription lookups" : "Subscription changes"} require the customer&apos;s account email
           automatically. Email OTP verification is <strong>on by default</strong> for these
           actions — you can turn it off below, but it&apos;s the strongest protection against
           someone using another person&apos;s email.

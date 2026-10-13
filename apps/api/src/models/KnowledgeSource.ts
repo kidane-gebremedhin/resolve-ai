@@ -26,6 +26,13 @@ const knowledgeSourceSchema = new Schema(
     extractedText: { type: String },
     chunkCount: { type: Number },
     pineconeIds: { type: [String], default: [] },
+    /**
+     * Embedding model the current vectors were written with. Lets
+     * `scripts/reembed.ts --resume` tell "already re-embedded with the new
+     * model" from "mirrored, but still old-model vectors". Unset on sources
+     * ingested before this field existed, which resume treats as stale.
+     */
+    embeddingModel: { type: String },
     embeddingStatus: {
       type: String,
       // `empty` is its own state, not a flavour of `synced`.
@@ -98,6 +105,11 @@ knowledgeSourceSchema.index({ agentId: 1, type: 1 });
 knowledgeSourceSchema.index({ agentId: 1, embeddingStatus: 1 });
 knowledgeSourceSchema.index({ organizationId: 1 });
 knowledgeSourceSchema.index({ embeddingStatus: 1, retryCount: 1 });
+// RAG Quality's never-retrieved list: an org's ready sources, biggest first.
+knowledgeSourceSchema.index({ organizationId: 1, embeddingStatus: 1, chunkCount: -1 });
+// The nightly drift scan filters on status and walks newest first; without this
+// it sorts every ready source in memory (__specs/38 S9).
+knowledgeSourceSchema.index({ embeddingStatus: 1, updatedAt: -1 });
 
 export type KnowledgeSourceDocType = InferSchemaType<typeof knowledgeSourceSchema>;
 export const KnowledgeSource: Model<KnowledgeSourceDocType> =

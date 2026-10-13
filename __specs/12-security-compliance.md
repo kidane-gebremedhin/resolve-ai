@@ -31,10 +31,14 @@ This document enumerates every security control required across the platform. Al
 | 2.3 | JWT algorithm | `HS256` (HMAC-SHA256) minimum; `RS256` recommended for multi-service |
 | 2.4 | Password hashing | bcrypt with cost factor ≥ 12 (`bcrypt.hash(password, 12)`) |
 | 2.5 | Password policy | Min 8 chars + ≥1 lowercase, ≥1 uppercase, ≥1 number, ≥1 special char. Enforced **server-side** by the shared `strongPassword` Zod schema in `apps/api/src/routes/auth.routes.ts` (backs `register` + `reset-password`), matching the signup UI. `login` accepts any non-empty string (Changelog 2). |
-| 2.6 | Google OAuth validation | Verify `id_token` with Google's public keys, check `aud` matches client ID |
+| 2.6 | Google OAuth validation | **Implemented** (`apps/api/src/services/security/google-id-token.ts`). `POST /auth/google` verifies the id_token's RS256 signature against Google's JWKS (cached, refetched on unknown `kid`), issuer `accounts.google.com`, `aud` in `GOOGLE_CLIENT_ID` (comma list), expiry, and requires `email_verified`. Identity comes only from the token; body `email`/`name` are ignored. An existing account with 2FA must use password + code (`403`). An existing account whose email was never verified is treated as possibly pre-registered by someone else: its password is cleared and its sessions revoked before linking. Previously the endpoint trusted the body email, which allowed takeover of any account. |
+| 2.6a | Token types | Every JWT carries `typ` (`access`/`refresh`), signed and verified as HS256 only. Access tokens are refused at `/auth/refresh`; refresh tokens are refused as Bearer tokens and on sockets. Untyped legacy tokens are refused. |
+| 2.6b | Session revocation | `User.tokenVersion` is embedded in every token as `tv` and compared on every request, refresh and socket handshake. Bumped by `POST /auth/logout` (all devices; called from NextAuth `signOut`), password reset, a member's role/status change or removal, and Google claiming an unverified account. 2FA enable/disable does not bump it (the dashboard cannot swap its own tokens mid-flow); use logout to end other sessions. |
+| 2.6c | Email verification | Registration emails a 24h link (`/verify-email`). Not required to log in (default); it gates SSO linking (2.6) and invite acceptance. Password reset also verifies the address and, for an unverified account, clears 2FA. |
+| 2.7c | Member changes | `PATCH`/`DELETE /orgs/current/members/:id` refuse a target at or above the caller's rank (owners may act on other owners), only owners grant `owner`, and the org must keep one active owner (applies to role and status). A `pending` invite becomes active only via `POST /orgs/invites/accept` (hashed, single-use, 7-day token). |
 | 2.7 | Role hierarchy enforcement | `owner > admin > agent > viewer`, enforced by `requireOrgRole(min)` (`apps/api/src/middleware/org-role.middleware.ts`), method-aware (reads open to all members, writes require the rank). **admin+**: websites, agents, widget-settings, sections, triggers, integrations, billing, `PATCH /orgs/current`. **agent+** (blocks viewer): knowledge, conversations, messages. Member-management is admin+ (`assertCanManageMembers`); `DELETE /orgs/current` is owner-only (Changelog 2). |
 | 2.8 | Token refresh flow | Only valid (non-expired) refresh tokens accepted; old refresh token invalidated on use |
-| 2.9 | Auth endpoint rate limiting | `express-rate-limit` per client IP (trusted proxy): `/auth/login` 10 / 15 min (successful logins exempt), `/auth/forgot-password` 5 / hour (anti inbox-bombing), `POST /public/contact` 5 / hour (Changelog 2). |
+| 2.9 | Auth endpoint rate limiting | `express-rate-limit` per client IP (trusted proxy): `/auth/login` 10 / 15 min (successful logins exempt), `/auth/forgot-password` 5 / hour (anti inbox-bombing), `/auth/register` `AUTH_REGISTER_RATE_LIMIT_MAX` / hour, `/auth/google` 30 / 15 min, invite preview/accept 20 / 15 min, `POST /public/contact` 5 / hour (Changelog 2). All limiters use `MongoRateStore` (`ratecounters`), so limits hold across API replicas. |
 | 2.9a | SSO first-login org provisioning | Google sign-in for a new email MUST create an `Organization` + owner `Membership` before issuing the access token. Without this the JWT carries no `organizationId` and every `/api/v1/*` call 403s with `No organization context in token`. Implemented in `apps/api/src/services/auth.service.ts:ensureMembershipForUser`. |
 | 2.9b | Client auto-logout on stale token | Browser-side `clientApiFetch` catches `401 + "Invalid or expired access token" / "Missing or malformed Authorization header"`, calls `signOut({ redirect: false })`, and redirects to `/login?session=expired&from=<path>`. Server-side `apiFetch` still throws so RSC pages can render their own fallback. |
 | 2.7a | `membershipRole` in the operator session | `/auth/login` and `/auth/google` return **two** roles: `role` (platform: `user` \| `platform_admin`) and `membershipRole` (org rank, 2.7). NextAuth (`apps/web/src/lib/auth.ts`) MUST persist both onto the JWT and session — they are distinct fields and must never be collapsed. Previously only `role` was carried, so the dashboard had no idea of the org rank and offered owner-only actions to agents/viewers, which then 403'd on click (Changelog 4). |
@@ -51,6 +55,10 @@ This document enumerates every security control required across the platform. Al
 | 2.13 | Expired session behavior | Return `401` → widget creates new session → fresh conversation |
 | 2.14 | No email-based session lookup | Session token is the ONLY identity mechanism; email is CRM-only metadata |
 | 2.15 | Session binding | Session bound to `organizationId + websiteId` at creation; cannot be reused across orgs |
+| 2.16 | Anonymous creation limits | Per-IP limits on new sessions (`WIDGET_SESSIONS_PER_IP`) and attachment uploads (`WIDGET_ATTACHMENTS_PER_IP`); per-session limit on messages, proactive greetings, voice messages, uploads and OTP checks |
+| 2.17 | Identity-bound integration tools | See spec 30 "Identity binding". Account-scoped tools always act on the session's verified email; arguments cannot redirect them. OTP codes live in MongoDB, are hashed, session-bound, and burned after 5 wrong attempts. |
+| 2.18 | Visitor-authored content | `/widget/conversations/:id/proactive` takes only a `triggerId`; the greeting text comes from the saved trigger, so a visitor cannot write `role: "ai"` messages. |
+| 2.19 | Token in URLs | Attachment links carry `?t=<sessionToken>`; it is redacted from morgan access logs and Sentry events. |
 
 ---
 
@@ -122,7 +130,7 @@ This document enumerates every security control required across the platform. Al
 | # | Control | Implementation |
 |---|---------|---------------|
 | 7.1 | Authentication on connect | Dashboard: JWT verified on `connection` event; Widget: session token verified |
-| 7.2 | Room authorization | User can only join rooms for their org's conversations |
+| 7.2 | Room authorization | User can only join rooms for their org's conversations. Widget visitors never join `org:{orgId}` (internal alerts and all-conversation events); they get only `contact:{sessionId}` (spec 08). Operator handshakes check token type, `tokenVersion`, user existence and active membership. |
 | 7.3 | Room name unpredictability | Room format: `conversation:{conversationId}` — ObjectId provides sufficient entropy |
 | 7.4 | Message validation | All Socket.io payloads validated before broadcast |
 | 7.5 | Connection limits | Max 10 connections per user; 3 connections per session token |
@@ -293,6 +301,30 @@ Custom `keyGenerator`s must wrap the client IP in `ipKeyGenerator()` (express-ra
 normalises IPv6 to its /64 prefix. Keying on raw `req.ip` lets a client rotate addresses within
 their own allocation and bypass the limit entirely — and express-rate-limit v8 rejects it outright
 (`ERR_ERL_KEY_GEN_IPV6`).
+
+## Outbound requests (SSRF)
+
+Every server-side fetch to a URL a tenant or visitor can influence (custom webhooks, link
+previews, the widget section proxy) goes through `safeFetch` in
+`apps/api/src/services/integrations/ssrf.ts`. It resolves DNS inside the socket's own
+`lookup`, so the address checked is the address connected to (no rebinding window). It
+blocks loopback, private, link-local, CGNAT, multicast, reserved and documentation ranges
+for IPv4 and IPv6, including `0.0.0.0/8`, IPv4-mapped/compatible, NAT64 and 6to4 forms.
+Redirects are followed by hand (max 3) and every hop is re-validated. Bodies are capped.
+Webhooks remain HTTPS-only; the section proxy allows HTTP but returns only `text/html`,
+under a CSP `sandbox` without `allow-same-origin`.
+
+## Uploaded files
+
+Attachments are served with `nosniff`. Only raster images (`png`, `jpeg`, `gif`, `webp`,
+`avif`, `bmp`) are `inline`; everything else, SVG and HTML included, is
+`Content-Disposition: attachment`, so an upload can never render as a page on the API
+origin.
+
+## Webhook replay
+
+Paddle (platform and per-connection) and Stripe signatures are rejected when the signed
+timestamp is more than 300 seconds from now, in addition to `event_id` idempotency.
 
 ## Debug endpoints
 

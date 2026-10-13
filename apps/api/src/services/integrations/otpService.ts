@@ -1,32 +1,19 @@
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 import { sendMail } from "../mailer.service.js";
-import { ContactSession } from "../../models/index.js";
+import { ContactSession, OtpChallenge } from "../../models/index.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../config/logger.js";
+import { escapeHtml } from "../../utils/html.js";
 
-// In-memory OTP store: hash → { code, sessionToken, expiresAt }
-// In production with multiple API instances use Redis (env.redisUrl).
-// This implementation works for single-instance or with Redis disabled.
-const otpStore = new Map<string, { code: string; sessionToken: string; expiresAt: Date }>();
+/** Wrong guesses allowed per code before it is burned. */
+export const OTP_MAX_ATTEMPTS = 5;
 
-// Prune expired entries periodically
-setInterval(() => {
-  const now = new Date();
-  for (const [k, v] of otpStore) {
-    if (v.expiresAt < now) otpStore.delete(k);
-  }
-}, 60_000);
+function sha256(s: string): string {
+  return createHash("sha256").update(s).digest("hex");
+}
 
 function generateCode(): string {
   return String(Math.floor(100000 + (randomBytes(4).readUInt32BE(0) % 900000)));
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
 
 export async function sendIdentityOtp(
@@ -37,28 +24,35 @@ export async function sendIdentityOtp(
   // than the bare platform sender. Optional — falls back to a generic message.
   brandName?: string,
 ): Promise<string> {
-  const email = session?.email;
+  const email = session?.email?.toLowerCase().trim();
   if (!email) {
     throw new Error("Cannot send OTP: no email on contact session.");
   }
+  const sessionTokenHash = sha256(sessionToken);
 
-  // Reuse an outstanding, un-expired code for this session instead of minting a new one
-  // per send. Without this, a retried tool call (or the model calling twice) emailed a
-  // SECOND code while the widget's card carried the newer token — entering the code from
-  // the older email then failed as "invalid", even though the customer did nothing wrong.
-  const now = new Date();
-  for (const [existingHash, entry] of otpStore) {
-    if (entry.sessionToken === sessionToken && entry.expiresAt > now) {
-      logger.info("[otp] reusing outstanding code", { to: email, hash: existingHash });
-      return existingHash;
-    }
+  // Reuse an outstanding code for this session AND address instead of minting a
+  // new one per send. A retried tool call (or the model calling twice) used to
+  // email a second code while the widget's card carried the newer token.
+  const outstanding = await OtpChallenge.findOne({
+    sessionTokenHash,
+    email,
+    expiresAt: { $gt: new Date() },
+    attempts: { $lt: OTP_MAX_ATTEMPTS },
+  }).lean();
+  if (outstanding) {
+    logger.info("[otp] reusing outstanding code", { handle: outstanding.handle });
+    return outstanding.handle;
   }
 
   const code = generateCode();
-  const hash = createHash("sha256").update(`${sessionToken}:${code}`).digest("hex").slice(0, 16);
-  const expiresAt = new Date(Date.now() + env.otpExpirySeconds * 1000);
-
-  otpStore.set(hash, { code, sessionToken, expiresAt });
+  const handle = randomBytes(16).toString("hex");
+  await OtpChallenge.create({
+    handle,
+    sessionTokenHash,
+    codeHash: sha256(`${handle}:${code}`),
+    email,
+    expiresAt: new Date(Date.now() + env.otpExpirySeconds * 1000),
+  });
 
   const brand = brandName?.trim();
   const minutes = Math.round(env.otpExpirySeconds / 60);
@@ -71,32 +65,45 @@ export async function sendIdentityOtp(
            <p>It expires in ${minutes} minute${minutes === 1 ? "" : "s"}. If you didn't request this, you can ignore this email.</p>`,
   });
 
-  logger.info("[otp] sent", { to: email, hash });
-  return hash;
+  logger.info("[otp] sent", { handle });
+  return handle;
 }
 
+/**
+ * Checks a code. Each call spends one of `OTP_MAX_ATTEMPTS` attempts BEFORE
+ * comparing (atomically, so parallel guesses cannot share an attempt), and a
+ * code that runs out is deleted. A correct code marks the session verified for
+ * the email the code was sent to, provided the session still has that email.
+ */
 export async function verifyOtp(
   sessionToken: string,
   otpToken: string,
   code: string,
 ): Promise<boolean> {
-  const entry = otpStore.get(otpToken);
-  if (!entry || entry.sessionToken !== sessionToken) return false;
-  if (entry.expiresAt < new Date()) {
-    otpStore.delete(otpToken);
+  const challenge = await OtpChallenge.findOneAndUpdate(
+    {
+      handle: otpToken,
+      sessionTokenHash: sha256(sessionToken),
+      expiresAt: { $gt: new Date() },
+      attempts: { $lt: OTP_MAX_ATTEMPTS },
+    },
+    { $inc: { attempts: 1 } },
+    { new: true },
+  ).lean();
+  if (!challenge) return false;
+
+  const expected = Buffer.from(challenge.codeHash, "hex");
+  const actual = Buffer.from(sha256(`${otpToken}:${String(code).trim()}`), "hex");
+  if (!timingSafeEqual(expected, actual)) {
+    if (challenge.attempts >= OTP_MAX_ATTEMPTS) await OtpChallenge.deleteOne({ _id: challenge._id });
     return false;
   }
-  if (entry.code !== code) return false;
 
-  // Invalidate after first use
-  otpStore.delete(otpToken);
-
-  // Set identityVerifiedUntil on session (15 min window)
+  await OtpChallenge.deleteOne({ _id: challenge._id });
   const verifiedUntil = new Date(Date.now() + 15 * 60 * 1000);
-  await ContactSession.updateOne(
-    { token: sessionToken },
-    { $set: { identityVerifiedUntil: verifiedUntil } },
+  const updated = await ContactSession.updateOne(
+    { token: sessionToken, email: challenge.email },
+    { $set: { identityVerifiedUntil: verifiedUntil, identityVerifiedEmail: challenge.email } },
   );
-
-  return true;
+  return updated.matchedCount === 1;
 }

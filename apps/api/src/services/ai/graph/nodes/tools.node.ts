@@ -77,6 +77,22 @@ export async function toolsNode(
     let content: string;
     let status: "success" | "error" = "success";
 
+    // Once a call in this step has handed control to the customer (a form or
+    // an OTP challenge), nothing else in the step may run: the latch on state
+    // stops the NEXT step, but the model can ask for several tools in one, and
+    // the later ones used to execute anyway (__specs/05 ReAct conformance §3e).
+    // Each skipped call still gets a result, because providers reject an
+    // unanswered tool call.
+    if (halt) {
+      content = JSON.stringify({
+        notRun: true,
+        reason: "Waiting on the customer to complete an earlier step in this turn; this call was not made.",
+      });
+      messages.push(new ToolMessage({ content, tool_call_id: toolCallId, name: call.name }));
+      toolCallLog.push({ name: call.name, args, result: content });
+      continue;
+    }
+
     const registered = ctx.registry.byName.get(call.name);
     if (!registered) {
       content = JSON.stringify({ error: `Unknown tool "${call.name}".` });

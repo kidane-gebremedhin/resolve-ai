@@ -19,7 +19,7 @@ import { Router, type Request } from "express";
 import mongoose from "mongoose";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { requireActiveMembership, requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import {
   KnowledgeGap,
   KnowledgeSource,
@@ -105,6 +105,7 @@ router.get(
   "/definitions",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (_req, res) => {
     res.json({ definitions: METRIC_DEFINITIONS });
   }),
@@ -117,6 +118,7 @@ router.get(
   "/summary",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const range = parseDateRange(req.query, 30);
     const prev = previousRange(range);
@@ -257,6 +259,7 @@ router.get(
   "/retrieval",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const range = parseDateRange(req.query, 30);
     const match = await windowMatch(req, range);
@@ -361,6 +364,8 @@ router.get(
         noHits: number;
         widened: number;
         meanTopScore: number | null;
+        scoredTopTurns: number;
+        belowFloorTurns: number;
         latency: number[];
       }>([
         { $match: match },
@@ -371,6 +376,24 @@ router.get(
             noHits: { $sum: { $cond: ["$flags.noHits", 1, 0] } },
             widened: { $sum: { $cond: ["$retrieval.widenedOnEmpty", 1, 0] } },
             meanTopScore: { $avg: "$retrieval.topScore" },
+            // What the floor cuts, counted against the exact score rather than
+            // summed from the histogram's buckets in the browser: a floor that
+            // lands mid-bucket would otherwise be off by that bucket's share.
+            scoredTopTurns: { $sum: { $cond: [{ $isNumber: "$retrieval.topScore" }, 1, 0] } },
+            belowFloorTurns: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $isNumber: "$retrieval.topScore" },
+                      { $lt: ["$retrieval.topScore", env.ai.kbSearchMinScore] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
             latency: percentileP50P95({ $ifNull: ["$retrieval.latencyMs", 0] }),
           },
         },
@@ -384,6 +407,10 @@ router.get(
       // The floor the histogram draws its line at, read from the running
       // config rather than hardcoded in the page.
       minScoreThreshold: env.ai.kbSearchMinScore,
+      // Turns whose best score sits below that floor, i.e. turns that reached
+      // the prompt only through the widen-on-empty retry.
+      belowThresholdTurns: r?.belowFloorTurns ?? 0,
+      distributionTurns: r?.scoredTopTurns ?? 0,
       bucketWidth: SCORE_BUCKET_WIDTH,
       ks: KS,
       scoredTurns: s?.scored ?? 0,
@@ -410,9 +437,11 @@ router.get(
   "/generation",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const range = parseDateRange(req.query, 30);
     const match = await windowMatch(req, range);
+    const scope = await agentScopeFilter(req);
     const exampleLimit = parseLimit(req.query.examples, 10, 50);
 
     const [daily, totals, thumbs, examples] = await Promise.all([
@@ -471,6 +500,24 @@ router.get(
             createdAt: { $gte: range.since, $lte: range.until },
           },
         },
+        // Feedback carries no agentId, so an agent or website filter narrows it
+        // through the conversation it was left on. Without this the
+        // helpfulness tile for one website counts every website's thumbs. The
+        // lookup is on `_id`, so each feedback row costs one index probe.
+        ...(scope.agentId
+          ? [
+              {
+                $lookup: {
+                  from: "conversations",
+                  localField: "conversationId",
+                  foreignField: "_id",
+                  pipeline: [{ $project: { agentId: 1 } }],
+                  as: "_conversation",
+                },
+              },
+              { $match: { "_conversation.agentId": scope.agentId } },
+            ]
+          : []),
         { $group: { _id: "$rating", count: { $sum: 1 } } },
       ]),
 
@@ -534,46 +581,67 @@ router.get(
   "/cost",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const range = parseDateRange(req.query, 30);
     const match = await windowMatch(req, range);
 
-    const daily = await RagTurnMetric.aggregate<{
-      _id: string;
+    type CostRow = {
       turns: number;
       pricedTurns: number;
       promptTokens: number;
       completionTokens: number;
       costUsd: number;
       latency: number[];
+    };
+
+    // The same accumulators for one day and for the whole window. The window
+    // totals come from their own `$group` rather than from summing the daily
+    // rows in Node, because a percentile does not sum: p95 of a month is not
+    // any combination of thirty daily p95s.
+    const accumulators = {
+      turns: { $sum: 1 },
+      pricedTurns: {
+        $sum: { $cond: [{ $isNumber: "$generation.costUsd" }, 1, 0] },
+      },
+      promptTokens: { $sum: { $ifNull: ["$generation.promptTokens", 0] } },
+      completionTokens: { $sum: { $ifNull: ["$generation.completionTokens", 0] } },
+      costUsd: { $sum: { $ifNull: ["$generation.costUsd", 0] } },
+      latency: percentileP50P95("$durationMs"),
+    };
+
+    const [facets] = await RagTurnMetric.aggregate<{
+      daily: (CostRow & { _id: string })[];
+      totals: CostRow[];
     }>([
       { $match: match },
       {
-        $group: {
-          _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-          turns: { $sum: 1 },
-          pricedTurns: {
-            $sum: { $cond: [{ $isNumber: "$generation.costUsd" }, 1, 0] },
-          },
-          promptTokens: { $sum: { $ifNull: ["$generation.promptTokens", 0] } },
-          completionTokens: { $sum: { $ifNull: ["$generation.completionTokens", 0] } },
-          costUsd: { $sum: { $ifNull: ["$generation.costUsd", 0] } },
-          latency: percentileP50P95("$durationMs"),
+        $facet: {
+          daily: [
+            {
+              $group: {
+                _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
+                ...accumulators,
+              },
+            },
+            { $sort: { _id: 1 } },
+          ],
+          totals: [{ $group: { _id: null, ...accumulators } }],
         },
       },
-      { $sort: { _id: 1 } },
     ]);
 
-    const totals = daily.reduce(
-      (acc, d) => ({
-        turns: acc.turns + d.turns,
-        pricedTurns: acc.pricedTurns + d.pricedTurns,
-        promptTokens: acc.promptTokens + d.promptTokens,
-        completionTokens: acc.completionTokens + d.completionTokens,
-        costUsd: acc.costUsd + d.costUsd,
-      }),
-      { turns: 0, pricedTurns: 0, promptTokens: 0, completionTokens: 0, costUsd: 0 },
-    );
+    const daily = facets?.daily ?? [];
+    const t = facets?.totals[0];
+    const totals = {
+      turns: t?.turns ?? 0,
+      pricedTurns: t?.pricedTurns ?? 0,
+      promptTokens: t?.promptTokens ?? 0,
+      completionTokens: t?.completionTokens ?? 0,
+      costUsd: t?.costUsd ?? 0,
+      p50LatencyMs: t?.latency?.[0] ?? null,
+      p95LatencyMs: t?.latency?.[1] ?? null,
+    };
 
     res.json({
       totals: {
@@ -605,6 +673,7 @@ router.get(
   "/failing-queries",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const range = parseDateRange(req.query, 30);
     const match = await windowMatch(req, range);
@@ -697,6 +766,7 @@ router.get(
   "/source-health",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const range = parseDateRange(req.query, 30);
     const match = await windowMatch(req, range);
@@ -732,34 +802,99 @@ router.get(
       { $sort: { retrievalCount: -1 } },
     ]);
 
-    const retrievedIds = new Set(retrieved.map((r) => r._id));
+    // Source ids are stored as strings on the turn. Anything that is not a
+    // valid ObjectId cannot name a KnowledgeSource, so it is dropped from the
+    // exclusion list rather than allowed to throw.
+    const retrievedObjectIds = retrieved
+      .map((r) => r._id)
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
 
-    // Source titles and ingestion state. Scoped to the org, and to the selected
-    // agent when one is given.
-    const sourceFilter: Record<string, unknown> = { organizationId: req.orgId };
+    // Scoped to the org, and to the selected agent when one is given.
     const scope = await agentScopeFilter(req);
-    if (scope.agentId) sourceFilter.agentId = scope.agentId;
+    const sourceMatch: Record<string, unknown> = {
+      organizationId: orgObjectId(req),
+      ...(scope.agentId ? { agentId: scope.agentId } : {}),
+    };
 
-    const sources = await KnowledgeSource.find(sourceFilter, {
-      title: 1,
-      type: 1,
-      embeddingStatus: 1,
-      chunkCount: 1,
-      updatedAt: 1,
-      agentId: 1,
-    })
-      .limit(2000)
-      .lean();
+    const topSlice = retrieved.slice(0, limit);
 
-    const byId = new Map(sources.map((s) => [String(s._id), s]));
+    // A source only counts as never retrieved once it has been indexed for the
+    // whole window. One added a minute ago has had no chance to be retrieved,
+    // and calling it dead weight puts a fresh answer on the delete list.
+    const deadWeightMatch = {
+      embeddingStatus: "synced",
+      createdAt: { $lt: range.since },
+      _id: { $nin: retrievedObjectIds },
+    };
 
-    const top = retrieved.slice(0, limit).map((r) => {
+    const [titles, sourceCounts] = await Promise.all([
+      // Titles for the rows actually shown, by `_id`, instead of loading every
+      // source in the org to look a handful of them up.
+      KnowledgeSource.find(
+        {
+          ...sourceMatch,
+          _id: {
+            $in: topSlice
+              .map((r) => r._id)
+              .filter((id) => mongoose.Types.ObjectId.isValid(id)),
+          },
+        },
+        { title: 1, type: 1, embeddingStatus: 1, stale: 1, priority: 1 },
+      ).lean(),
+
+      // Dead weight, counted and listed by MongoDB. Ready (`synced`) sources
+      // only: `pending`/`error` are an ingestion problem, reported separately
+      // below, not a relevance problem. The set difference against the
+      // retrieved ids happens in the `$match`, so the count stays exact for an
+      // org of any size rather than for the first N sources loaded into Node.
+      KnowledgeSource.aggregate<{
+        totals: { _id: null; sources: number }[];
+        neverRetrieved: {
+          _id: mongoose.Types.ObjectId;
+          title: string;
+          type: string;
+          chunkCount: number;
+          updatedAt: Date;
+          stale?: boolean;
+          priority?: number;
+        }[];
+        neverRetrievedCount: { n: number }[];
+      }>([
+        { $match: sourceMatch },
+        {
+          $facet: {
+            totals: [{ $group: { _id: null, sources: { $sum: 1 } } }],
+            neverRetrieved: [
+              { $match: deadWeightMatch },
+              { $sort: { chunkCount: -1, _id: 1 } },
+              { $limit: limit },
+              { $project: { title: 1, type: 1, chunkCount: 1, updatedAt: 1, stale: 1, priority: 1 } },
+            ],
+            neverRetrievedCount: [
+              { $match: deadWeightMatch },
+              { $count: "n" },
+            ],
+          },
+        },
+      ]),
+    ]);
+
+    const byId = new Map(titles.map((s) => [String(s._id), s]));
+    const counts = sourceCounts[0];
+
+    const top = topSlice.map((r) => {
       const src = byId.get(r._id);
       return {
         sourceId: r._id,
         title: src?.title ?? "(deleted source)",
         type: src?.type ?? null,
         embeddingStatus: src?.embeddingStatus ?? null,
+        // Current repair state, so the Mark dialog opens on what is actually
+        // stored. Defaulting it in the page made a casual Save revert a
+        // previous mark.
+        stale: Boolean(src?.stale),
+        priority: src?.priority ?? 0,
         retrievalCount: r.retrievalCount,
         topRankCount: r.topRankCount,
         // Null, not zero, when the source never ranked first: there is no score
@@ -769,20 +904,15 @@ router.get(
       };
     });
 
-    // Dead weight: indexed and ready, and nothing in the window reached it.
-    // `pending`/`error` sources are excluded — they are an ingestion problem,
-    // reported separately below, not a relevance problem.
-    const neverRetrieved = sources
-      .filter((s) => s.embeddingStatus === "synced" && !retrievedIds.has(String(s._id)))
-      .map((s) => ({
-        sourceId: String(s._id),
-        title: s.title,
-        type: s.type,
-        chunkCount: s.chunkCount ?? 0,
-        updatedAt: s.updatedAt,
-      }))
-      .sort((a, b) => (b.chunkCount ?? 0) - (a.chunkCount ?? 0))
-      .slice(0, limit);
+    const neverRetrieved = (counts?.neverRetrieved ?? []).map((s) => ({
+      sourceId: String(s._id),
+      title: s.title,
+      type: s.type,
+      chunkCount: s.chunkCount ?? 0,
+      updatedAt: s.updatedAt,
+      stale: Boolean(s.stale),
+      priority: s.priority ?? 0,
+    }));
 
     // P8's ingestion health, so an operator sees "this source cannot be
     // retrieved because it never indexed" next to "this source indexed and is
@@ -793,11 +923,9 @@ router.get(
       top,
       neverRetrieved,
       totals: {
-        sources: sources.length,
-        retrieved: retrievedIds.size,
-        neverRetrieved: sources.filter(
-          (s) => s.embeddingStatus === "synced" && !retrievedIds.has(String(s._id)),
-        ).length,
+        sources: counts?.totals[0]?.sources ?? 0,
+        retrieved: retrieved.length,
+        neverRetrieved: counts?.neverRetrievedCount[0]?.n ?? 0,
       },
       ingestion: {
         totalSources: health.totalSources,
@@ -822,6 +950,7 @@ router.get(
   "/eval-runs",
   requireAuth,
   requireOrg,
+  requireActiveMembership,
   wrap(async (req, res) => {
     const limit = parseLimit(req.query.limit, 10, 50);
     const dir = env.rag.evalReportsDir;

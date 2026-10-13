@@ -42,6 +42,7 @@ vi.mock("../config/pinecone.js", () => ({
 // party having credits. Deterministic vectors here; the clustering tests inject
 // their own embedder separately.
 vi.mock("../services/ai/embedding.service.js", () => ({
+  EMBEDDING_MODEL: "test-embedding",
   embed: async (texts: string[]): Promise<number[][]> =>
     texts.map((t, i) => {
       const v = new Array(8).fill(0);
@@ -54,10 +55,12 @@ vi.mock("../services/ai/embedding.service.js", () => ({
 import { createApp } from "../test/app.js";
 import { createAgent, createOrgWithOwner, grantPlan, type RegisteredOwner } from "../test/factories.js";
 import {
+  Agent,
   KbChunk,
   KnowledgeGap,
   KnowledgeSource,
   MessageFeedback,
+  Notification,
   RagTurnMetric,
 } from "../models/index.js";
 import {
@@ -67,7 +70,6 @@ import {
   flagChunk,
   rankClusters,
   scoreChunks,
-  CHUNK_SCAN_LIMIT,
   type ChunkStats,
 } from "../services/kb/index-health.service.js";
 import { findDriftedSources, indexHealthOnce, isOffPeak } from "../jobs/index-health.job.js";
@@ -105,6 +107,13 @@ async function seedSource(args: {
   text: string;
   chunks?: number;
   hash?: string;
+  /**
+   * Leave the source and its passages created "now". By default they are
+   * backdated past the scoring window, because dead weight is only judged for
+   * content that has been indexed for the whole window, and most tests model an
+   * established corpus.
+   */
+  fresh?: boolean;
 }): Promise<mongoose.Types.ObjectId> {
   const chunkCount = args.chunks ?? 2;
   const source = await KnowledgeSource.create({
@@ -137,8 +146,18 @@ async function seedSource(args: {
       headingPath: [],
     })),
   );
+  if (!args.fresh) {
+    const old = new Date(Date.now() - ESTABLISHED_DAYS * 24 * 60 * 60 * 1000);
+    // Through the driver: Mongoose treats `createdAt` as immutable and strips it
+    // from updates, even with `timestamps: false`.
+    await KnowledgeSource.collection.updateOne({ _id: id }, { $set: { createdAt: old } });
+    await KbChunk.collection.updateMany({ sourceId: id }, { $set: { createdAt: old } });
+  }
   return id;
 }
+
+/** How old an "established" seeded source is: well past any scoring window. */
+const ESTABLISHED_DAYS = 120;
 
 /** One turn of telemetry with explicit per-chunk records. */
 async function seedTurn(args: {
@@ -326,44 +345,109 @@ describe("index health", () => {
       expect(report.chunks[0]!.chunkId).toBe(badChunk);
     });
 
-    it("reports a complete scan as complete", async () => {
+    it("counts an index past the old 20,000-row scan cap exactly", async () => {
+      // The scan used to list every chunk up to 20,000 rows and, past that,
+      // report counts for an arbitrary slice (__specs/38 S9). Counts now come
+      // from MongoDB, so they are exact at any size.
+      const src = await seedSource({ orgId: owner.orgId, agentId, title: "Big", text: "big corpus", chunks: 1 });
+      const extra = 20_500;
+      // `lean` skips casting, so the ids go in as the ObjectIds they would be.
+      await KbChunk.insertMany(
+        Array.from({ length: extra }, (_, i) => ({
+          organizationId: new mongoose.Types.ObjectId(owner.orgId),
+          agentId,
+          sourceId: src,
+          chunkIndex: i + 1,
+          chunkId: `${src.toString()}:big-${i}`,
+          text: "x",
+          headingPath: [],
+          createdAt: new Date(Date.now() - ESTABLISHED_DAYS * 24 * 60 * 60 * 1000),
+        })),
+        { lean: true },
+      );
+      await seedTurn({
+        orgId: owner.orgId,
+        agentId,
+        chunks: [{ chunkId: `${src.toString()}:0`, sourceId: src.toString(), rank: 0, score: 0.7, cited: true }],
+      });
+
+      const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString(), limit: 5 });
+      expect(report.totals.chunks).toBe(extra + 1);
+      expect(report.totals.retrieved).toBe(1);
+      expect(report.totals.deadWeight).toBe(extra);
+      // The list is a page; the totals are not.
+      expect(report.chunks).toHaveLength(5);
+      expect(report.chunks.every((c) => c.flags.includes("dead_weight"))).toBe(true);
+    }, 60_000);
+
+    it("ignores telemetry for chunks that no longer exist in the index", async () => {
+      const src = await seedSource({ orgId: owner.orgId, agentId, title: "Rechunked", text: "rechunked doc", chunks: 2 });
+      // A chunk retrieved last week and deleted since, e.g. by a re-chunk.
+      await seedTurn({
+        orgId: owner.orgId,
+        agentId,
+        chunks: [
+          { chunkId: `${src.toString()}:0`, sourceId: src.toString(), rank: 0, score: 0.8, cited: true },
+          { chunkId: `${src.toString()}:gone`, sourceId: src.toString(), rank: 1, score: 0.7, cited: false },
+        ],
+      });
       const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString() });
-      expect(report.totals.truncated).toBe(false);
-      expect(report.totals.scanLimit).toBe(CHUNK_SCAN_LIMIT);
+      // retrieved + deadWeight must add up to the index, which a deleted chunk
+      // counted as "retrieved" would break.
+      expect(report.totals.chunks).toBe(2);
+      expect(report.totals.retrieved).toBe(1);
+      expect(report.totals.deadWeight).toBe(1);
+      expect(report.chunks.map((c) => c.chunkId)).not.toContain(`${src.toString()}:gone`);
     });
 
-    it("says so when the index is larger than one scan", async () => {
-      // Dead weight is defined by the ABSENCE of telemetry, so the scan has to
-      // list every chunk and therefore needs a cap. The cap was silent: an org
-      // past it was told it had exactly CHUNK_SCAN_LIMIT chunks, with a
-      // dead-weight count computed from an arbitrary slice and nothing marking
-      // either number as partial.
-      const oversized = Array.from({ length: CHUNK_SCAN_LIMIT + 1 }, (_, i) => ({
-        chunkId: `over:${i}`,
-        sourceId: new mongoose.Types.ObjectId(),
-      }));
-      // Only the index scan is faked. withPreviews issues its own KbChunk.find
-      // for the flagged rows and must keep hitting the real collection.
-      const real = KbChunk.find.bind(KbChunk) as (...args: unknown[]) => unknown;
-      const fake = (...args: unknown[]) => {
-        const proj = args[1] as Record<string, number> | undefined;
-        if (proj && proj.sourceId === 1 && proj.text === undefined) {
-          return { limit: () => ({ lean: async () => oversized }) };
-        }
-        return real(...args);
-      };
-      const spy = vi
-        .spyOn(KbChunk, "find")
-        .mockImplementation(fake as unknown as typeof KbChunk.find);
-      try {
-        const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString() });
-        expect(report.totals.truncated).toBe(true);
-        expect(report.totals.scanLimit).toBe(CHUNK_SCAN_LIMIT);
-        // The probe row must not leak into the counts.
-        expect(report.totals.chunks).toBe(CHUNK_SCAN_LIMIT);
-      } finally {
-        spy.mockRestore();
+    it("lists passages that need fixing before dead weight, and fills the rest with it", async () => {
+      const bad = await seedSource({ orgId: owner.orgId, agentId, title: "Bad", text: "bad doc", chunks: 1 });
+      await seedSource({ orgId: owner.orgId, agentId, title: "Unread", text: "unread doc", chunks: 4 });
+      const badChunk = `${bad.toString()}:0`;
+      for (let i = 0; i < 8; i++) {
+        const messageId = await seedTurn({
+          orgId: owner.orgId,
+          agentId,
+          chunks: [{ chunkId: badChunk, sourceId: bad.toString(), rank: 0, score: 0.8, cited: true }],
+        });
+        await MessageFeedback.create({
+          messageId,
+          conversationId: OID(),
+          organizationId: new mongoose.Types.ObjectId(owner.orgId),
+          contactSessionId: OID(),
+          rating: "down",
+        });
       }
+      const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString(), limit: 3 });
+      expect(report.totals).toMatchObject({ chunks: 5, retrieved: 1, deadWeight: 4, misleading: 1 });
+      expect(report.chunks).toHaveLength(3);
+      expect(report.chunks[0]!.chunkId).toBe(badChunk);
+      expect(report.chunks.slice(1).every((c) => c.flags.includes("dead_weight"))).toBe(true);
+      expect(report.chunks.every((c) => c.title)).toBe(true);
+    });
+
+    it("does not count passages added during the window as dead weight", async () => {
+      await seedSource({ orgId: owner.orgId, agentId, title: "Old", text: "old corpus", chunks: 3 });
+      await seedSource({ orgId: owner.orgId, agentId, title: "New", text: "new corpus", chunks: 2, fresh: true });
+      const report = await scoreChunks({ organizationId: owner.orgId, agentId: agentId.toString() });
+      expect(report.totals.chunks).toBe(5);
+      // Only the three established passages are judged; the two new ones are
+      // too young to have been retrievable for a whole window.
+      expect(report.totals.deadWeight).toBe(3);
+      expect(report.chunks.every((c) => c.title === "Old")).toBe(true);
+    });
+
+    it("scopes the passage report to the selected website", async () => {
+      const otherAgent = await createAgent({ orgId: owner.orgId, name: "Elsewhere" });
+      await seedSource({ orgId: owner.orgId, agentId, title: "Here", text: "this site", chunks: 2 });
+      await seedSource({ orgId: owner.orgId, agentId: otherAgent._id as mongoose.Types.ObjectId, title: "There", text: "that site", chunks: 3 });
+      const myAgent = await Agent.findById(agentId).lean();
+      const res = await request(app)
+        .get(`/api/v1/index-health/chunks?websiteId=${String(myAgent!.websiteId)}`)
+        .set("Authorization", auth());
+      expect(res.status).toBe(200);
+      expect(res.body.totals.chunks).toBe(2);
+      expect(res.body.chunks.every((c: { title: string }) => c.title === "Here")).toBe(true);
     });
 
     it("attributes a downvote only to the chunk the answer actually cited", async () => {
@@ -798,6 +882,133 @@ describe("index health", () => {
       expect(deletedIds.every((id) => ids.some((s) => id.startsWith(`${s}:`)))).toBe(true);
     });
 
+    it("never offers a source added during the window for deletion, and refuses a confirm that sneaks one in", async () => {
+      // The case that found this: an operator answers a gap, and the new Q&A
+      // source, never retrieved because it did not exist yet, shows up on the
+      // delete list a minute later.
+      const old = await seedSource({ orgId: owner.orgId, agentId, title: "Old unread", text: "old words", chunks: 1 });
+      const fresh = await seedSource({
+        orgId: owner.orgId,
+        agentId,
+        title: "Just answered",
+        text: "Q: a gap\n\nA: a fresh answer",
+        chunks: 1,
+        fresh: true,
+      });
+
+      const preview = await request(app)
+        .post("/api/v1/index-health/sources/bulk-delete/preview")
+        .set("Authorization", auth());
+      expect(preview.status).toBe(200);
+      const offered = preview.body.sources.map((x: { _id?: string; sourceId?: string }) => x._id ?? x.sourceId);
+      expect(offered).toEqual([old.toString()]);
+
+      // A client that adds the fresh source to the confirmed set, holding the
+      // token for the set it was actually shown, is refused and deletes nothing.
+      const res = await request(app)
+        .post("/api/v1/index-health/sources/bulk-delete")
+        .set("Authorization", auth())
+        .send({ sourceIds: [old.toString(), fresh.toString()], token: preview.body.token, confirm: true });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      await expect(KnowledgeSource.exists({ _id: fresh })).resolves.toBeTruthy();
+      await expect(KnowledgeSource.exists({ _id: old })).resolves.toBeTruthy();
+    });
+
+    it("removes a deleted source's passages even when it has no recorded vector ids", async () => {
+      // Pinecone not configured, or an ingest that wrote the mirror and failed
+      // before recording ids. The purge used to return early on an empty id
+      // list and skip the mirror, leaving the passages lexically retrievable
+      // after their source was gone.
+      const id = await seedSource({ orgId: owner.orgId, agentId, title: "No vector ids", text: "orphan risk", chunks: 3 });
+      await KnowledgeSource.collection.updateOne({ _id: id }, { $set: { pineconeIds: [] } });
+      expect(await KbChunk.countDocuments({ sourceId: id })).toBe(3);
+
+      const preview = await request(app)
+        .post("/api/v1/index-health/sources/bulk-delete/preview")
+        .set("Authorization", auth());
+      const res = await request(app)
+        .post("/api/v1/index-health/sources/bulk-delete")
+        .set("Authorization", auth())
+        .send({ sourceIds: [id.toString()], token: preview.body.token, confirm: true });
+
+      expect(res.status).toBe(200);
+      expect(res.body.deleted).toBe(1);
+      await expect(KnowledgeSource.exists({ _id: id })).resolves.toBeNull();
+      await expect(KbChunk.countDocuments({ sourceId: id })).resolves.toBe(0);
+    });
+
+    it("migration 002 clears passages orphaned by the old purge, and only those", async () => {
+      const { migration } = await import("../migrations/002-purge-orphan-kb-chunks.js");
+      const live = await seedSource({ orgId: owner.orgId, agentId, title: "Live", text: "still here", chunks: 2 });
+      // What the old purge left behind: mirror rows for a source that is gone.
+      const goneId = OID();
+      await KbChunk.insertMany(
+        [0, 1, 2].map((i) => ({
+          organizationId: owner.orgId,
+          agentId,
+          sourceId: goneId,
+          chunkIndex: i,
+          chunkId: `${goneId.toString()}:${i}`,
+          text: `deleted content ${i}`,
+          headingPath: [],
+        })),
+      );
+      const liveBefore = await KbChunk.find({ sourceId: live }).sort({ chunkIndex: 1 }).lean();
+
+      vectorOps.length = 0;
+      await migration.up();
+
+      await expect(KbChunk.countDocuments({ sourceId: goneId })).resolves.toBe(0);
+      const liveAfter = await KbChunk.find({ sourceId: live }).sort({ chunkIndex: 1 }).lean();
+      expect(liveAfter).toEqual(liveBefore);
+      // Counted at the vector store: only the orphans' vectors were deleted.
+      const deleted = vectorOps.filter((o) => o.op === "delete").flatMap((o) => o.ids);
+      expect(deleted.sort()).toEqual([0, 1, 2].map((i) => `${goneId.toString()}:${i}`).sort());
+
+      // Idempotent.
+      vectorOps.length = 0;
+      await migration.up();
+      expect(vectorOps).toEqual([]);
+      expect(await KbChunk.find({ sourceId: live }).sort({ chunkIndex: 1 }).lean()).toEqual(liveBefore);
+    });
+
+    it("reviews exactly the scope the dashboard was showing: its website and its window", async () => {
+      // The review used to ignore the page and run a fixed 30-day, org-wide
+      // query, so with one website selected it offered every website's dead
+      // weight for deletion.
+      const otherAgent = await createAgent({ orgId: owner.orgId, name: "Other site agent" });
+      const otherAgentId = otherAgent._id as mongoose.Types.ObjectId;
+      const mine = await seedSource({ orgId: owner.orgId, agentId, title: "Mine", text: "this site", chunks: 1 });
+      const theirs = await seedSource({ orgId: owner.orgId, agentId: otherAgentId, title: "Theirs", text: "other site", chunks: 1 });
+      const myAgent = await Agent.findById(agentId).lean();
+
+      const scoped = await request(app)
+        .post(`/api/v1/index-health/sources/bulk-delete/preview?websiteId=${String(myAgent!.websiteId)}`)
+        .set("Authorization", auth());
+      expect(scoped.body.sources.map((x: { _id: string }) => x._id)).toEqual([mine.toString()]);
+
+      // Confirmed under the same scope, it deletes only that website's source.
+      const res = await request(app)
+        .post(`/api/v1/index-health/sources/bulk-delete?websiteId=${String(myAgent!.websiteId)}`)
+        .set("Authorization", auth())
+        .send({ sourceIds: [mine.toString()], token: scoped.body.token, confirm: true });
+      expect(res.status).toBe(200);
+      await expect(KnowledgeSource.exists({ _id: mine })).resolves.toBeNull();
+      await expect(KnowledgeSource.exists({ _id: theirs })).resolves.toBeTruthy();
+
+      // The window follows the page too: a source indexed 20 days ago is judged
+      // in a 7-day window and not yet in a 30-day one.
+      const recent = await seedSource({ orgId: owner.orgId, agentId, title: "Recent", text: "twenty days old", chunks: 1, fresh: true });
+      await KnowledgeSource.collection.updateOne(
+        { _id: recent },
+        { $set: { createdAt: new Date(Date.now() - 20 * 24 * 60 * 60 * 1000) } },
+      );
+      const week = await request(app).post("/api/v1/index-health/sources/bulk-delete/preview?days=7").set("Authorization", auth());
+      const month = await request(app).post("/api/v1/index-health/sources/bulk-delete/preview?days=30").set("Authorization", auth());
+      expect(week.body.sources.map((x: { _id: string }) => x._id)).toContain(recent.toString());
+      expect(month.body.sources.map((x: { _id: string }) => x._id)).not.toContain(recent.toString());
+    });
+
     it("will not delete another org's source even with a valid-looking request", async () => {
       const other = await createOrgWithOwner(app, { email: `y-${Date.now()}@example.com` });
       const otherAgent = await createAgent({ orgId: other.orgId, name: "Other" });
@@ -857,8 +1068,44 @@ describe("index health", () => {
         const healthy = await seedSource({ orgId: owner.orgId, agentId, title: "Healthy", text: "unchanged text" });
         const deadWeight = await seedSource({ orgId: owner.orgId, agentId, title: "Dead", text: "never retrieved" });
 
+        // Bait: an open gap with real volume and a long-dead source. A job that
+        // "helpfully" answered gaps or cleaned up dead weight would act on these.
+        await KnowledgeGap.create({
+          organizationId: owner.orgId,
+          agentId,
+          question: "Do you ship to Mars?",
+          queryUsed: "do you ship to mars",
+          maxKbScore: 0.05,
+          occurrenceCount: 40,
+        });
+        const gapsBefore = await KnowledgeGap.find().sort({ _id: 1 }).lean();
+        // Weak-chunk telemetry, so the review branch runs and has something to
+        // be tempted by.
+        for (let i = 0; i < 6; i++) {
+          const messageId = await seedTurn({
+            orgId: owner.orgId,
+            agentId,
+            chunks: [{ chunkId: `${healthy.toString()}:0`, sourceId: healthy.toString(), rank: 0, score: 0.8, cited: true }],
+          });
+          await MessageFeedback.create({
+            messageId,
+            conversationId: OID(),
+            organizationId: new mongoose.Types.ObjectId(owner.orgId),
+            contactSessionId: OID(),
+            rating: "down",
+          });
+        }
+
         const contentBefore = new Map(
           (await KnowledgeSource.find().lean()).map((s) => [String(s._id), s.extractedText]),
+        );
+        // Every field of the sources the job has no business touching.
+        const bystandersBefore = await KnowledgeSource.find({ _id: { $in: [healthy, deadWeight] } })
+          .sort({ _id: 1 })
+          .lean();
+        // Runtime, not grep: catches a delete reached through any import chain.
+        const deleteSpies = (["deleteOne", "deleteMany", "findOneAndDelete", "findByIdAndDelete"] as const).map(
+          (m) => ({ name: m, spy: vi.spyOn(KnowledgeSource, m) }),
         );
         const countBefore = await KnowledgeSource.countDocuments();
         // Only the sources the job does NOT touch. Re-embedding the drifted one
@@ -870,7 +1117,44 @@ describe("index health", () => {
           .sort({ chunkId: 1 })
           .lean();
 
-        await indexHealthOnce(new Date(Date.UTC(2026, 0, 1, env.kb.indexHealthHourUtc)));
+        vectorOps.length = 0;
+        const result = await indexHealthOnce(new Date(Date.UTC(2026, 0, 1, env.kb.indexHealthHourUtc)));
+        // It did run, and did both of its jobs; otherwise everything below is
+        // vacuously true.
+        expect(result.ran).toBe(true);
+        expect(result.reembedded).toBe(1);
+        expect(result.orgsFlagged).toBe(1);
+
+        // No delete method on the sources collection was called, by anything.
+        for (const { name, spy } of deleteSpies) {
+          expect(spy, `KnowledgeSource.${name} was called`).not.toHaveBeenCalled();
+          spy.mockRestore();
+        }
+
+        // Counted at the vector store: every id the job deleted or upserted
+        // belongs to the drifted source. Nobody else's vectors moved.
+        const touched = vectorOps.flatMap((o) => o.ids);
+        expect(touched.length).toBeGreaterThan(0);
+        const foreign = touched.filter((id) => !id.startsWith(`${drifted.toString()}:`));
+        expect(foreign, `job touched vectors it should not have: ${foreign.join(", ")}`).toEqual([]);
+
+        // The bystanders are byte-identical, every field, priority and stale
+        // flag included.
+        const bystandersAfter = await KnowledgeSource.find({ _id: { $in: [healthy, deadWeight] } })
+          .sort({ _id: 1 })
+          .lean();
+        expect(bystandersAfter).toEqual(bystandersBefore);
+
+        // It did not answer the gap or close it: that is an operator decision.
+        expect(await KnowledgeGap.find().sort({ _id: 1 }).lean()).toEqual(gapsBefore);
+
+        // It told a human instead.
+        expect(
+          await Notification.countDocuments({
+            organizationId: new mongoose.Types.ObjectId(owner.orgId),
+            type: "kb_weak_chunks",
+          }),
+        ).toBe(1);
 
         // NOTHING was deleted.
         await expect(KnowledgeSource.countDocuments()).resolves.toBe(countBefore);
@@ -916,6 +1200,35 @@ describe("index health", () => {
 
       const found = await findDriftedSources(10);
       expect(found.map((f) => f._id.toString())).toEqual([drifted.toString()]);
+    });
+
+    it("skips a source that drifted into a duplicate, instead of retrying it every night", async () => {
+      // Its new text now matches a sibling's, and `(agentId, contentHash)` is
+      // unique. Taking that hash can never succeed, so treating it as drift
+      // would spend a re-embed slot on it every night and starve real repairs.
+      await seedSource({ orgId: owner.orgId, agentId, title: "Original", text: "same words" });
+      const realDrift = await seedSource({
+        orgId: owner.orgId,
+        agentId,
+        title: "Real drift",
+        text: "changed words",
+        hash: "e".repeat(64),
+      });
+      // Seeded last, so it is the newest and the scan (newest first) reaches it
+      // before the real drift. Without the skip it would take the only slot.
+      await new Promise((r) => setTimeout(r, 5));
+      const dup = await seedSource({
+        orgId: owner.orgId,
+        agentId,
+        title: "Copy",
+        text: "same words",
+        hash: "d".repeat(64),
+      });
+
+      const found = await findDriftedSources(1);
+      // With one slot, the slot goes to the source that can actually be fixed.
+      expect(found.map((f) => f._id.toString())).toEqual([realDrift.toString()]);
+      expect(found.map((f) => f._id.toString())).not.toContain(dup.toString());
     });
 
     it("imports no destructive repair path", async () => {
@@ -987,6 +1300,26 @@ describe("index health", () => {
       const after = await KnowledgeSource.findById(id).lean();
       expect(after!.contentHash).toBe(before!.contentHash);
       expect(String(after!.sourceUpdatedAt)).toBe(String(before!.sourceUpdatedAt));
+    });
+
+    it("reports a source's stored mark where the dashboard reads it, so a re-save cannot revert it", async () => {
+      // The page used to open the Mark dialog on hard-coded defaults (not
+      // stale, authority 0), so saving it unchanged silently undid a previous
+      // mark. Both rows the dialog opens from must carry the stored values.
+      const id = await seedSource({ orgId: owner.orgId, agentId, title: "Marked", text: "never asked", chunks: 1 });
+      await request(app)
+        .post(`/api/v1/index-health/sources/${id.toString()}/mark`)
+        .set("Authorization", auth())
+        .send({ stale: true, priority: -3 })
+        .expect(200);
+
+      const chunks = await request(app).get("/api/v1/index-health/chunks").set("Authorization", auth());
+      const row = chunks.body.chunks.find((c: { sourceId: string }) => c.sourceId === id.toString());
+      expect(row).toMatchObject({ sourceStale: true, sourcePriority: -3 });
+
+      const health = await request(app).get("/api/v1/rag-metrics/source-health").set("Authorization", auth());
+      const dead = health.body.neverRetrieved.find((s: { sourceId: string }) => s.sourceId === id.toString());
+      expect(dead).toMatchObject({ stale: true, priority: -3 });
     });
 
     it("rejects a mark with nothing to change", async () => {

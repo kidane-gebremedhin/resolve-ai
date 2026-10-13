@@ -79,9 +79,15 @@ This convention enables:
 ---
 
 > **Diagrams.** Ingestion, every `embeddingStatus` transition, the budget gate,
-> the stale-vector cleanup and the P8 stage events are drawn in
-> [`E2E_FLOW.md`](../E2E_FLOW.md) §1; retrieval with the tenancy filter on every
-> leg is §3.
+> the stale-vector cleanup, the P8 stage events and every error path are drawn in
+> [`E2E_FLOW.md`](../E2E_FLOW.md) §1. Crawl completion runs the same
+> `ingestSource` pipeline as every other source (`ingestCrawlResults` only stores
+> the pages and hands off; it used to be a separate copy without the mirror or
+> stage events, fixed 2026-10-10). Retrieval with the tenancy filter on every leg is §3, where per-org
+> namespaces are drawn dashed (documented, not implemented). Failure modes are in
+> [`37-rag-pipeline-audit.md`](37-rag-pipeline-audit.md) §1-§2 and measured load
+> limits (25MB uploads, the lexical index at 100k chunks) in
+> [`38-scale-and-load-risks.md`](38-scale-and-load-risks.md).
 
 ## Ingestion Pipeline (by source type)
 
@@ -103,6 +109,17 @@ flowchart TD
     I -->|Error| L[Set embeddingStatus: error]
     L --> M[Queue for retry]
 ```
+
+**How every type is written (2026-10-10).** After parsing, a source whose text
+exceeds 15MB of UTF-8 is refused (`text_too_large`; the row could not be stored
+past MongoDB's 16MB document cap). Otherwise every id the run will write is
+recorded on `pineconeIds` first, then embedding, upsert and the `KbChunk` mirror
+insert run per 256-chunk batch (`INGEST_BATCH` in `ingestion.service.ts`), so
+memory does not hold every vector of a large document at once. A failure after
+any batch landed is `partial_upsert`. A successful ingest stamps
+`embeddingModel`. CSV is read as text (byte for byte), not through the
+spreadsheet parser; DOCX goes through `mammoth` with `@xmldom/xmldom` pinned to
+the 0.8 line it supports.
 
 ### Per-Type Processing
 
@@ -594,7 +611,7 @@ Kept apart because each has a different repair.
 
 | Flag | Condition | What it means | The repair |
 | --- | --- | --- | --- |
-| `dead_weight` | Zero retrievals in the window | Nobody asks about it, or it does not match the words they use | Delete it, or rewrite it in the customer's vocabulary |
+| `dead_weight` | Zero retrievals in the window, for a passage indexed before the window began | Nobody asks about it, or it does not match the words they use | Delete it, or rewrite it in the customer's vocabulary |
 | `misleading` | Downvote rate among **citing** answers ≥ `KB_HEALTH_DOWNVOTE_RATE` | It is being quoted and the answers are wrong | Fix the content. This one is actively costing you |
 | `retrieved_not_cited` | Citation rate ≤ `KB_HEALTH_UNCITED_RATE` **and** score ≥ `KB_HEALTH_STRONG_SCORE` | Reaches the prompt, model declines to quote it | Usually a chunking defect: the sentence that answers the question got split away |
 
@@ -694,6 +711,28 @@ source that started being retrieved between the review and the confirm is no
 longer dead weight, and a token is a receipt for a review rather than a licence
 to delete something that has since changed.
 
+**Only sources indexed for the whole window are candidates.** A source created
+after the window began has had less than a window to be retrieved, so "nothing
+retrieved it" is not evidence yet. Without this rule an answer written from a
+gap cluster a minute earlier was offered for deletion straight away. The same
+rule applies to the dashboard's never-retrieved count and to passage-level dead
+weight. Candidates are found with `_id: { $nin: retrieved }` in MongoDB, so the
+cap on one review bounds what it shows, not what it looks at.
+
+**The review is scoped exactly like the page.** Preview and confirm take the
+dashboard's own query (`?days` / `?from&to`, and `?agentId` or `?websiteId`,
+validated against the caller's org by `agentScopeFilter`), so the list is never
+wider than the panel the operator pressed it from. Previously the review ran a
+fixed 30-day, org-wide query and offered every website's dead weight while one
+website was selected. The two reads (`/chunks`, `/gap-clusters`) take the same
+scope; `?websiteId` used to be ignored there.
+
+**Deleting a source removes its vectors and its `KbChunk` mirror rows.** The
+mirror is deleted even when the source has no recorded vector ids (Pinecone not
+configured, or an ingest that failed before recording them); an earlier early
+return skipped it and left the passages lexically retrievable. Migration
+`002-purge-orphan-kb-chunks` clears rows already left behind that way.
+
 Stateless on purpose — a `pendingDeletions` collection would be one more thing
 to expire, scope and keep in sync, to express what an HMAC already says.
 
@@ -710,14 +749,22 @@ It does two things:
    `KB_INDEX_HEALTH_MAX_REEMBED_PER_RUN`. The selection is the mismatch itself,
    so a corpus that has not drifted costs one indexed find and nothing else.
    **This is never a full reindex.** The hash is stamped before the re-embed, or
-   the same source would be repaired every night forever.
+   the same source would be repaired every night forever. A source whose new
+   text duplicates a sibling's is skipped and logged rather than retried: the
+   `(agentId, contentHash)` index is unique, so stamping it could never succeed,
+   and retrying would spend a re-embed slot on it every night.
 2. **Review notification.** Raises one `kb_weak_chunks` notification per org per
    day when anything is flagged. It changes nothing.
 
 **It never deletes and never edits customer knowledge.** Re-embedding rebuilds
 vectors from the operator's text; it must never rewrite the text. The
-destructive routes are not imported, and `index-health.test.ts` asserts that
-from the job's source rather than trusting this paragraph.
+destructive routes are not imported, and `index-health.test.ts` asserts that at
+runtime rather than trusting this paragraph: it baits a fully enabled run with a
+drifted source, a dead-weight source, a high-volume open gap and downvoted
+passages, then checks that no `KnowledgeSource` delete method was called, every
+vector the job touched belongs to the drifted source, every other source is
+byte-identical, and the gap is still open. Planting a delete or a priority edit
+in the job makes it fail.
 
 Work is gated to `KB_INDEX_HEALTH_HOUR_UTC` while the tick itself is frequent, so
 a restart at any time of day cannot miss the window and cannot re-embed during
@@ -735,16 +782,16 @@ loop treated every failure identically.
 
 ### The error taxonomy
 
-`services/kb/ingestion-errors.ts` classifies every failure into one of ten codes,
+`services/kb/ingestion-errors.ts` classifies every failure into one of eleven codes,
 each carrying an **operator-readable message**, a **suggested action**, and a
 **retry policy**. The last is separate from the first two on purpose: what an
 operator should do and what the retry loop should do are different questions.
 
 | Policy | Classes | Behaviour |
 | --- | --- | --- |
-| `never` | `unsupported_file_type`, `parse_failure`, `empty_extraction` | Consumes **zero** retries, goes terminal and visible |
-| `backoff` | `embedding_provider_error`, `rate_limited`, `pinecone_upsert_failure`, `partial_upsert`, `timeout`, `unknown` | Bounded retries with exponential backoff |
-| `deferred` | `budget_exceeded` | Waits without consuming attempts |
+| `never` | `unsupported_file_type`, `parse_failure`, `empty_extraction`, `text_too_large` | Consumes **zero** retries, goes terminal and visible |
+| `backoff` | `embedding_provider_error`, `rate_limited`, `pinecone_upsert_failure`, `partial_upsert`, `timeout`, `unknown` | Bounded retries with exponential backoff. `retryCount` counts failed attempts and is incremented only by `ingestSource`'s catch, never by the reconcile job, so `KB_INGEST_MAX_RETRIES=3` means the first run plus two retries |
+| `deferred` | `budget_exceeded` | Waits without consuming attempts. The ingest budget gate writes this code and one `skipped` stage event. Each reconcile tick checks `orgBudgetStatus` once per paused org and leaves the sources of an org still over budget out of the retry query (no attempt, no event, no batch slot); once the org is back under budget they retry normally |
 
 An unrecognised failure classifies as `unknown` and **retries**. Defaulting to
 permanent would strand sources on a provider error whose wording we have not seen

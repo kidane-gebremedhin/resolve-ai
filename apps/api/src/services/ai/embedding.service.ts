@@ -9,6 +9,9 @@ import { recordUsage } from "../openrouter-usage.service.js";
 const baseUrl = process.env.EMBEDDING_BASE_URL ?? "https://api.openai.com/v1";
 const model = process.env.EMBEDDING_MODEL ?? "text-embedding-3-small";
 
+/** The model new vectors are written with. Stamped on each source at ingest. */
+export const EMBEDDING_MODEL = model;
+
 // Output dimensionality, when the model supports reducing it.
 //
 // This exists because the vector index has a FIXED dimension (1536 here) and a

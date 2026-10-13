@@ -49,6 +49,12 @@ export const env = {
   jwtAccessExpiry: optional("JWT_ACCESS_EXPIRY", "15m"),
   jwtRefreshExpiry: optional("JWT_REFRESH_EXPIRY", "7d"),
   googleClientId: process.env.GOOGLE_CLIENT_ID,
+  // Accepted `aud` values for Google id_tokens. Comma-separated so the
+  // dashboard and admin console can use separate OAuth clients.
+  googleClientIds: (process.env.GOOGLE_CLIENT_ID ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean),
   sessionTokenExpiryHours: Number(optional("SESSION_TOKEN_EXPIRY_HOURS", "24")),
   ai: {
     model: required("AI_MODEL"),
@@ -71,6 +77,15 @@ export const env = {
     // Hard ceiling on agent↔tool round trips in one turn, so a model that
     // loops on a failing tool can't spend the org's budget indefinitely.
     maxToolTurns: Number(optional("AI_MAX_TOOL_TURNS", "10")),
+    // Wall-clock cap on one customer turn's agent loop. Each model call has its
+    // own timeout and retries, so ten tool rounds could otherwise hold a turn
+    // (and its concurrency slot) for many minutes. Past this the customer gets
+    // the fallback escalation instead of silence.
+    turnDeadlineMs: Number(optional("AI_TURN_DEADLINE_MS", "90000")),
+    // Customer turns one API process runs at once; the rest wait in order. A
+    // burst of widget messages otherwise opens unbounded concurrent model
+    // streams and Mongo work in a 512MB container. 0 disables the cap.
+    maxConcurrentTurns: Number(optional("AI_MAX_CONCURRENT_TURNS", "16")),
 
     // ---- Query understanding (see __specs/40-query-understanding.md) ----
     // Rewriting sits in front of every KB search: it resolves follow-ups,
@@ -383,6 +398,18 @@ export const env = {
   // is skipped.
   contactInboxEmail: process.env.CONTACT_INBOX_EMAIL,
   // Widget rate limiting (per contact session, in-memory + optional Redis).
+  // Sign-ups allowed per IP per hour (POST /auth/register).
+  registerRateLimitMax: Number(optional("AUTH_REGISTER_RATE_LIMIT_MAX", "10")),
+  // Per-IP limits on anonymous widget endpoints (see widget.routes.ts).
+  widgetLimits: {
+    sessionsPerIp: Number(optional("WIDGET_SESSIONS_PER_IP", "30")),
+    sessionWindowMs: Number(optional("WIDGET_SESSIONS_WINDOW_MS", String(15 * 60_000))),
+    attachmentsPerIp: Number(optional("WIDGET_ATTACHMENTS_PER_IP", "20")),
+    attachmentWindowMs: Number(optional("WIDGET_ATTACHMENTS_WINDOW_MS", String(15 * 60_000))),
+  },
+  // Dev-only: fall back to ip-api.com (plain HTTP, third party) when the
+  // offline GeoIP database has no match. Keep off in production.
+  geoipExternalFallback: optional("GEOIP_EXTERNAL_FALLBACK", "false").toLowerCase() === "true",
   widgetRateLimit: {
     max: Number(optional("WIDGET_RATE_LIMIT_MAX", "30")),
     windowMs: Number(optional("WIDGET_RATE_LIMIT_WINDOW_MS", "60000")),

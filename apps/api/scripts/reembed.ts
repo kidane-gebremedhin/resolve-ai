@@ -19,13 +19,21 @@
  *   pnpm tsx scripts/reembed.ts --all --resume    # skip sources already mirrored
  *
  * RESUMABILITY is by observed state, not a checkpoint file: `--resume` skips any
- * source whose mirror row count already matches its chunk count. An interrupted
- * run is restarted with the same command and picks up where it stopped, and
- * there is no cursor to go stale if the corpus changes underneath it.
+ * source whose mirror row count already matches its chunk count AND whose
+ * vectors were written with the current `EMBEDDING_MODEL`. An interrupted run is
+ * restarted with the same command and picks up where it stopped, including
+ * after a model change, and there is no checkpoint to go stale if the corpus
+ * changes underneath it.
+ *
+ * Memory stays flat with corpus size: the cost estimate is summed in MongoDB and
+ * sources are walked with a cursor, never loaded with their text all at once.
  */
+import { Types } from "mongoose";
 import { connectDb, disconnectDb } from "../src/config/db.js";
 import { KbChunk, KnowledgeSource } from "../src/models/index.js";
 import { ingestSource } from "../src/services/kb/ingestion.service.js";
+import { EMBEDDING_MODEL } from "../src/services/ai/embedding.service.js";
+import { isAlreadyCurrent } from "../src/services/kb/reembed-plan.js";
 
 function arg(flag: string): string | undefined {
   const i = process.argv.indexOf(flag);
@@ -47,23 +55,21 @@ async function main() {
     filter.$or = [{ pineconeIds: { $exists: false } }, { pineconeIds: { $size: 0 } }];
   }
 
-  const sources = await KnowledgeSource.find(filter, {
-    title: 1,
-    organizationId: 1,
-    extractedText: 1,
-    content: 1,
-    chunkCount: 1,
-  }).lean();
+  // Ids and small fields only. The text stays in MongoDB: `ingestSource` loads
+  // one source's text at a time.
+  const sourceFields = { title: 1, chunkCount: 1, embeddingModel: 1 };
+  const count = await KnowledgeSource.countDocuments(filter);
   // eslint-disable-next-line no-console
-  console.log(`[reembed] ${sources.length} source(s) to process${all ? " (--all)" : ""}`);
+  console.log(`[reembed] ${count} source(s) to process${all ? " (--all)" : ""}`);
 
   // Price the run before it writes anything. Re-embedding a corpus is the kind
   // of operation whose cost should never be a surprise discovered afterwards in
-  // a provider bill.
-  const totalChars = sources.reduce(
-    (n, s) => n + ((s.extractedText as string | undefined) ?? (s.content as string | undefined) ?? "").length,
-    0,
-  );
+  // a provider bill. Summed server side so the estimate costs no client memory.
+  const [sum] = await KnowledgeSource.aggregate<{ chars: number }>([
+    { $match: orgId ? { ...filter, organizationId: new Types.ObjectId(orgId) } : filter },
+    { $group: { _id: null, chars: { $sum: { $strLenCP: { $ifNull: ["$extractedText", { $ifNull: ["$content", ""] }] } } } } },
+  ]);
+  const totalChars = sum?.chars ?? 0;
   // The same 4-chars-per-token estimate the chunker uses. Deliberately rough and
   // stated as such: it is an order-of-magnitude check before spending, not an
   // invoice.
@@ -73,7 +79,7 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(
     `[reembed] estimated ${estTokens.toLocaleString()} tokens across ${totalChars.toLocaleString()} chars ` +
-      `→ ~$${estUsd.toFixed(4)} at $${costPer1M}/1M (model: ${process.env.EMBEDDING_MODEL ?? "text-embedding-3-small"})`,
+      `→ ~$${estUsd.toFixed(4)} at $${costPer1M}/1M (model: ${EMBEDDING_MODEL})`,
   );
 
   if (dryRun) {
@@ -81,17 +87,17 @@ async function main() {
     console.log("[reembed] --dry-run: reporting the per-source delta, writing nothing\n");
     let wouldEmbed = 0;
     let alreadyMirrored = 0;
-    for (const s of sources) {
+    for await (const s of KnowledgeSource.find(filter, sourceFields).lean().cursor()) {
       const id = s._id.toString();
       const mirrored = await KbChunk.countDocuments({ sourceId: s._id });
       const chunks = (s.chunkCount as number | undefined) ?? 0;
-      const complete = mirrored > 0 && mirrored === chunks;
+      const complete = isAlreadyCurrent({ mirrored, chunkCount: chunks, embeddingModel: s.embeddingModel }, EMBEDDING_MODEL);
       if (complete) alreadyMirrored++;
       else wouldEmbed++;
       // eslint-disable-next-line no-console
       console.log(
         `[reembed] ${complete ? "SKIP " : "WRITE"} ${id} "${s.title}" — ` +
-          `${chunks} chunk(s), ${mirrored} mirrored`,
+          `${chunks} chunk(s), ${mirrored} mirrored, model ${s.embeddingModel ?? "unknown"}`,
       );
     }
     // eslint-disable-next-line no-console
@@ -108,14 +114,15 @@ async function main() {
   let failed = 0;
   let resumed = 0;
   const startedAt = Date.now();
-  for (const s of sources) {
+  for await (const s of KnowledgeSource.find(filter, sourceFields).lean().cursor()) {
     const id = s._id.toString();
     try {
       if (resume) {
-        // Already mirrored completely: nothing to redo. Cheap to check and it
-        // makes an interrupted run restartable with the same command.
+        // Already mirrored completely with the current model: nothing to redo.
+        // Cheap to check and it makes an interrupted run restartable with the
+        // same command.
         const mirrored = await KbChunk.countDocuments({ sourceId: s._id });
-        if (mirrored > 0 && mirrored === ((s.chunkCount as number | undefined) ?? -1)) {
+        if (isAlreadyCurrent({ mirrored, chunkCount: s.chunkCount, embeddingModel: s.embeddingModel }, EMBEDDING_MODEL)) {
           resumed++;
           // eslint-disable-next-line no-console
           console.log(`[reembed] RESUME-SKIP ${id} "${s.title}" (${mirrored} chunks already mirrored)`);

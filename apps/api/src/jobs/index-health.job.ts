@@ -78,7 +78,7 @@ export async function findDriftedSources(limit: number): Promise<
   // case costs one indexed pass and no repairs.
   const cursor = KnowledgeSource.find(
     { embeddingStatus: { $in: ["synced", "empty"] } },
-    { contentHash: 1, extractedText: 1, content: 1, organizationId: 1 },
+    { contentHash: 1, extractedText: 1, content: 1, organizationId: 1, agentId: 1 },
   )
     .sort({ updatedAt: -1 })
     .limit(MAX_DRIFT_SCAN)
@@ -91,6 +91,23 @@ export async function findDriftedSources(limit: number): Promise<
       if (!text) continue;
       const currentHash = hashContent(text);
       if (currentHash === s.contentHash) continue;
+      // `(agentId, contentHash)` is unique. A source whose text now matches a
+      // sibling's cannot take that hash: stamping it would throw on every run,
+      // and the source would claim one of the nightly re-embed slots forever,
+      // starving real repairs behind it. It is a duplicate, which is a review
+      // question for a human, not a re-embed.
+      const duplicate = await KnowledgeSource.exists({
+        agentId: s.agentId,
+        contentHash: currentHash,
+        _id: { $ne: s._id },
+      });
+      if (duplicate) {
+        logger.warn("[jobs] drifted source now duplicates another source, skipped", {
+          sourceId: String(s._id),
+          duplicateOf: String(duplicate._id),
+        });
+        continue;
+      }
       drifted.push({
         _id: s._id as mongoose.Types.ObjectId,
         organizationId: s.organizationId as mongoose.Types.ObjectId,
@@ -120,7 +137,7 @@ async function alertedRecently(organizationId: string): Promise<boolean> {
 /** Score one org's chunks and raise a review notification if anything is weak. */
 async function flagWeakChunksForOrg(organizationId: string): Promise<number> {
   const report = await scoreChunks({ organizationId, limit: 1 });
-  const { misleading, retrievedNotCited, deadWeight, truncated } = report.totals;
+  const { misleading, retrievedNotCited, deadWeight } = report.totals;
   const actionable = misleading + retrievedNotCited;
   if (actionable === 0) return 0;
   if (await alertedRecently(organizationId)) return actionable;
@@ -133,12 +150,7 @@ async function flagWeakChunksForOrg(organizationId: string): Promise<number> {
     body:
       `${misleading} passage(s) are being cited in answers customers thumbed down, and ` +
       `${retrievedNotCited} are retrieved but never quoted, which usually means they are split badly. ` +
-      `${deadWeight} more were never retrieved at all. Nothing has been changed.` +
-      // An operator reading "0 were never retrieved" should not be left thinking
-      // the whole index was examined when only the first slice of it was.
-      (truncated
-        ? ` Note: this covers the first ${report.totals.scanLimit.toLocaleString("en-US")} passages of a larger index.`
-        : ""),
+      `${deadWeight} more were never retrieved at all. Nothing has been changed.`,
     link: "/app/analytics/rag",
   });
   return actionable;

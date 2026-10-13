@@ -35,6 +35,7 @@ import {
   type VisionContentPart,
 } from "../shared/attachments.js";
 import { applyConversationControls, readConversationControls } from "../shared/controls.js";
+import { loadTurnHistory } from "./history.js";
 import { FINAL_REPLY_TAG, TURN_CONTEXT_KEY, type TurnContext } from "./context.js";
 import { GRAPH_NAME, getReplyGraph } from "./agent.graph.js";
 import type {
@@ -80,7 +81,7 @@ function topSources(hits: KbHit[]): KbSource[] {
 }
 
 /** The LLM-facing conversation: system prompt, recent history, then this turn. */
-function buildInitialMessages(args: {
+export function buildInitialMessages(args: {
   systemPrompt: string;
   history: { role: string; content: string; attachments?: unknown }[];
   customerMessage: string;
@@ -90,18 +91,26 @@ function buildInitialMessages(args: {
 }): BaseMessage[] {
   const mask = (text: string) => (args.piiRedact ? maskPii(text) : text);
 
-  const history = args.history.map<BaseMessage>((m) =>
-    m.role === "ai"
-      ? new AIMessage(m.content)
-      : new HumanMessage(
-          mask(
-            withAttachmentText(
-              m.content,
-              m.attachments as { fileName?: string | null; extractedText?: string | null }[] | undefined,
-            ),
+  // Operators speak for the business, so their messages sit on the assistant
+  // side, labelled so the model knows a person said it. Replaying them as
+  // customer messages (every non-`ai` row used to become a HumanMessage) put
+  // the operator's words in the customer's mouth. System notices are not part
+  // of the conversation and are left out.
+  const history = args.history.flatMap<BaseMessage>((m) => {
+    if (m.role === "ai") return [new AIMessage(m.content)];
+    if (m.role === "operator") return [new AIMessage(`[Human support agent] ${m.content}`)];
+    if (m.role === "system") return [];
+    return [
+      new HumanMessage(
+        mask(
+          withAttachmentText(
+            m.content,
+            m.attachments as { fileName?: string | null; extractedText?: string | null }[] | undefined,
           ),
         ),
-  );
+      ),
+    ];
+  });
 
   const currentText = withAttachmentText(mask(args.customerMessage), args.currentAttachments);
   const current =
@@ -187,10 +196,7 @@ export async function generateAiReplyWithGraph(
     if (!agent) throw new Error(`agent not found: ${agentId}`);
     const organization = await Organization.findById(conversation.organizationId);
 
-    const history = await Message.find({ conversationId: conversation._id })
-      .sort({ createdAt: 1 })
-      .limit(20)
-      .lean();
+    const history = await loadTurnHistory(conversation._id, customerMessage);
 
     controls = readConversationControls(organization);
     const orgSettings = organization?.settings as Record<string, unknown> | null | undefined;
@@ -293,6 +299,9 @@ export async function generateAiReplyWithGraph(
         // Each agent↔tool round trip costs two steps; leave headroom for the
         // start edge and the finalize node on top of the configured ceiling.
         recursionLimit: env.ai.maxToolTurns * 2 + 10,
+        // A turn past its deadline aborts into the fallback escalation below
+        // rather than holding the customer, and a concurrency slot, open.
+        signal: AbortSignal.timeout(env.ai.turnDeadlineMs),
       },
     );
 
@@ -464,6 +473,7 @@ export async function generateAiReplyWithGraph(
       conversationId,
       status: conversation.status,
     });
+    io.to(sessionRoom).emit("conversation:updated", { conversationId, status: conversation.status });
   }
 }
 

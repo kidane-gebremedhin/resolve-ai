@@ -1,6 +1,8 @@
 // Public widget endpoints — consumed by the embed/widget app.
 // These do NOT require operator auth; they validate via the contact session token (Phase 2).
 import { Router, type Request, type Response, type NextFunction, type RequestHandler } from "express";
+import rateLimit from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import {
@@ -34,6 +36,7 @@ import {
 } from "../services/attachments.service.js";
 import geoip from "geoip-lite";
 import { logger } from "../config/logger.js";
+import { safeFetch } from "../services/integrations/ssrf.js";
 
 // Resolve the visitor's ISO country to default the phone-input country code.
 // Public IPs use the offline geoip-lite DB (fast, no network). For local/private
@@ -71,8 +74,14 @@ async function resolveCountry(ip?: string): Promise<string | undefined> {
     return cachedLocalCountry ?? undefined;
   }
 
-  // External fallback. For local IPs omit the IP so the service uses the
-  // server's public IP (the dev's location). Best-effort, short timeout.
+  // External fallback, OFF unless GEOIP_EXTERNAL_FALLBACK=true. It sends the
+  // visitor's IP to ip-api.com over plain HTTP (its free tier has no HTTPS and
+  // forbids commercial use), so it is meant for local development only. For
+  // local IPs the IP is omitted so the service uses the server's public IP.
+  if (!env.geoipExternalFallback) {
+    if (local) cachedLocalCountry = null;
+    return undefined;
+  }
   try {
     const target = local ? "" : clean;
     const res = await fetch(`http://ip-api.com/json/${target}?fields=status,countryCode`, {
@@ -92,6 +101,33 @@ async function resolveCountry(ip?: string): Promise<string | undefined> {
 }
 
 const router = Router();
+
+// Per-IP throttles for the anonymous widget endpoints. The per-session message
+// limiter alone was useless against a client that simply minted a new session
+// for every few messages (each one also burns the tenant's message quota).
+function ipLimiter(name: string, windowMs: number, max: number, message: string) {
+  return rateLimit({
+    store: new MongoRateStore(name),
+    windowMs,
+    limit: max,
+    standardHeaders: "draft-7",
+    legacyHeaders: false,
+    message: { error: { code: "rate_limited", message } },
+  });
+}
+const sessionCreateLimiter = ipLimiter(
+  "widget:session",
+  env.widgetLimits.sessionWindowMs,
+  env.widgetLimits.sessionsPerIp,
+  "Too many chat sessions from this network. Please try again later.",
+);
+const attachmentLimiter = ipLimiter(
+  "widget:attachment",
+  env.widgetLimits.attachmentWindowMs,
+  env.widgetLimits.attachmentsPerIp,
+  "Too many uploads. Please wait before sending more files.",
+);
+const otpVerifyLimiter = ipLimiter("widget:otp", 15 * 60 * 1000, 30, "Too many verification attempts. Please try again later.");
 
 // Small wrapper so async errors propagate to the Express error handler under Express 4.
 function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>): RequestHandler {
@@ -220,6 +256,7 @@ function widgetInitPayload(
 
 router.post(
   "/init",
+  sessionCreateLimiter,
   validateBody(initSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const ctx = await resolveWidgetContext({
@@ -311,11 +348,10 @@ router.get(
 // frame"). We fetch the page server-side (those headers don't restrict us),
 // strip the framing/security headers helmet set on OUR response, and inject a
 // `<base>` so the page's relative assets/links still resolve to the source.
-// Only configured section URLs are fetched (no arbitrary-URL proxy) and obvious
-// internal/loopback hosts are blocked — limiting SSRF to operator-set help URLs.
-const PRIVATE_HOST_RE =
-  /^(localhost$|127\.|0\.0\.0\.0$|169\.254\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|::1$|fe80:|fc00:|fd)/i;
-
+// Only configured section URLs are fetched (no arbitrary-URL proxy), through
+// `safeFetch`, and only HTML is passed back. The page runs under a CSP
+// `sandbox` with no `allow-same-origin`, so its scripts get an opaque origin
+// and cannot act as the API's origin.
 router.get(
   "/sections/:id/content",
   asyncHandler(async (req: Request, res: Response) => {
@@ -324,44 +360,45 @@ router.get(
     const section = await Section.findOne({ _id: id, isActive: true });
     if (!section?.url) throw new NotFoundError("Section content not found.");
 
-    let target: URL;
+    let upstream: globalThis.Response;
     try {
-      target = new URL(section.url);
-    } catch {
-      throw new ValidationError("Section URL is invalid.");
-    }
-    if (target.protocol !== "http:" && target.protocol !== "https:") {
-      throw new ValidationError("Unsupported URL scheme.");
-    }
-    if (PRIVATE_HOST_RE.test(target.hostname)) {
-      throw new ValidationError("Blocked host.");
-    }
-
-    let upstream: Awaited<ReturnType<typeof fetch>>;
-    try {
-      upstream = await fetch(target.toString(), {
-        redirect: "follow",
+      // safeFetch validates the connected address at every redirect hop, so a
+      // section URL (set by any tenant admin) cannot reach internal services,
+      // cloud metadata, or loopback via IPv6, DNS tricks or a redirect.
+      upstream = await safeFetch(section.url, {
+        allowHttp: true,
         headers: {
           "user-agent": "Mozilla/5.0 (compatible; AddisAIWidget/1.0)",
-          accept: "text/html,application/xhtml+xml,*/*",
+          accept: "text/html,application/xhtml+xml",
         },
-        signal: AbortSignal.timeout(10_000),
+        timeoutMs: 10_000,
+        maxBytes: 5 * 1024 * 1024,
       });
-    } catch {
+    } catch (err) {
+      if (/SSRF guard/.test((err as Error).message)) throw new ValidationError("Blocked host.");
       throw new ValidationError("Could not load the section content.");
     }
+    const target = new URL(section.url);
 
     const ctype = upstream.headers.get("content-type") ?? "text/html; charset=utf-8";
+    // Help pages only. Passing other types through turned this into a reader
+    // for whatever JSON or file an internal URL returned.
+    if (!/\btext\/html\b/i.test(ctype)) {
+      throw new ValidationError("Section content must be an HTML page.");
+    }
     // Strip the headers helmet added so the widget (a different origin) can frame
     // our response and the proxied page's own assets aren't blocked by our CSP.
     res.removeHeader("X-Frame-Options");
-    res.removeHeader("Content-Security-Policy");
     res.removeHeader("Cross-Origin-Embedder-Policy");
     res.removeHeader("Cross-Origin-Resource-Policy");
+    res.setHeader(
+      "Content-Security-Policy",
+      "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms",
+    );
     res.setHeader("Content-Type", ctype);
     res.setHeader("Cache-Control", "public, max-age=300");
 
-    if (/\btext\/html\b/i.test(ctype)) {
+    {
       const html = await upstream.text();
 
       // 1. <base> keeps relative asset URLs pointing at the source origin.
@@ -409,8 +446,6 @@ router.get(
         ? stripped.replace(/(<head[^>]*>)/i, `$1${inject}`)
         : `${inject}${stripped}`;
       res.send(out);
-    } else {
-      res.send(Buffer.from(await upstream.arrayBuffer()));
     }
   }),
 );
@@ -419,6 +454,7 @@ router.get(
 // We keep both registered so older clients keep working while spec-aligned clients can call /sessions.
 router.post(
   "/sessions",
+  sessionCreateLimiter,
   validateBody(initSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const ctx = await resolveWidgetContext({
@@ -494,7 +530,16 @@ router.post(
     }
 
     const update: Record<string, unknown> = {};
-    if (req.body.email) update.email = req.body.email;
+    if (req.body.email) {
+      const email = String(req.body.email).toLowerCase().trim();
+      update.email = email;
+      // Identity verification belongs to the address that received the code.
+      // A new address starts unverified.
+      const current = await ContactSession.findById(req.contactSessionId).select("email").lean();
+      if ((current?.email ?? "").toLowerCase().trim() !== email) {
+        update.$unset = { identityVerifiedUntil: 1, identityVerifiedEmail: 1 };
+      }
+    }
     if (req.body.phone) update.phone = req.body.phone;
     if (req.body.name) update.name = req.body.name;
 
@@ -873,10 +918,9 @@ router.post(
         ),
       ]);
       if (io) {
-        io.to(`org:${conversation.organizationId.toString()}`).emit("conversation:updated", {
-          conversationId: conversation._id.toString(),
-          status: "escalated",
-        });
+        const update = { conversationId: conversation._id.toString(), status: "escalated" };
+        io.to(`org:${conversation.organizationId.toString()}`).emit("conversation:updated", update);
+        io.to(`contact:${conversation.contactSessionId.toString()}`).emit("conversation:updated", update);
       }
       res.status(201).json({ message });
       return;
@@ -909,7 +953,9 @@ router.post(
 
 router.post(
   "/conversations/:id/attachments",
+  attachmentLimiter,
   requireWidgetSession,
+  widgetRateLimit,
   attachmentUpload.single("file"),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) throw new ValidationError("No file uploaded (field name: 'file').");
@@ -985,9 +1031,16 @@ router.post(
     const messageId = String(req.params.messageId);
     if (!/^[0-9a-fA-F]{24}$/.test(messageId)) throw new ValidationError("Invalid messageId.");
 
-    // Confirm the message belongs to a conversation owned by this session's org.
+    // The message must sit in one of THIS visitor's conversations. An org-only
+    // check let any visitor of the site overwrite another visitor's rating.
     const message = await Message.findOne({ _id: messageId, organizationId: req.orgId }).lean();
     if (!message) throw new NotFoundError("Message not found.");
+    const owns = await Conversation.exists({
+      _id: message.conversationId,
+      organizationId: req.orgId,
+      contactSessionId: req.contactSessionId,
+    });
+    if (!owns) throw new NotFoundError("Message not found.");
 
     const session = await ContactSession.findOne({ _id: req.contactSessionId }).lean();
     if (!session) throw new NotFoundError("Session not found.");
@@ -1055,11 +1108,15 @@ router.post(
 router.post(
   "/conversations/:id/proactive",
   requireWidgetSession,
+  widgetRateLimit,
   asyncHandler(async (req: Request, res: Response) => {
-    const { triggerId, seedMessage } = req.body as { triggerId?: string; seedMessage?: string };
-    if (!triggerId || !seedMessage) {
-      res.status(400).json({ error: "triggerId and seedMessage are required." });
-      return;
+    // Only `triggerId` is read from the client. The greeting text comes from
+    // the operator's saved trigger: this route used to store any `seedMessage`
+    // the visitor sent as an AI message, which let anyone put words in the
+    // assistant's mouth (and into the model's own history).
+    const { triggerId } = req.body as { triggerId?: string };
+    if (!triggerId || !/^[0-9a-fA-F]{24}$/.test(String(triggerId))) {
+      throw new ValidationError("A valid triggerId is required.");
     }
 
     const conversation = await Conversation.findOne({
@@ -1069,24 +1126,33 @@ router.post(
     });
     if (!conversation) throw new NotFoundError("Conversation not found.");
 
-    // Server-side cooldown: read ContactSession.metadata.proactiveFires[triggerId].
-    const session = await ContactSession.findById(req.contactSessionId).select("metadata");
-    const trigger = await ProactiveTrigger.findById(triggerId).select("cooldownMs").lean();
-    if (session && trigger) {
-      const fires: Record<string, number> = (session.metadata as Record<string, unknown>)?.proactiveFires as Record<string, number> ?? {};
-      const lastFire = fires[triggerId];
-      if (lastFire && Date.now() - lastFire < (trigger.cooldownMs ?? 86_400_000)) {
-        res.status(429).json({ error: "Cooldown active." });
-        return;
-      }
-      // Record the fire time.
-      await ContactSession.updateOne(
-        { _id: req.contactSessionId },
-        { $set: { [`metadata.proactiveFires.${triggerId}`]: Date.now() } },
-      );
-    }
+    const trigger = await ProactiveTrigger.findOne({
+      _id: triggerId,
+      organizationId: req.orgId,
+      agentId: conversation.agentId,
+      isActive: true,
+    })
+      .select("message cooldownMs")
+      .lean();
+    if (!trigger) throw new NotFoundError("Trigger not found.");
 
-    // Save the proactive greeting as an AI message.
+    // Server-side cooldown, recorded on the session so multiple tabs or devices
+    // don't fire the same greeting twice.
+    const session = await ContactSession.findById(req.contactSessionId).select("metadata");
+    const fires: Record<string, number> =
+      ((session?.metadata as Record<string, unknown> | undefined)?.proactiveFires as Record<string, number>) ?? {};
+    const key = String(trigger._id);
+    const lastFire = fires[key];
+    if (lastFire && Date.now() - lastFire < (trigger.cooldownMs ?? 86_400_000)) {
+      res.status(429).json({ error: { code: "cooldown", message: "Cooldown active." } });
+      return;
+    }
+    await ContactSession.updateOne(
+      { _id: req.contactSessionId },
+      { $set: { [`metadata.proactiveFires.${key}`]: Date.now() } },
+    );
+
+    const seedMessage = trigger.message;
     const { getIoServer } = await import("../socket/index.js");
     const io = getIoServer();
     const message = await Message.create({
@@ -1112,7 +1178,7 @@ router.post(
       // Also deliver to the widget's own socket room so the message appears inline.
       io.to(`contact:${conversation.contactSessionId.toString()}`).emit("message:new", msgPayload);
     }
-    res.status(201).json({ ok: true });
+    res.status(201).json({ ok: true, message: { _id: message._id.toString(), content: seedMessage } });
   }),
 );
 
@@ -1120,9 +1186,25 @@ router.post(
 // Accept a WebM/Opus audio blob from the browser mic, transcribe it via
 // Whisper, save the transcription as a customer message, and fire-and-forget
 // the AI reply. Returns { messageId, transcription } immediately.
+// Voice input is off unless the operator enables it. When it is off the route
+// does not exist; when it is on, it is metered exactly like a typed message
+// (rate limit, plan message quota, AI budget), because each call runs paid
+// speech-to-text and a paid AI reply.
+function requireVoiceInputEnabled(_req: Request, res: Response, next: NextFunction): void {
+  if (process.env.ALLOW_WIDGET_VOICE_INPUT !== "true") {
+    res.status(404).json({ error: { code: "not_found", message: "Route not found." } });
+    return;
+  }
+  next();
+}
+
 router.post(
   "/conversations/:id/voice-message",
+  requireVoiceInputEnabled,
   requireWidgetSession,
+  widgetRateLimit,
+  enforceMessageQuota,
+  enforceBudgetLimit,
   attachmentUpload.single("audio"),
   asyncHandler(async (req: Request, res: Response) => {
     if (!req.file) {
@@ -1202,7 +1284,9 @@ router.post(
 // a high-stakes integration tool call proceeds.
 router.post(
   "/verify-otp",
+  otpVerifyLimiter,
   requireWidgetSession,
+  widgetRateLimit,
   asyncHandler(async (req: Request, res: Response) => {
     const { token: otpToken, otp } = req.body as { token?: string; otp?: string };
     if (!otpToken || !otp) {

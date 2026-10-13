@@ -77,7 +77,7 @@ export async function runRetrieval(args: {
 }): Promise<{
   scores: RetrievalScores;
   passages: RetrievedPassage[];
-  rewrite: { originalQuery: string; rewrittenQuery: string; queriesRun: string[]; rewritten: boolean; followUpRan: boolean; rewriteLatencyMs: number; totalLatencyMs: number };
+  rewrite: { originalQuery: string; rewrittenQuery: string; queriesRun: string[]; rewritten: boolean; followUpRan: boolean; rewriteLatencyMs: number; totalLatencyMs: number } | null;
 }> {
   const maxK = Math.max(...args.ks, env.ai.kbSearchTopK);
   const started = Date.now();
@@ -137,7 +137,10 @@ export async function runRetrieval(args: {
 
   return {
     passages,
-    rewrite: {
+    // Null when rewriting is off: otherwise every case reads as a rewrite that
+    // fell back, and the report prints a 100% fallback rate for a feature that
+    // never ran.
+    rewrite: !env.ai.queryRewriteEnabled ? null : {
       originalQuery: record.originalQuery,
       rewrittenQuery: record.rewrittenQuery,
       queriesRun: record.queriesRun,

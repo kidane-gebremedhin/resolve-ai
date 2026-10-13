@@ -30,9 +30,8 @@ const DOCX_MIMES = new Set([
 const EXCEL_MIMES = new Set([
   "application/vnd.ms-excel",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "application/x-csv",
-  "text/csv",
 ]);
+const CSV_MIMES = new Set(["application/x-csv", "text/csv"]);
 const TEXT_MIMES = new Set(["text/plain", "text/markdown", "text/x-markdown"]);
 const HTML_MIMES = new Set(["text/html", "application/xhtml+xml"]);
 
@@ -112,7 +111,13 @@ export async function parseFile(input: ParseInput): Promise<ParseOutput> {
   if (DOCX_MIMES.has(mimetype) || ext === "docx") {
     return parseDocx(buffer);
   }
-  if (EXCEL_MIMES.has(mimetype) || ext === "xlsx" || ext === "xls" || ext === "csv") {
+  // CSV is already text. Routing it through SheetJS cost seconds per file
+  // (11.9s for 25MB) and exposed it to `xlsx` advisories that have no patched
+  // release; the chunker reads the rows as they are.
+  if (ext === "csv" || CSV_MIMES.has(mimetype)) {
+    return parseText(buffer);
+  }
+  if (EXCEL_MIMES.has(mimetype) || ext === "xlsx" || ext === "xls") {
     return parseSpreadsheet(buffer);
   }
   if (HTML_MIMES.has(mimetype) || ext === "html" || ext === "htm") {

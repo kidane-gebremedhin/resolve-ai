@@ -10,6 +10,7 @@
 // on, because that is where the smoke test is actually run.
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import * as Sentry from "@sentry/node";
 import { env } from "../config/env.js";
 
@@ -28,6 +29,7 @@ router.use("/debug-sentry", (_req, res, next) => {
 // 5 requests/minute per IP. Enough to smoke-test a deploy, far too few to be
 // worth abusing. Uses the default (IPv6-safe) key generator.
 const debugLimiter = rateLimit({
+  store: new MongoRateStore("debug:sentry"),
   windowMs: 60 * 1000,
   limit: 5,
   standardHeaders: "draft-7",

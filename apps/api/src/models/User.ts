@@ -28,6 +28,17 @@ const userSchema = new Schema(
     // token itself) plus its expiry, so a DB leak can't be used to reset accounts.
     passwordResetTokenHash: { type: String },
     passwordResetExpires: { type: Date },
+    // Embedded in every JWT as `tv`. Incrementing it revokes all of the user's
+    // outstanding access and refresh tokens at once (logout, password reset,
+    // 2FA change, role change or removal).
+    tokenVersion: { type: Number, default: 0 },
+    // Email verification. Only the SHA-256 of the emailed token is stored.
+    emailVerifyTokenHash: { type: String },
+    emailVerifyExpires: { type: Date },
+    // Org the user last joined or chose. Login and refresh land here while the
+    // membership is still active, so an accepted invite is reachable even when
+    // the user already owns an older organization.
+    lastOrganizationId: { type: Schema.Types.ObjectId, ref: "Organization" },
   },
   { timestamps: true },
 );

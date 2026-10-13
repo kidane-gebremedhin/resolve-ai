@@ -18,7 +18,7 @@ import crypto from "node:crypto";
 import { Router, type Request } from "express";
 import mongoose from "mongoose";
 import { z } from "zod";
-import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
+import { requireActiveMembership, requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { requireOrgRole } from "../middleware/org-role.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
 import { enforceKnowledgeQuota } from "../middleware/plan-limit.middleware.js";
@@ -30,6 +30,7 @@ import { logAuditFromReq } from "../services/audit.service.js";
 import { ingestSource, purgeSourceVectors } from "../services/kb/ingestion.service.js";
 import { clusterGaps, scoreChunks } from "../services/kb/index-health.service.js";
 import {
+  agentScopeFilter,
   orgObjectId,
   parseDateRange,
   parseLimit,
@@ -38,20 +39,7 @@ import {
 
 const router = Router();
 
-router.use(requireAuth, requireOrg);
-
-/** The agent filter, validated against the caller's org before it is used. */
-async function scopedAgentId(req: Request): Promise<string | null> {
-  const raw = req.query.agentId;
-  if (typeof raw !== "string" || !mongoose.Types.ObjectId.isValid(raw)) return null;
-  const owned = await KnowledgeSource.exists({ agentId: raw, organizationId: req.orgId });
-  // An agent with no sources yet is still the caller's; fall back to the
-  // membership check the agents collection can answer.
-  if (owned) return raw;
-  const { Agent } = await import("../models/index.js");
-  const agent = await Agent.exists({ _id: raw, organizationId: req.orgId });
-  return agent ? raw : null;
-}
+router.use(requireAuth, requireOrg, requireActiveMembership);
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -64,7 +52,9 @@ router.get(
     const { since } = parseDateRange(req.query, env.kb.healthWindowDays);
     const report = await scoreChunks({
       organizationId: String(req.orgId),
-      agentId: await scopedAgentId(req),
+      // `?agentId` or `?websiteId`, validated against the caller's org: the
+      // same scope every other panel on the page uses.
+      agentScope: await agentScopeFilter(req),
       since,
       limit: parseLimit(req.query.limit, 100, 500),
     });
@@ -79,7 +69,9 @@ router.get(
     const { since } = parseDateRange(req.query, env.kb.healthWindowDays);
     const clusters = await clusterGaps({
       organizationId: String(req.orgId),
-      agentId: await scopedAgentId(req),
+      // `?agentId` or `?websiteId`, validated against the caller's org: the
+      // same scope every other panel on the page uses.
+      agentScope: await agentScopeFilter(req),
       since,
       limit: parseLimit(req.query.limit, 200, 500),
     });
@@ -299,38 +291,55 @@ function verifyReviewToken(orgId: string, sourceIds: string[], token: string): b
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-/** Sources with no chunk retrieved anywhere in the window. */
+/**
+ * Sources with no chunk retrieved anywhere in the window, among those that were
+ * in the index for ALL of it.
+ *
+ * The age rule is what makes this safe to delete from. A source created after
+ * `since` has had less than a window to be retrieved, so "nothing retrieved it"
+ * is not evidence yet: without the rule, an answer an operator wrote a minute
+ * ago from a gap cluster was offered for deletion straight away.
+ *
+ * The set difference runs in MongoDB (`_id: { $nin }`), so the cap below bounds
+ * how many CANDIDATES one review shows, not how many sources were looked at.
+ */
 async function neverRetrievedSources(
   req: Request,
   since: Date,
 ): Promise<{ _id: mongoose.Types.ObjectId; title: string; chunkCount: number }[]> {
-  const agentId = await scopedAgentId(req);
+  // The same scope the dashboard panel uses (`?agentId` or `?websiteId`,
+  // validated against the caller's org), so the review never offers a wider set
+  // than the operator was looking at when they pressed it.
+  const scope = await agentScopeFilter(req);
   const match: Record<string, unknown> = {
     organizationId: orgObjectId(req),
+    ...scope,
     createdAt: { $gte: since },
   };
-  if (agentId) match.agentId = new mongoose.Types.ObjectId(agentId);
 
-  const retrieved = await RagTurnMetric.distinct("retrieval.sourceIds", match);
-  const retrievedSet = new Set(retrieved.map(String));
+  const retrieved = (await RagTurnMetric.distinct("retrieval.sourceIds", match))
+    .map(String)
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
 
   const filter: Record<string, unknown> = {
     organizationId: req.orgId,
+    ...scope,
     embeddingStatus: "synced",
+    createdAt: { $lt: since },
+    _id: { $nin: retrieved },
   };
-  if (agentId) filter.agentId = agentId;
 
   const sources = await KnowledgeSource.find(filter, { title: 1, chunkCount: 1 })
+    .sort({ chunkCount: -1, _id: 1 })
     .limit(5000)
     .lean();
 
-  return sources
-    .filter((s) => !retrievedSet.has(String(s._id)))
-    .map((s) => ({
-      _id: s._id as mongoose.Types.ObjectId,
-      title: s.title as string,
-      chunkCount: (s.chunkCount as number | undefined) ?? 0,
-    }));
+  return sources.map((s) => ({
+    _id: s._id as mongoose.Types.ObjectId,
+    title: s.title as string,
+    chunkCount: (s.chunkCount as number | undefined) ?? 0,
+  }));
 }
 
 // The review step. Read-only; it deletes nothing.

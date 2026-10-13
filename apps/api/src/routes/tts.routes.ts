@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import { z } from "zod";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
 import { validateBody } from "../middleware/validation.middleware.js";
@@ -11,6 +12,7 @@ router.use(requireAuth, requireOrg);
 // 10 syntheses per minute per authenticated user. Mirrors the message-enhance
 // limiter pattern in message.routes.ts.
 const ttsLimiter = rateLimit({
+  store: new MongoRateStore("tts"),
   windowMs: 60 * 1000,
   limit: 10,
   standardHeaders: "draft-7",

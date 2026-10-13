@@ -60,7 +60,6 @@ apps/widget/public/flags/
 .claude
 
 .envrc
-.nvmrc
 
 BLOCKERS.md
 
@@ -71,8 +70,8 @@ test-data.md
 
 .playwright-mcp
 
-#TODO_PROMPTS.md
-#TODO*
-#CHANGELOG_*.md
-#IMPLEMENTATION_AUDIT.md
-#QA_TEST_RESULTS_*.md
+TODO*
+CHANGELOG_*.md
+IMPLEMENTATION_AUDIT.md
+QA_TEST_RESULTS_*.md
+

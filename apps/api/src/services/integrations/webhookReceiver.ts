@@ -29,13 +29,24 @@ export type ReceiverConnection = {
 
 // ---- Signature verification -------------------------------------------------
 
+/**
+ * Providers sign a timestamp with the body so a captured delivery cannot be
+ * replayed later. Five minutes is what Paddle and Stripe recommend.
+ */
+export const WEBHOOK_TOLERANCE_SECONDS = 300;
+
+export function isFreshWebhookTimestamp(ts: string, nowMs = Date.now()): boolean {
+  const n = Number(ts);
+  return Number.isFinite(n) && Math.abs(nowMs / 1000 - n) <= WEBHOOK_TOLERANCE_SECONDS;
+}
+
 // Paddle Billing signs as `ts=<ts>;h1=<hmac>`, HMAC-SHA256 over `${ts}:${rawBody}`.
 export function verifyPaddleSignature(rawBody: string, header: string | undefined, secret: string | undefined): boolean {
   if (!secret || !header) return false;
   const parts = Object.fromEntries(header.split(";").map((p) => p.split("=") as [string, string]));
   const ts = parts.ts;
   const h1 = parts.h1;
-  if (!ts || !h1) return false;
+  if (!ts || !h1 || !isFreshWebhookTimestamp(ts)) return false;
   const expected = crypto.createHmac("sha256", secret).update(`${ts}:${rawBody}`).digest("hex");
   return timingSafeHexEqual(expected, h1);
 }
@@ -46,7 +57,7 @@ export function verifyStripeSignature(rawBody: string, header: string | undefine
   const parts = header.split(",").map((p) => p.split("="));
   const ts = parts.find(([k]) => k === "t")?.[1];
   const sigs = parts.filter(([k]) => k === "v1").map(([, v]) => v);
-  if (!ts || sigs.length === 0) return false;
+  if (!ts || sigs.length === 0 || !isFreshWebhookTimestamp(ts)) return false;
   const expected = crypto.createHmac("sha256", secret).update(`${ts}.${rawBody}`).digest("hex");
   return sigs.some((s) => timingSafeHexEqual(expected, s));
 }

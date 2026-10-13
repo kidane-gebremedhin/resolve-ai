@@ -8,7 +8,7 @@
 // plain text instead of arriving as one JSON blob at the end.
 
 import * as Sentry from "@sentry/node";
-import { SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import type { RunnableConfig } from "@langchain/core/runnables";
 import { z } from "zod";
 import { logger } from "../../../../config/logger.js";
@@ -133,6 +133,47 @@ function stripKbToolResults(messages: readonly BaseMessage[]): BaseMessage[] {
   });
 }
 
+/**
+ * Answer every assistant `tool_call` that has no result.
+ *
+ * The tool-turn ceiling routes here straight from the agent, so the last
+ * message can be an assistant turn whose tool calls never ran. Providers reject
+ * that transcript outright, which turned "the model kept calling tools" into the
+ * generic apology for the customer (__specs/05 ReAct conformance §3f). Each
+ * missing result is filled with a plain statement that the call did not run, so
+ * the request is valid and the model cannot mistake it for a result.
+ */
+export function answerDanglingToolCalls(messages: readonly BaseMessage[]): BaseMessage[] {
+  const answered = new Set(
+    messages.filter((m): m is ToolMessage => m instanceof ToolMessage).map((m) => m.tool_call_id),
+  );
+  const out: BaseMessage[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i]!;
+    out.push(m);
+    if (!(m instanceof AIMessage) || !(m.tool_calls?.length)) continue;
+    // Keep the results that do exist directly after their call, then fill gaps.
+    while (i + 1 < messages.length && messages[i + 1] instanceof ToolMessage) {
+      out.push(messages[++i]!);
+    }
+    for (const call of m.tool_calls) {
+      const id = call.id ?? call.name;
+      if (answered.has(id)) continue;
+      out.push(
+        new ToolMessage({
+          content: JSON.stringify({
+            notRun: true,
+            reason: "This turn reached its tool-call limit, so this call was not made. Answer from what is already known.",
+          }),
+          tool_call_id: id,
+          name: call.name,
+        }),
+      );
+    }
+  }
+  return out;
+}
+
 export async function finalizeNode(
   state: AgentState,
   config?: RunnableConfig,
@@ -169,11 +210,12 @@ export async function finalizeNode(
   //
   // Only for THIS call. The agent loop still sees full tool results, because
   // that is what it reasons over when deciding whether to search again.
+  const transcript = answerDanglingToolCalls(state.messages);
   const messagesForReply =
-    context.citations.length > 0 ? stripKbToolResults(state.messages) : state.messages;
+    context.citations.length > 0 ? stripKbToolResults(transcript) : transcript;
 
   const streamMessages = [...messagesForReply, new SystemMessage(groundedInstruction)];
-  const metaMessages = [...state.messages, new SystemMessage(META_INSTRUCTION)];
+  const metaMessages = [...transcript, new SystemMessage(META_INSTRUCTION)];
 
   const generationStarted = Date.now();
   const [replyResult, metaResult] = await Promise.allSettled([

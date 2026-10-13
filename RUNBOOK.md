@@ -225,6 +225,31 @@ Re-running restores every coupon to its intended state and clears the seeded
 codes' redemption history, so a manual pass can be repeated. See
 [`__specs/36-ltd-coupons.md`](__specs/36-ltd-coupons.md) for the design.
 
+### 5.3 Seed RAG Quality data (optional)
+
+`/app/analytics/rag` is empty until real customers have talked to the assistant.
+To check the page against data, run `pnpm db:seed` first, then:
+
+```bash
+pnpm db:seed:rag-metrics
+```
+
+It fills the `owner@example.test` workspace (override with `--email=`) with about
+240 `RagTurnMetric` turns spread over the last 60 days, so the selected 30-day
+window and the previous one both have data and every period-over-period delta
+renders. Alongside them: seven knowledge sources (five indexed, one of which no
+turn retrieves, plus one failed and one empty) with their passages, the
+conversations the turns belong to, thumbs on some replies, and
+knowledge gaps for the questions that found nothing. Scores straddle
+`AI_KB_SEARCH_MIN_SCORE`, so the threshold line on the score chart has something
+on both sides of it.
+
+The data is deterministic, and re-running replaces only what the script wrote
+last time. For the empty state, sign in as `platformadmin@example.test`: its
+Platform HQ workspace has no turns. The eval-history panel reads
+`RAG_EVAL_REPORTS_DIR` and stays empty until `pnpm eval:rag` has produced a
+report.
+
 ## 6.1 Visitor console (fastest way to create a conversation)
 
 [`test-visitor.html`](test-visitor.html) is a dependency-free page that talks to
@@ -391,6 +416,8 @@ single app after a code change with
 
 ## 10. Production deployment (Coolify)
 
+> Deploying on Render instead? Follow [RENDER_DEPLOYMENT_GUIDE.md](RENDER_DEPLOYMENT_GUIDE.md). The same one-API-instance rule from §10.3 applies there.
+
 [Coolify](https://coolify.io) is a self-hosted PaaS that builds from your Git
 repo (Nixpacks or a Dockerfile) and runs the result behind a managed Traefik
 reverse proxy with automatic Let's Encrypt TLS. This stack ships a Dockerfile
@@ -433,26 +460,33 @@ connection strings into the API's env.
 
 > ### ⚠️ The API runs at exactly ONE replica
 >
-> The web, admin, widget and embed apps are stateless and scale freely. **The
-> API does not.** It keeps state in process memory that a second instance
-> cannot see, and every failure mode is silent — no error, no alert, just a
-> fraction of users getting wrong behaviour:
+> The web, admin, widget and embed apps are stateless and scale freely. The
+> API is closer, but not there yet. State that used to live only in process
+> memory, and what now handles it:
 >
-> | In-process state | What a second replica breaks |
+> | State | Status |
 > |---|---|
-> | Socket.IO rooms (no Redis adapter) | A visitor connected to instance A never receives events emitted by instance B. Streaming replies, operator messages and typing indicators simply stop arriving for part of your traffic. |
-> | OTP codes (`otpService.ts`) | A code issued by A cannot be verified by B, so identity-verified tool calls fail at random. |
-> | Widget + integration rate limits | Each replica counts separately, so the effective limit multiplies by replica count. |
-> | Background jobs (`setInterval`) | Firecrawl ingestion and embedding reconciliation run concurrently on every replica, duplicating work and cost. The `serialLoop` latch (§11.1b) only prevents a loop overlapping **itself inside one process**; it is not a distributed lock and does nothing across replicas. |
+> | Socket.IO rooms | **Shared when `REDIS_URL` is set** (`@socket.io/redis-adapter` + ioredis). Without it, a visitor connected to instance A never receives events emitted by instance B. |
+> | OTP codes | **Shared.** Stored in MongoDB (`otpchallenges`). |
+> | HTTP rate limits (login, signup, reset, coupons, widget sessions/uploads/messages, OTP checks) | **Shared.** Counters in MongoDB (`ratecounters`). |
+> | Integration tool-call limits (`services/integrations/rateLimit.ts`) | Still per process: each replica counts separately, so the limit multiplies by replica count. |
+> | Background jobs (`setInterval`) | Still per process: Firecrawl ingestion and embedding reconciliation run on every replica, duplicating work and cost. The `serialLoop` latch (§11.1b) is not a distributed lock. |
 >
-> Redis is already provisioned and `REDIS_URL` is read, but **nothing connects
-> to it yet** — provisioning it does not make the API scalable. Lifting this
-> limit means adding `@socket.io/redis-adapter`, moving the OTP and rate-limit
-> stores to Redis, and giving the jobs a distributed lock or their own worker
-> process.
+> The last two rows are why the limit still stands. Lifting it means moving the
+> integration limiter onto the shared counter and giving the jobs a distributed
+> lock or their own worker process.
 >
 > Until that work lands: keep the API resource at **1 instance** in Coolify and
-> scale vertically (more CPU/RAM) rather than horizontally.
+> scale vertically (more CPU/RAM) rather than horizontally. The shipped
+> `coolify/docker-compose.production.yml` sets the API to `replicas: 1` (it said
+> 2 until 2026-10-10); do not raise it. Setting `REDIS_URL` now is harmless and
+> is the first step.
+>
+> **Memory.** Ingestion runs inside the API process. A text-heavy upload near the
+> 15MB extracted-text cap measured ~300-360MB of ingest work on top of the
+> process baseline, which exceeds the compose file's 512MB limit; ~5MB of text
+> measured ~70MB. If large CSV/TXT/HTML uploads are expected, raise the API memory
+> limit to at least 1GB (`__specs/45-deferred-decisions.md` §5 decision 8).
 
 ### 10.4 Environment variables
 
@@ -523,10 +557,12 @@ Copy your production values into each resource's **Environment Variables** tab
 
 ### 10.7 Health checks
 
-Each app Dockerfile defines a `HEALTHCHECK` (API → `/api/health`, web →
-`/api/health`, admin → `/login`), so Coolify shows per-container health and will
-restart unhealthy containers (`restart: unless-stopped`). Verify a deploy with
-`curl https://api.example.com/api/health`.
+Each app Dockerfile defines a `HEALTHCHECK` (API → `/health`, web and widget →
+`/api/health`, admin → `/login`, embed → `/widget.js`), so Coolify shows
+per-container health and will restart unhealthy containers
+(`restart: unless-stopped`). Verify a deploy with
+`curl https://api.example.com/health`. The API's health route is not under
+`/api/v1`.
 
 ## 11. Common operations
 
@@ -538,6 +574,22 @@ restart unhealthy containers (`restart: unless-stopped`). Verify a deploy with
 | Open Mongo shell | `docker exec -it csb-mongo mongosh -u admin -p password` |
 | Reset everything (empty DB) | `pnpm dev:infra:reset && pnpm db:migrate` |
 | Scrub website names off old agents | `pnpm --filter @csb/api agents:clean-names` (add `-- --apply` to write) |
+| Sign a user out everywhere | They click Sign out (calls `POST /auth/logout`), or in mongosh: `db.users.updateOne({email:"x@y.z"},{$inc:{tokenVersion:1}})` |
+
+### 11.0 Upgrading to the security-hardened release (CHANGELOG 9)
+
+1. Set `GOOGLE_CLIENT_ID` on the **API** (not just web/admin). Google sign-in now
+   verifies the id_token's audience and fails closed without it. If web and admin
+   use different OAuth clients, comma-separate both IDs.
+2. Run `pnpm db:migrate`. Migration `003-grandfather-email-verification` marks
+   existing accounts as email-verified so their first Google sign-in keeps their
+   password.
+3. Expect every user to sign in once. Tokens now carry a type and a revocation
+   version, and older tokens are refused.
+4. Make sure SMTP is configured (admin panel or env). Team invites, email
+   verification and OTP codes are all delivered by email; an invite that fails
+   to send shows a notice in the Team tab.
+5. Optional: set `REDIS_URL` (see §10, single-replica note).
 
 ### 11.1 AI reply engine
 
@@ -548,8 +600,12 @@ The agent that answers customer messages is a LangGraph state graph
 It is the only implementation — there is no engine switch to set. **Roll back a bad AI deploy by
 redeploying the previous API image**, the same as any other part of the API.
 
-Two knobs bound a turn's cost: `AI_MAX_TOOL_TURNS` (default 10) caps agent↔tool round trips, and
-`AI_LLM_TIMEOUT_MS` / `AI_LLM_MAX_RETRIES` bound each upstream call.
+Four knobs bound a turn: `AI_MAX_TOOL_TURNS` (default 10) caps agent↔tool round trips,
+`AI_LLM_TIMEOUT_MS` / `AI_LLM_MAX_RETRIES` bound each upstream call, `AI_TURN_DEADLINE_MS`
+(default 90000) caps the whole agent loop (the customer gets the fallback reply past it), and
+`AI_MAX_CONCURRENT_TURNS` (default 16, per process) caps how many turns run at once. Turns over
+the cap queue in order rather than fail. A rising queue shows up as slower first tokens, not
+errors; raise the cap only with memory headroom to match, or set `0` to disable it.
 
 ### 11.1b Background job loops
 
@@ -786,6 +842,18 @@ Step 1 is the one people skip, and without it step 3 is impossible: there is
 nothing to compare against, and "it feels better" is what the harness exists to
 replace.
 
+**Committed baselines** live in `packages/rag-eval/baselines/` (`reports/` is
+gitignored). The current one is retrieval only, run with query rewrite off:
+
+```bash
+AI_QUERY_REWRITE_ENABLED=false pnpm eval:rag --retrieval-only \
+  --baseline packages/rag-eval/baselines/retrieval-2026-10-13.json
+```
+
+Compare like with like: a run with rewrite on, or a full run, against this file
+only checks the retrieval metrics both have. There is no generation baseline yet;
+see `__specs/39` "Committed baselines".
+
 **Cheaper loops while iterating.**
 
 ```bash
@@ -953,12 +1021,20 @@ Q&A pair belongs to one agent's knowledge base.
 `sourceUpdatedAt` does not move. Reach for this instead of deleting when
 something newer should win but the old document is still the only thing you
 have. A stale source stays retrievable: hiding it turns "this is out of date"
-into "we have no answer".
+into "we have no answer". The dialog opens on the source's stored values, and the
+button reads **Stale** once a source is marked, so reopening it shows what is
+actually set.
 
 **Bulk delete dead weight.** Two steps, and the second cannot be reached without
 the first. Review shows the exact list and issues a token over it; the confirm is
 refused if the list differs, if 15 minutes have passed, or if any of those
-sources started being retrieved in the meantime.
+sources started being retrieved in the meantime. Cancel has focus when the
+dialog opens. Deleting removes the source, its vectors and its passages.
+
+- **New sources are not judged yet.** Only sources indexed for the whole window
+  can be "never retrieved", so an answer you just wrote from a gap does not show
+  up on the delete list. Switch the range to 7 days to judge recent additions
+  sooner, or wait for the window to pass.
 
 ### Reading the flags without over-reacting
 
@@ -967,14 +1043,14 @@ sources started being retrieved in the meantime.
 - A blank downvote rate means **nobody rated it**, which is not approval.
 - `Never quoted` only fires on passages that also scored well. A passage that
   scraped into the prompt on a thin query and was ignored is the system working.
-- **The scan reads at most 20,000 passages.** Dead weight is defined by the
-  absence of telemetry, so the scan has to list every chunk and therefore needs a
-  ceiling (`CHUNK_SCAN_LIMIT` in `index-health.service.ts`). Past it the panel
-  says so ("Counts cover the first 20,000 passages of a larger knowledge base"),
-  the `kb_weak_chunks` notification carries the same note, and the API logs
-  `[index-health] chunk scan truncated`. Treat the counts as a sample of the
-  index, not a census, whenever you see that line. Repairs are unaffected: they
-  act on the passages actually listed.
+- **Dead weight counts only passages indexed for the whole window.** Passages
+  added or re-chunked during it are in the total but in neither bucket yet, so
+  `retrieved + dead weight` can be less than the total.
+- **Counts are exact for a knowledge base of any size.** The passage counts are
+  computed by MongoDB (a count of the index, minus the retrieved passages that
+  still exist in it), so there is no scan cap and no "partial" note. Only the
+  list under the counts is a page: passages that need fixing first, then dead
+  weight to fill it.
 
 ### Turning on the scheduled half
 
@@ -1030,8 +1106,13 @@ pnpm tsx scripts/reembed.ts --all --resume    # continue an interrupted run
 pnpm tsx scripts/reembed.ts --org <id>        # one organization
 ```
 
-`--resume` skips any source already fully mirrored, so an interrupted run is
-restarted with the same command. There is no checkpoint file to go stale.
+`--resume` skips a source only when it is fully mirrored **and** its vectors were
+written with the current `EMBEDDING_MODEL` (each source records the model on
+every successful ingest), so an interrupted run, including an interrupted model
+switch, is restarted with the same command. Sources ingested before the model
+was recorded have no stamp and are re-embedded once by the first `--resume`.
+There is no checkpoint file to go stale, and the script walks sources with a
+cursor, so its memory does not grow with the corpus.
 
 **Changing the embedding model is not a config change.** It is a config change
 **plus a mandatory full reindex**, and doing only the first half silently breaks
@@ -1045,9 +1126,10 @@ retrieval with no error anywhere:
 
 The safe order is: take the KB out of service or accept degraded retrieval for
 the duration, set `EMBEDDING_MODEL` (and `EMBEDDING_DIMENSIONS` if the new model
-is larger than the index), then run `--all` to completion. `--resume` makes an
-interrupted switch recoverable, but the window between the config change and the
-end of the reindex is a window of bad answers.
+is larger than the index), then run `--all --resume` to completion (re-run the
+same command after any interruption). `--resume` makes an interrupted switch
+recoverable, but the window between the config change and the end of the reindex
+is a window of bad answers.
 
 `EMBEDDING_DIMENSIONS` is required for any model whose native size exceeds the
 index dimension. The index here is 1536; `text-embedding-3-large` is 3072
@@ -1140,7 +1222,7 @@ retried, and whether retrying will help at all.
 | "Read successfully but contains no selectable text" | `empty_extraction` | **Never helps.** OCR it, or paste the text in |
 | "The embedding provider returned an error" | `embedding_provider_error` | Automatic, with backoff |
 | "…is rate limiting us" | `rate_limited` | Automatic, with backoff |
-| "reached its monthly AI budget" | `budget_exceeded` | Waits for the budget. **No retries are consumed** |
+| "reached its monthly AI budget" | `budget_exceeded` | Waits for the budget. **No retries are consumed**. Resumes on its own within a minute of the budget resetting or a plan upgrade |
 | "The search index rejected the write" | `pinecone_upsert_failure` | Automatic |
 | "stopped partway through" | `partial_upsert` | Automatic; the next run re-indexes the whole source |
 | "took too long" | `timeout` | Automatic. Split very large files |

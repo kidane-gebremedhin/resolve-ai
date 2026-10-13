@@ -5,7 +5,7 @@ services:
     image: mongo:7
     container_name: csb-mongo
     restart: unless-stopped
-    ports: ['27017:27017']
+    ports: ['127.0.0.1:27017:27017']
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-password}
@@ -23,7 +23,7 @@ services:
     image: redis:7-alpine
     container_name: csb-redis
     restart: unless-stopped
-    ports: ['6379:6379']
+    ports: ['127.0.0.1:6379:6379']
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     # Evaluate in-container ($$ escapes compose interpolation) so an empty
@@ -41,8 +41,8 @@ services:
     image: mailhog/mailhog:latest
     container_name: csb-mailhog
     ports:
-      - '1025:1025'
-      - '8025:8025'
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
     restart: unless-stopped
 
   minio:
@@ -50,8 +50,8 @@ services:
     container_name: csb-minio
     command: server /data --console-address ":9001"
     ports:
-      - '9000:9000'
-      - '9001:9001'
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin

@@ -14,7 +14,26 @@ import type { MessageBlock, CardBlock, CarouselBlock } from "../../types/message
 // operator explicitly turns the `requireIdentityVerification` flag off. These change a
 // subscription or move money (refunds), high-stakes actions where a self-asserted contact
 // email isn't proof of ownership, so the customer proves control of the account inbox first.
+// Tools that act on "the customer's" account by email. The email they use is
+// ALWAYS the contact session's own (verified when OTP is on), never one taken
+// from the model's or the form's arguments. Trusting a valid-looking argument
+// let a visitor verify their own inbox and then act on someone else's account.
+const IDENTITY_BOUND_TOOLKEYS = new Set([
+  "book_meeting",
+  "get_subscription",
+  "upgrade_subscription",
+  "downgrade_subscription",
+  "cancel_subscription",
+]);
+
+// Money-moving tools keyed by a payment id rather than an email. The adapter
+// checks the payment belongs to `customerEmail`, which only the dispatcher sets.
+const REFUND_TOOLKEYS = new Set(["issue_refund", "refund_payment"]);
+
 const OTP_DEFAULT_ON_TOOLKEYS = new Set([
+  // Reading a subscription discloses another person's plan and billing state,
+  // so it needs the same proof of inbox ownership as changing one.
+  "get_subscription",
   "upgrade_subscription",
   "downgrade_subscription",
   "cancel_subscription",
@@ -358,35 +377,53 @@ export async function dispatchToolCall(
     }
   }
 
-  // Any tool that needs the customer's REAL email (booking, Paddle subscription
-  // lookups/changes) hits the same problem: PII redaction masks emails in the
-  // message the LLM sees, so the model passes a placeholder (e.g. "[EMAIL]") that
-  // the provider rejects (no customer found / email_validation_error).
-  // Authoritatively inject the contact's real email (and name) from the
-  // ContactSession, overriding the (masked/omitted) arg.
-  const EMAIL_TOOLS = new Set([
-    "book_meeting",
-    "get_subscription",
-    "upgrade_subscription",
-    "downgrade_subscription",
-    "cancel_subscription",
-  ]);
-  if (EMAIL_TOOLS.has(toolKey) && ctx.contactSessionId) {
-    try {
-      const session = await ContactSession.findById(ctx.contactSessionId).lean();
-      const realEmail = (session as { email?: string } | null)?.email;
-      const realName = (session as { name?: string } | null)?.name;
-      const argEmail = String((enrichedArgs as Record<string, unknown>).email ?? "");
-      // Only override when the arg isn't a valid-looking email (i.e. it was masked/omitted).
-      if (realEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(argEmail)) {
-        enrichedArgs = { ...enrichedArgs, email: realEmail };
-      }
-      if (realName && !String((enrichedArgs as Record<string, unknown>).name ?? "").trim()) {
-        enrichedArgs = { ...enrichedArgs, name: realName };
-      }
-    } catch (err) {
-      logger.warn("[dispatcher] contact email inject failed", { err: (err as Error).message });
+  // Customer identity for account-scoped tools. PII redaction masks emails in
+  // what the LLM sees, so the model often passes a placeholder; and a visitor can
+  // put any address they like in a form. Either way the argument is replaced by
+  // the session's own email. When the tool is OTP-gated it must be the exact
+  // address that was verified, and a session whose email changed after
+  // verification is refused.
+  if ((IDENTITY_BOUND_TOOLKEYS.has(toolKey) || REFUND_TOOLKEYS.has(toolKey)) && ctx.contactSessionId) {
+    const session = (await ContactSession.findById(ctx.contactSessionId)
+      .select("email name identityVerifiedEmail identityVerifiedUntil")
+      .lean()) as {
+      email?: string;
+      name?: string;
+      identityVerifiedEmail?: string;
+      identityVerifiedUntil?: Date;
+    } | null;
+    const sessionEmail = session?.email?.toLowerCase().trim();
+    const verifiedEmail =
+      session?.identityVerifiedUntil && session.identityVerifiedUntil > new Date()
+        ? session.identityVerifiedEmail?.toLowerCase().trim()
+        : undefined;
+    if (otpRequired && (!verifiedEmail || verifiedEmail !== sessionEmail)) {
+      return {
+        ok: false,
+        blocked: true,
+        reason: "This action needs the account holder's verified email. Please confirm your email first.",
+        status: "guardrail_blocked",
+      };
     }
+    const boundEmail = otpRequired ? verifiedEmail : sessionEmail;
+    const a = { ...(enrichedArgs as Record<string, unknown>) };
+    if (IDENTITY_BOUND_TOOLKEYS.has(toolKey)) {
+      delete a.contactEmail;
+      if (boundEmail) a.email = boundEmail;
+      else delete a.email;
+      if (session?.name && !String(a.name ?? "").trim()) a.name = session.name;
+    } else {
+      // Refunds: `email` feeds the billing-owner guardrail, `customerEmail` is
+      // what the adapter compares with the payment's own customer.
+      if (boundEmail) {
+        a.email = boundEmail;
+        a.customerEmail = boundEmail;
+      } else {
+        delete a.email;
+        delete a.customerEmail;
+      }
+    }
+    enrichedArgs = a;
   }
 
   // Cal.com: book in — and display slots in — the VISITOR's timezone (captured at

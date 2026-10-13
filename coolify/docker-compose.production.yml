@@ -43,7 +43,11 @@ services:
       retries: 3
       start_period: 20s
     deploy:
-      replicas: 2
+      # Exactly one. The reconcile, crawl-poll and health loops run in-process
+      # with no cross-replica lock, and Socket.IO has no Redis adapter, so a
+      # second replica embeds the same sources twice and splits live rooms
+      # (RUNBOOK.md §10.3, __specs/38 S4). Raise only after both exist.
+      replicas: 1
       resources:
         limits:
           cpus: '1'

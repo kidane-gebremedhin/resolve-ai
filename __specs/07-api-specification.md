@@ -23,8 +23,8 @@ Create a new user account (email/password).
 | Body | `{ email, password, name }` |
 | Validation | email: valid email; password: min 8 chars, 1 upper, 1 number; name: 2–100 chars |
 | Response `201` | `{ user: { id, email, name }, token }` |
-| Errors | `400` validation, `409` email exists |
-| Side effects | Creates user + organization + membership (owner) |
+| Errors | `400` validation, `409` email exists, `429` over `AUTH_REGISTER_RATE_LIMIT_MAX` per IP per hour |
+| Side effects | Creates user + organization + membership (owner); emails a 24h verification link (`/verify-email?token=…`). An invite placeholder user (no password) is claimed instead of returning `409`. |
 
 ### `POST /api/v1/auth/login`
 Authenticate with email/password.
@@ -37,14 +37,22 @@ Authenticate with email/password.
 | Errors | `400` validation, `401` invalid credentials |
 
 ### `POST /api/v1/auth/google`
-Authenticate with Google OAuth token (from NextAuth callback).
+Exchange a Google id_token (from the NextAuth callback) for API tokens.
 
 | Field | Value |
 |-------|-------|
-| Auth | None |
-| Body | `{ googleToken, name, email, avatarUrl }` |
-| Response `200` | `{ user, token, isNewUser }` |
+| Auth | None (rate limited, 30 / 15 min per IP) |
+| Body | `{ idToken }`. Any `email` / `name` in the body is ignored. |
+| Response `200` | `{ user: { id, email, name, role, organizationId, membershipRole }, accessToken, refreshToken, expiresIn }` |
+| Errors | `401` token fails verification or Google email unverified; `403` existing account has 2FA (sign in with password + code) |
 | Side effects | Creates user + org if new |
+
+The id_token's RS256 signature is checked against Google's JWKS, with issuer
+`accounts.google.com` and audience in `GOOGLE_CLIENT_ID` (comma list allowed).
+Identity comes only from the verified token. Linking to an existing account by
+email: an account with 2FA is refused (`403`); an account whose email was never
+verified has its password cleared and its sessions revoked first (defends
+against account pre-hijacking), then is marked verified.
 
 ### `POST /api/v1/auth/forgot-password` (Changelog 9)
 Request a password reset. Always returns a generic `200 { ok, message }` — never reveals
@@ -54,7 +62,20 @@ on the user. Body `{ email }`.
 
 ### `POST /api/v1/auth/reset-password` (Changelog 9)
 Set a new password with a valid, unexpired token. Body `{ token, password }`. `200 { ok }`
-on success; `401` if the token is invalid/expired. Clears the reset token on success.
+on success; `401` if the token is invalid/expired. Clears the reset token on success,
+revokes every existing session (bumps `tokenVersion`) and marks the email verified. If the
+email had never been verified, 2FA is also cleared (it was set up by an unproven owner).
+
+### `POST /api/v1/auth/logout`
+Bearer JWT. Revokes every access and refresh token the user holds, on all devices, by
+bumping `User.tokenVersion`. The web and admin NextAuth `signOut` event calls it. `200 { ok }`.
+
+### `POST /api/v1/auth/verify-email`
+Body `{ token }` from the verification email. `200 { ok }`; `401` invalid/expired (24h).
+
+### `POST /api/v1/auth/verify-email/resend`
+Bearer JWT. Re-sends the verification email. `409` if already verified. Rate limited
+like forgot-password.
 
 ### `POST /api/v1/auth/refresh`
 Exchange a (7d) refresh token for a fresh (15m) access token.
@@ -64,7 +85,15 @@ Exchange a (7d) refresh token for a fresh (15m) access token.
 | Auth | None (refresh token in body) |
 | Body | `{ refreshToken }` |
 | Response `200` | `{ accessToken, expiresIn }` (`expiresIn` in seconds, 900) |
-| Errors | `401` missing/expired/invalid refresh token |
+| Errors | `401` missing/expired/invalid refresh token, an access token sent as a refresh token, or a revoked session |
+
+**Token types and revocation.** Every JWT carries `typ` (`access` or `refresh`) and
+`tv` (the user's `tokenVersion`). `requireAuth`, `/auth/refresh` and the Socket.io
+handshake reject the wrong type and any `tv` older than the user's current version.
+Tokens issued before this change have no `typ` and are rejected, so every user signs
+in once after the upgrade. The refresh token also records the org the session is in;
+refresh keeps the user there while that membership is active, otherwise it falls back
+to `User.lastOrganizationId`, then the oldest active membership.
 
 `POST /auth/login` and `POST /auth/google` both return `{ ..., accessToken, refreshToken, expiresIn }`.
 The web dashboard's NextAuth `jwt` callback stores the refresh token and silently
@@ -108,12 +137,23 @@ Invite a user to the organization.
 | Field | Value |
 |-------|-------|
 | Auth | Bearer JWT (owner/admin) |
-| Body | `{ email, role }` |
-| Response `201` | `{ membership }` |
-| Side effects | Send invitation email via Nodemailer |
-| Errors | `409` already a member |
+| Body | `{ email, role, name? }` (`role`: admin, agent or viewer) |
+| Response `201` | `{ membershipId, role, status: "pending", user, isNewUser, emailSent }` |
+| Side effects | Creates a `pending` membership with a hashed 7-day invite token and emails `/accept-invite?token=…`. A new email gets a password-less placeholder user. Re-inviting a pending member re-sends with a fresh token. |
+| Errors | `402` seat quota, `409` already an active member |
 
-### `PATCH /api/v1/orgs/current/members/:userId`
+### `GET /api/v1/orgs/invites/:token`
+Public, rate limited. Previews a pending invite: `{ organizationName, email, role, needsPassword }`.
+`404` when invalid or expired.
+
+### `POST /api/v1/orgs/invites/accept`
+Public, rate limited. Body `{ token, password?, name? }`. Activates the membership, marks
+the email verified and sets `User.lastOrganizationId` to the invited org so the next login
+lands there. `password` is required when the account has none, or when its email was never
+verified (then 2FA is cleared and old sessions revoked). The token is single use.
+`401` invalid/expired, `400` password required.
+
+### `PATCH /api/v1/orgs/current/members/:membershipId`
 Update member role or status.
 
 | Field | Value |
@@ -121,15 +161,18 @@ Update member role or status.
 | Auth | Bearer JWT (owner/admin) |
 | Body | `{ role?, status? }` |
 | Response `200` | `{ membership }` |
+| Errors | `403` target ranks at or above the caller (owners may act on other owners), non-owner granting `owner`, or the change would leave no active owner; `400` activating a pending invite (the invitee must accept) |
+| Side effects | Revokes the member's tokens so the new role applies immediately |
 
-### `DELETE /api/v1/orgs/current/members/:userId`
-Remove a member from the organization.
+### `DELETE /api/v1/orgs/current/members/:membershipId`
+Revoke a member (sets status `revoked`).
 
 | Field | Value |
 |-------|-------|
-| Auth | Bearer JWT (owner only) |
-| Response `204` | No content |
-| Errors | `403` cannot remove self if sole owner |
+| Auth | Bearer JWT (owner/admin) |
+| Response `200` | `{ ok: true }` |
+| Errors | `403` same rank rules as PATCH, and the last active owner cannot be removed |
+| Side effects | Clears any pending invite token and revokes the member's tokens |
 
 ---
 
@@ -420,6 +463,7 @@ Create or resume a contact session.
 | Response `201` (new) | `{ session: { id, token } }` |
 | Logic | If `token` provided and valid (not expired) → resume; else → create new. If `email` provided, store on session at creation. |
 | CORS | Validate request origin against `website.allowedOrigins` |
+| Rate limit | `WIDGET_SESSIONS_PER_IP` new sessions per IP per `WIDGET_SESSIONS_WINDOW_MS` (also applies to `/widget/init`) |
 
 ### `POST /api/v1/widget/sessions/:sessionId/contact`
 Update contact info on an existing session. **Note:** This endpoint is now secondary — primary contact collection happens at session creation. This endpoint remains available for updating contact info later (e.g., adding phone after initial email-only submission).
@@ -430,6 +474,7 @@ Update contact info on an existing session. **Note:** This endpoint is now secon
 | Body | `{ email?, phone?, name? }` |
 | Response `200` | `{ session }` |
 | Note | Email and phone are primarily collected at session creation (pre-chat form). This endpoint is for updates only. |
+| Identity | The email is stored lower-cased. Changing it clears `identityVerifiedEmail` / `identityVerifiedUntil`, so a new address must pass the email code again. |
 
 ### `POST /api/v1/widget/conversations`
 Start a new conversation.
@@ -470,7 +515,37 @@ Upload a file attachment in widget.
 | Body | `multipart/form-data` with `file` |
 | Max size | 10 MB |
 | Allowed MIME | `image/*`, `application/pdf`, `text/plain` |
+| Rate limit | `WIDGET_ATTACHMENTS_PER_IP` per IP per window, plus the per-session widget message limit |
 | Response `201` | `{ attachment: { fileName, fileUrl, mimeType, size } }` |
+
+### `GET /api/v1/widget/attachments/:hash`
+Streams an attachment (session token in header or `?t=`). Raster images are served
+`inline`; everything else, SVG included, as `attachment` with `nosniff`. The `?t=`
+value is redacted from access logs and Sentry events.
+
+### `POST /api/v1/widget/conversations/:conversationId/proactive`
+Records a proactive greeting. Body `{ triggerId }`. The text is the saved trigger's
+`message`; any client-supplied text is ignored. The trigger must be active and belong to
+the conversation's org and agent (`404` otherwise). Per-session cooldown `429`.
+Rate limited per session.
+
+### `POST /api/v1/widget/conversations/:conversationId/voice-message`
+`404` unless `ALLOW_WIDGET_VOICE_INPUT=true`. Metered like a typed message: per-session
+rate limit, plan message quota (`402`) and AI budget.
+
+### `POST /api/v1/widget/verify-otp`
+Body `{ token, otp }`. Codes are stored hashed in MongoDB (`OtpChallenge`), bound to the
+session, and burned after 5 wrong attempts. Rate limited per IP (30 / 15 min) and per
+session. Success marks the session verified for the exact email the code was sent to.
+
+### `POST /api/v1/widget/messages/:messageId/feedback`
+`404` unless the message is in one of the caller's own conversations.
+
+### `GET /api/v1/widget/sections/:id/content`
+Proxies a section's help page. Fetched through `safeFetch` (blocks private, loopback,
+link-local and reserved IPv4/IPv6 at connect time and on every redirect hop; 5 MB cap).
+Only `text/html` is returned (`400` otherwise), under
+`Content-Security-Policy: sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms`.
 
 ### `GET /api/v1/widget/settings`
 Get widget display settings (for rendering the widget UI).
@@ -722,7 +797,7 @@ Shared across every route below:
 
 | | |
 |---|---|
-| Auth | Bearer JWT, `requireAuth` + `requireOrg` |
+| Auth | Bearer JWT, `requireAuth` + `requireOrg` + `requireActiveMembership`. The last one checks the database for an `active` membership in the token's org, because `requireOrg` trusts the claim: without it a removed or revoked member keeps reading the org's metrics until their access token expires. `403` when the membership is missing or revoked. The `/index-health/*` routes the page also reads carry the same guard |
 | Scope | Organization is stamped from the token, **never** from the query string. `?agentId` / `?websiteId` can only NARROW that scope; an agent id belonging to another org is rejected before it reaches a `$match` |
 | Query | `?from=YYYY-MM-DD&to=YYYY-MM-DD` or `?days=N` (1-365, default 30), optional `&agentId=` or `&websiteId=` |
 | Aggregation | Server-side MongoDB pipelines only, every one index-backed. `rag-metrics.test.ts` runs the real endpoints under MongoDB's profiler and fails on a `COLLSCAN` |
@@ -747,9 +822,10 @@ Recall@K, Precision@K and MRR at K = 3, 5, 10, plus the score histogram.
 
 | Field | Value |
 |-------|-------|
-| Response `200` | `{ minScoreThreshold, bucketWidth, ks, scoredTurns, totalTurns, recallAtK, precisionAtK, mrr, meanTopScore, noHitRate, widenOnEmptyRate, p50LatencyMs, p95LatencyMs, distribution }` |
+| Response `200` | `{ minScoreThreshold, belowThresholdTurns, distributionTurns, bucketWidth, ks, scoredTurns, totalTurns, recallAtK, precisionAtK, mrr, meanTopScore, noHitRate, widenOnEmptyRate, p50LatencyMs, p95LatencyMs, distribution }` |
 | `distribution` | `[{ from, to, count }]`, 20 buckets of 0.05 over `retrieval.topScore`, bucketed by `$bucket` |
 | `minScoreThreshold` | The live `AI_KB_SEARCH_MIN_SCORE`, so the page draws its threshold line from running config rather than a hardcoded copy |
+| `belowThresholdTurns` / `distributionTurns` | Turns whose top score is below the floor, and turns with a top score at all. Counted in the same aggregation against the exact score, so a floor that lands mid-bucket is not rounded to a bucket edge. The page renders these directly and sums nothing |
 
 Scored against the sources the reply cited, standing in for the offline
 harness's declared relevant set. Turns that cited nothing are excluded from
@@ -763,7 +839,7 @@ unsupported-claim examples.
 |-------|-------|
 | Query | plus `?examples=N` (1-50, default 10) |
 | Response `200` | `{ meanConfidence, faithfulness, faithfulnessSamples, escalationRate, citationRate, citationsPerAnswer, thumbs, daily, unsupportedExamples }` |
-| `thumbs` | `{ up, down, total, helpfulness }` from `MessageFeedback` |
+| `thumbs` | `{ up, down, total, helpfulness }` from `MessageFeedback`. Feedback carries no `agentId`, so with `?agentId` / `?websiteId` it is narrowed through its conversation's `agentId` (`$lookup` on `_id`) |
 | `daily` | `[{ date, turns, confidence, faithfulness, faithfulnessSamples }]`, faithfulness `null` on days nothing was sampled |
 | `unsupportedExamples` | `[{ conversationId, messageId, query, score, createdAt, claims: [{ claim, verdict, reason }] }]` |
 
@@ -772,10 +848,12 @@ Tokens, USD and end-to-end latency over time.
 
 | Field | Value |
 |-------|-------|
-| Response `200` | `{ totals: { turns, pricedTurns, promptTokens, completionTokens, costUsd, pricedShare, costPerTurn }, daily: [{ date, turns, pricedTurns, promptTokens, completionTokens, costUsd, p50LatencyMs, p95LatencyMs }] }` |
+| Response `200` | `{ totals: { turns, pricedTurns, promptTokens, completionTokens, costUsd, p50LatencyMs, p95LatencyMs, pricedShare, costPerTurn }, daily: [{ date, turns, pricedTurns, promptTokens, completionTokens, costUsd, p50LatencyMs, p95LatencyMs }] }` |
 
 `pricedShare` is reported so a suspiciously low total can be told apart from a
-window OpenRouter never resolved.
+window OpenRouter never resolved. `totals` and `daily` come from one `$facet`;
+the window percentiles are their own `$percentile`, because p95 of a month is not
+any combination of daily p95s.
 
 ### `GET /api/v1/rag-metrics/failing-queries`
 Highest-volume queries that found nothing or answered with low confidence.
@@ -799,7 +877,8 @@ Per-source retrieval, dead weight, and ingestion failures.
 | Query | plus `?limit=N` (1-200, default 50) |
 | Response `200` | `{ top, neverRetrieved, totals, ingestion }` |
 | `top` | `[{ sourceId, title, type, embeddingStatus, retrievalCount, topRankCount, meanTopScore, lastRetrieved }]` |
-| `neverRetrieved` | Sources with `embeddingStatus: "synced"` that no turn in the window retrieved |
+| `neverRetrieved` | Sources with `embeddingStatus: "synced"` that no turn in the window retrieved, largest `chunkCount` first, up to `limit` |
+| `totals` | `{ sources, retrieved, neverRetrieved }`. `neverRetrieved` is the full count, not the length of the truncated list. The set difference runs in a `KnowledgeSource` aggregation (`_id: { $nin: retrieved }`), so it is exact for an org of any size |
 | `ingestion` | P8's `ingestionHealth` — a source that never indexed cannot be retrieved, and looks identical to dead weight on a relevance panel alone |
 
 `meanTopScore` averages only the turns where the source ranked **first**. The

@@ -15,10 +15,20 @@ router.use(requireAuth, requireOrg);
 // Working the inbox (assign, resolve, reply) is agent-level; viewers are read-only.
 router.use(requireOrgRole("agent"));
 
-function emitConversationUpdated(req: Request, conversationId: string, status: string): void {
+function emitConversationUpdated(
+  req: Request,
+  conversationId: string,
+  status: string,
+  contactSessionId?: unknown,
+): void {
   const io = req.app.get("io") as IoServer | undefined;
   if (!io) return;
   io.to(`org:${req.orgId}`).emit("conversation:updated", { conversationId, status });
+  // The widget is not in the org room (that room carries operator-only events),
+  // so it hears about resolve/escalate through its own session room.
+  if (contactSessionId) {
+    io.to(`contact:${String(contactSessionId)}`).emit("conversation:updated", { conversationId, status });
+  }
   io.to(`conversation:${conversationId}`).emit("conversation:updated", {
     conversationId,
     status,
@@ -129,7 +139,12 @@ router.patch("/:id", validateBody(patchSchema), async (req: Request, res: Respon
   if (!conversation) throw new NotFoundError("Conversation not found.");
 
   if (req.body.status) {
-    emitConversationUpdated(req, conversation._id.toString(), conversation.status);
+    emitConversationUpdated(
+      req,
+      conversation._id.toString(),
+      conversation.status,
+      conversation.contactSessionId,
+    );
   }
   res.json(conversation);
 });

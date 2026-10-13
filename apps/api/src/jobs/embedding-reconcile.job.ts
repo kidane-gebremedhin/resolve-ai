@@ -25,9 +25,9 @@ import { logger } from "../config/logger.js";
 import { env } from "../config/env.js";
 import { ingestSource, purgeSourceVectors } from "../services/kb/ingestion.service.js";
 import { recordIngestionEvent } from "../services/kb/ingestion-events.js";
+import { orgBudgetStatus } from "../services/budget-alert.service.js";
 import {
   describeError,
-  isDeferred,
   isPermanent,
   type IngestionErrorCode,
 } from "../services/kb/ingestion-errors.js";
@@ -54,9 +54,25 @@ function backoffElapsed(source: { updatedAt?: Date; retryCount?: number }): bool
 export async function reconcileOnce(): Promise<void> {
   // 1) Retry errored sources — but only the ones retrying can actually help.
   try {
+    // Budget: an external condition we are waiting on, not a failure to retry
+    // against. Sources paused for an org that is still over budget are left out
+    // of the query, not skipped inside the loop: they stay `error` all month, and
+    // in the batch they would crowd out every other org's retries. Checked once
+    // per org per tick, so a reset or a plan upgrade resumes them on the next one.
+    const pausedOrgs = await KnowledgeSource.distinct("organizationId", {
+      embeddingStatus: "error",
+      embeddingErrorCode: "budget_exceeded",
+      retryCount: { $lt: env.kb.ingestMaxRetries },
+    });
+    const stillOver: typeof pausedOrgs = [];
+    for (const orgId of pausedOrgs) {
+      if ((await orgBudgetStatus(orgId.toString())).exceeded) stillOver.push(orgId);
+    }
+
     const errored = await KnowledgeSource.find({
       embeddingStatus: "error",
       retryCount: { $lt: env.kb.ingestMaxRetries },
+      $nor: [{ embeddingErrorCode: "budget_exceeded", organizationId: { $in: stillOver } }],
     })
       .limit(BATCH)
       .select({
@@ -105,30 +121,13 @@ export async function reconcileOnce(): Promise<void> {
         continue;
       }
 
-      // Budget: an external condition we are waiting on, not a failure to retry
-      // against. Burning attempts here would exhaust them before the budget ever
-      // resets, leaving the source stranded for the rest of the month.
-      if (isDeferred(code)) {
-        await recordIngestionEvent({
-          sourceId: id,
-          organizationId: src.organizationId.toString(),
-          agentId: src.agentId?.toString(),
-          stage: "retry",
-          status: "skipped",
-          errorCode: code,
-          errorMessage: "Waiting for the AI budget to reset. No retries consumed.",
-        });
-        continue;
-      }
-
       if (!backoffElapsed(src as { updatedAt?: Date; retryCount?: number })) continue;
 
       const attempt = (src.retryCount ?? 0) + 1;
       try {
-        await KnowledgeSource.updateOne(
-          { _id: src._id },
-          { $set: { embeddingStatus: "pending" }, $inc: { retryCount: 1 } },
-        );
+        // No $inc here: a failed attempt is counted once, by ingestSource's
+        // catch. Counting it here as well spent two attempts per failure.
+        await KnowledgeSource.updateOne({ _id: src._id }, { $set: { embeddingStatus: "pending" } });
         await recordIngestionEvent({
           sourceId: id,
           organizationId: src.organizationId.toString(),

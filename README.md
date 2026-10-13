@@ -83,12 +83,14 @@ account list and caveats.
 | Doc | What it covers |
 |-----|----------------|
 | [RUNBOOK.md](RUNBOOK.md) | **Running the project** — prerequisites, infra, env, build, ops, troubleshooting. |
+| [RENDER_DEPLOYMENT_GUIDE.md](RENDER_DEPLOYMENT_GUIDE.md) | **Deploying on Render**: all five apps as Docker web services (or Node runtime services, with the form values for each field), plus Atlas and S3-compatible storage, step by step. |
 | [__specs/](__specs/) | **Design specs** — the *why*. Start at the [table of contents](__specs/00-table-of-contents.md); see also [data model](__specs/03-data-model.md), [API](__specs/07-api-specification.md), [env variables](__specs/13-env-variables.md). |
 | [__plans/](__plans/) | **Implementation plans** — the *what & in what order*. Start at the [overview](__plans/00-overview.md). |
 | [__skills/](__skills/) | **Reusable procedures** (Anthropic Skill format) invoked by the plans. |
 | [SKILLS_GALLERY.md](SKILLS_GALLERY.md) | **Skills catalog** — purpose, provenance (custom-written vs downloaded), and phase for every skill. |
 | [E2E_FLOW.md](E2E_FLOW.md) | **RAG flow** — indexing → retrieval → generation, end to end. |
 | [__specs/05-ai-agent-design.md](__specs/05-ai-agent-design.md) | **AI agent** — the LangGraph state graph, tool layer, input gate and LangSmith tracing. |
+| [__specs/12-security-compliance.md](__specs/12-security-compliance.md) | **Security controls** — auth and token revocation, Google id_token verification, role rules, widget abuse limits, SSRF guard, upload handling. Open pre-release items live in `PRE_RELEASE_REVIEW.md`. |
 | [__specs/35-error-monitoring-sentry.md](__specs/35-error-monitoring-sentry.md) | **Error monitoring** — Sentry for the API + web app, and the `/sentry-example-page` production smoke test ([RUNBOOK §14](RUNBOOK.md)). |
 | `IMPLEMENTATION_AUDIT.md` | Codebase audit — architecture, strengths, ranked findings. **Local only** (git-ignored), so it is absent from a fresh clone. |
 | [AGENTS.md](AGENTS.md) · [CLAUDE.md](CLAUDE.md) | Conventions for AI coding agents working in this repo. |

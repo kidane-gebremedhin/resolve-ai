@@ -59,14 +59,25 @@ const kbChunkSchema = new Schema(
 // `headingPath` is weighted alongside the text rather than indexed separately:
 // a heading match is a strong signal ("Refunds" as a heading beats "refunds"
 // mentioned in passing), but the body is where the facts are.
+//
+// The tenancy fields are the text index's equality PREFIX, not a separate
+// index. MongoDB answers `$text` from the text index alone, so with an
+// unprefixed text index the tenancy filter ran after matching every tenant's
+// chunks: a 200-chunk tenant examined 200,400 keys and took 8.5s beside a
+// 100,000-chunk neighbour, blowing the 1.5s lexical timeout for everyone
+// (__specs/38 S3). Prefixed, the scan is the tenant's own chunks. Every `$text`
+// query must therefore supply both fields by equality, which the only caller,
+// `lexicalSearch()`, already does. The name changed so `syncIndexes()` drops the
+// old index instead of colliding with it.
 kbChunkSchema.index(
-  { text: "text", headingPath: "text" },
-  { weights: { text: 1, headingPath: 3 }, name: "kb_chunk_text" },
+  { organizationId: 1, agentId: 1, text: "text", headingPath: "text" },
+  { weights: { text: 1, headingPath: 3 }, name: "kb_chunk_text_tenant" },
 );
 
-// Every lexical query filters on both tenancy fields before scoring, so the
-// compound index has to lead with them.
+// Plain tenancy scans (counts, index health, deletes by agent).
 kbChunkSchema.index({ organizationId: 1, agentId: 1 });
+// Index health counts dead weight only among passages older than the window.
+kbChunkSchema.index({ organizationId: 1, createdAt: 1 });
 // Re-ingest deletes a source's chunks by source.
 kbChunkSchema.index({ sourceId: 1, chunkIndex: 1 });
 

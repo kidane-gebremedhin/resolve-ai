@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import type { Server as IoServer } from "socket.io";
 import rateLimit from "express-rate-limit";
+import { MongoRateStore } from "../middleware/rate-limit-store.js";
 import { z } from "zod";
 import { Conversation, Message } from "../models/index.js";
 import { requireAuth, requireOrg } from "../middleware/auth.middleware.js";
@@ -102,6 +103,7 @@ router.post("/", enforceMessageQuota, validateBody(createSchema), async (req: Re
 });
 
 const enhanceLimiter = rateLimit({
+  store: new MongoRateStore("message:enhance"),
   windowMs: 60 * 60 * 1000,
   limit: 30,
   standardHeaders: "draft-7",
