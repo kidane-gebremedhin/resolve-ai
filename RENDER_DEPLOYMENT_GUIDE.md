@@ -440,7 +440,7 @@ Five paid services: four Starter frontends at about $7 each, plus the API on Sta
 | API deploy fails with `Missing required env var: <NAME>` | A required variable from step 6 is missing | Add it and redeploy. |
 | `CREDENTIALS_ENCRYPTION_KEY must be exactly 32 bytes` | The key isn't 64 hex characters | Regenerate it with `openssl rand -hex 32`. |
 | Frontend calls `localhost:4000` | `NEXT_PUBLIC_*` not set when the image was built | Set it and choose **Save, rebuild, and deploy**. |
-| Health check keeps failing and the deploy times out | `PORT` doesn't match the port the app listens on | Use the `PORT` values from the table at the top. |
+| Health check keeps failing and the deploy times out | Render's `PORT` differs from the port the app listens on, or the image health probe is checking a different port | Set `PORT` to the service port in the table at the top. The web Docker image's internal health probe follows `PORT` (default `3000`); redeploy after changing it. |
 | Google sign-in shows `redirect_uri_mismatch` | Callback URL missing in Google Console | Add the exact URLs from step 8. |
 | Admin sign-in bounces back to web, or the reverse | Both apps share a `NEXTAUTH_URL` | Give each service its own domain in `NEXTAUTH_URL`. |
 | Uploaded files disappear after a deploy | No storage configured, so the API wrote to the ephemeral filesystem | Set the `MINIO_*` vars or attach a disk (step 2). |

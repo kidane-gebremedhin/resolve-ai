@@ -19,7 +19,7 @@ Phase 0, after [`pnpm-turbo-monorepo`](../pnpm-turbo-monorepo/) and before [`git
 
 The full Dockerfile bodies live in [`__specs/18-cicd-pipeline.md`](../../__specs/18-cicd-pipeline.md) §3 — copy verbatim. Do not invent variants. Summary:
 
-1. **`apps/web/Dockerfile`** (spec §3.1) — 4-stage: `base` → `deps` (pnpm install with cache mount) → `build` (`pnpm --filter @csb/web build` + `pnpm deploy --prod /out`) → `runtime` (`node:20-alpine`, non-root user, copies `.next/standalone` + `.next/static` + `public`, exposes 3000, healthcheck on `/api/health`).
+1. **`apps/web/Dockerfile`** (spec §3.1) — 4-stage: `base` → `deps` (pnpm install with cache mount) → `build` (`pnpm --filter @csb/web build` + `pnpm deploy --prod /out`) → `runtime` (`node:20-alpine`, non-root user, copies `.next/standalone` + `.next/static` + `public`, exposes 3000, healthcheck on `/api/health` using `$PORT` or default `3000`).
 
 2. **`apps/widget/Dockerfile`** — identical to web but `--filter @csb/widget` and `EXPOSE 3001`.
 
